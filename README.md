@@ -35,7 +35,7 @@ python3 bundle.py          # бандл -> site/index.html
 - [API, встраивание и настройки](docs/api.md) - `kt` в шелле, Python и на странице, `kt cfg`
 - [Пакеты](docs/packages.md) - `kt pkg`, репозиторий, свои пакеты, пакеты Alpine
 - [Python](docs/python.md) - свой CPython, `pyzygote`, pip, Telegram-боты
-- [Окна](docs/gui.md) - tkinter, IDLE, turtle, matplotlib
+- [Окна](docs/gui.md) - tkinter, IDLE, turtle, matplotlib, рабочий стол
 - [Файлы](docs/files.md) - `kt sync` и `kt pack`
 - [ИИ-ассистент](docs/ai.md) - `ai`
 - [Сборка и тесты](docs/build.md)

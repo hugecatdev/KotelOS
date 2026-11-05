@@ -20,7 +20,7 @@ python3 bundle.py -o java.html -n java --mem 384 --file bundles/java/Hello.java 
 
 | ключ | что делает |
 |---|---|
-| `пакеты...` | что поставить в rootfs (по умолчанию fun nano htop tmux minipython lua5.4 pyzygote curl wget python-requests pack notify ai examples-python examples-lua) |
+| `пакеты...` | что поставить в rootfs (по умолчанию fun nano htop tmux minipython lua5.4 pyzygote curl wget python-requests pack notify ai examples-python examples-lua desktop) |
 | `--bare` | без пакетов: только busybox и `kt`, остальное - `kt pkg add` из репозитория |
 | `-o файл` | куда (по умолчанию `site/index.html`); чужой не-бандл не перезаписывает |
 | `-n имя` | имя бандла: своё сохранение у каждого имени, видно в `kt info` и заголовке вкладки |
@@ -78,7 +78,8 @@ post-install (приветствие `fun`) выполняется при пер
 
 ## Бандлы сайта
 
-На сайте лежат три бандла, все со снимком: `standard` (пакеты по умолчанию),
+На сайте лежат три бандла, все со снимком: `standard` (пакеты по умолчанию, с ними и
+рабочий стол `desktop`: команда `desktop`, см. [Окна](gui.md)),
 `micro` (базовые инструменты: nano, htop, tmux, curl, wget, pack, notify) и
 `python` (полный CPython с pip и numpy, tkinter, IDLE, turtle и matplotlib с
 примерами; 384 МБ памяти, файл 48 МБ, открывается за ~2 с).
