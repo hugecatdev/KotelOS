@@ -1,12 +1,13 @@
-# окно файлов: папка значками, меню, история; полоса меню не прокручивается, значки - тело окна
+# окно файлов: путь сверху, панель мест, папка значками, меню, история; полоса меню не прокручивается
 import tkinter as tk
-from tkinter import simpledialog
 
 from . import DESKTOP, HOME, TRASH, basename, dirname, exists, isdir, q
-from .view import IconView
+from .view import IconView, SEL_BG, SEL_FG
 
-PLACES = [("Домашняя папка", HOME), ("Рабочий стол", DESKTOP), ("Примеры", HOME + "/examples"),
-          ("Корзина", TRASH + "/files"), ("Корень /", "/")]
+PLACES = [("Домашняя папка", HOME, "user-home"), ("Рабочий стол", DESKTOP, "user-desktop"),
+          ("Примеры", HOME + "/examples", "folder"), ("Корзина", TRASH + "/files", "user-trash"),
+          ("Корень /", "/", "folder")]
+SIDE = 150  # ширина панели мест сбоку, px
 
 
 class FileManager:
@@ -43,14 +44,30 @@ class FileManager:
         v.add_checkbutton(label="Скрытые файлы", variable=self.hid, accelerator="Ctrl+H", command=self._hidden)
         v.add_command(label="Обновить", accelerator="F5", command=lambda: self.view.load(keep=True))
         mb.add_cascade(label="Вид", menu=v)
-        p = tk.Menu(mb, tearoff=0)
-        for name, place in PLACES:
-            p.add_command(label=name, command=lambda place=place: self.go(place))
-        mb.add_cascade(label="Места", menu=p)
         mb.add_command(label="←", command=self.back)
         mb.add_command(label="↑", command=self.up)
         w.config(menu=mb)
+        # путь сверху: видно, где ты, и можно вписать свой (Enter - перейти)
+        self.path = tk.Entry(w)
+        self.path.pack(side="top", fill="x", padx=4, pady=(4, 2))
+        self.path.bind("<Return>", lambda e: self._path() or "break")
+        # места: на широком экране столбцом слева, на узком - рядом кнопок под путём, иначе значкам не хватит ширины
+        narrow = w.winfo_screenwidth() <= 520
+        side = tk.Frame(w)
+        side.pack(side="top" if narrow else "left", fill="x" if narrow else "y", padx=2)
+        self.places = []
+        for name, place, icon in PLACES:
+            b = tk.Button(side, text=name if not narrow else name.replace("Домашняя папка", "Домой").replace("Корень /", "/"),
+                          image=app.image(icon, 24), compound="left", relief="flat", anchor="w", padx=4,
+                          command=lambda place=place: self.go(place))
+            if narrow:
+                b.pack(side="left", padx=1, pady=1)
+            else:
+                b.configure(width=SIDE)
+                b.pack(side="top", fill="x", pady=1)
+            self.places.append((place, b))
         self.view = IconView(w, app, w, path, on_change=self.title)
+        self.view.reserve = 0 if narrow else SIDE + 12
         self.view.on_dir = self.go
         self.view.pack(fill="both", expand=1)
         for seq, fn in (("<BackSpace>", self.up), ("<Alt-Up>", self.up), ("<Alt-Left>", self.back),
@@ -59,7 +76,8 @@ class FileManager:
                         ("<Control-w>", self.close), ("<Control-c>", lambda: self._clip(False)),
                         ("<Control-x>", lambda: self._clip(True)), ("<Control-a>", lambda: self.view.select_all()),
                         ("<Control-v>", lambda: self.view.paste(self.view.folder)), ("<Control-h>", self._toggle)):
-            w.bind(seq, lambda ev, fn=fn: fn() and None)
+            # в строке пути клавиши её собственные: BackSpace стирает, а не идёт вверх
+            w.bind(seq, lambda ev, fn=fn: None if ev.widget is self.path else (fn() and None))
         self.title()
         app.add(self)
 
@@ -68,6 +86,12 @@ class FileManager:
         n = "Корзина" if f == TRASH + "/files" else "Домашняя папка" if f == HOME else basename(f)
         s = len(self.view.sel)
         self.w.title("%s%s - Файлы" % (n, " (выделено: %d)" % s if s > 1 else ""))
+        if self.path.get() != f:
+            self.path.delete(0, "end")
+            self.path.insert(0, f)
+        for place, b in self.places:
+            on = place == f
+            b.configure(bg=SEL_BG if on else "", fg=SEL_FG if on else "")
 
     def go(self, path):
         if path == TRASH + "/files" and not exists(path):
@@ -87,15 +111,21 @@ class FileManager:
         self.go(dirname(self.view.folder))
 
     def goto(self):
-        p = simpledialog.askstring("Перейти", "Папка или файл:", initialvalue=self.view.folder, parent=self.w)
-        if not p:
-            return
+        self.path.focus_set()
+        self.path.selection_range(0, "end")
+
+    def _path(self):
+        p = self.path.get().strip()
         if not p.startswith("/"):
             p = self.view.folder.rstrip("/") + "/" + p
+        p = p.rstrip("/") or "/"
         if isdir(p):
             self.go(p)
         elif exists(p):
             self.app.open_path(p)
+            self.title()
+        else:
+            self.title()  # нет такого пути - вернуть текущий
 
     def _open(self):
         for it in self.view.selected()[:1]:

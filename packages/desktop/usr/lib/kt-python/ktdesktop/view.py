@@ -53,6 +53,7 @@ class IconView(tk.Frame):
         self.sel, self.cols, self.hidden, self.stamp = set(), 0, False, None
         self.press = None
         self.on_dir = None  # папка: окно файлов открывает её у себя, рабочий стол - в окне файлов
+        self.reserve = 0  # сколько ширины окна занято не значками (панель мест), px
         self.menu = tk.Menu(self, tearoff=0)
         top.bind("<Configure>", self._conf, add="+")
         self.bind("<Button-1>", lambda e: self.select(set()))
@@ -144,7 +145,7 @@ class IconView(tk.Frame):
     def _layout(self, width=None):
         if width is None:
             width = self.top.winfo_width() if self.labels else 0
-        cols = max(1, (width - 16) // (CELL + 4)) if width > 1 else 4  # 16 - полоса прокрутки
+        cols = max(1, (width - 16 - self.reserve) // (CELL + 4)) if width > 1 else 4  # 16 - полоса прокрутки
         if cols == self.cols:
             return
         self.cols = cols

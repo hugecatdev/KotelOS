@@ -1,27 +1,31 @@
-# реестр: ключи kt cfg (браузерные настройки машины) списком - значение, описание, правка, сброс к умолчанию
+# реестр: ключи kt cfg таблицей - ключ, значение (правится на месте), описание, «↺» - вернуть умолчание
 import os
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 
 import kt
 
 from . import read
+from .entry import DATA_DIRS
 
-DESC = "/usr/share/kt/cfg"
+# у этих ключей значения из списка - выбор вместо ввода
+CHOICES = {"term.theme": ["dark", "light", "amber", "green", "gray"], "term.render": ["dom", "canvas"],
+           "term.cursor": ["block", "bar", "underline"]}
 
 
 def descriptions():
     """«ключ описание» из /usr/share/kt/cfg/*: kt - встроенные, пакеты кладут свои (ai)."""
     out = {}
-    try:
-        names = sorted(os.listdir(DESC))
-    except OSError:
-        names = []
-    for n in names:
-        for line in read(DESC + "/" + n).split("\n"):
-            k, _, d = line.strip().partition(" ")
-            if k:
-                out[k] = d.strip()
+    for base in reversed(DATA_DIRS):
+        try:
+            names = sorted(os.listdir(base + "/kt/cfg"))
+        except OSError:
+            continue
+        for n in names:
+            for line in read(base + "/kt/cfg/" + n).split("\n"):
+                k, _, d = line.strip().partition(" ")
+                if k:
+                    out[k] = d.strip()
     return out
 
 
@@ -32,7 +36,7 @@ def show(v):
 
 
 def parse(s, old):
-    """Строку из поля - в тип ключа: on/off - True/False, числа - числами, как у kt cfg."""
+    """Строку из поля - в тип ключа: числа - числами, on/off - True/False, как у kt cfg."""
     t = s.strip()
     if old is True or old is False or t.lower() in ("on", "off", "true", "false"):
         if t.lower() in ("on", "true", "1", "да"):
@@ -49,96 +53,103 @@ def parse(s, old):
 
 class Registry:
     def __init__(self, app):
-        self.app, self.keys, self.vals = app, [], {}
+        self.app, self.vals, self.rows = app, {}, []
         w = self.w = tk.Toplevel(app.root)
         w.title("Реестр")
         w.protocol("WM_DELETE_WINDOW", self.close)
+        if not app.touch:
+            w.geometry("720x520")
         mb = tk.Menu(w)
         mb.add_command(label="Обновить", command=self.load)
         mb.add_command(label="Новый ключ…", command=self.new)
         w.config(menu=mb)
-        self.lb = tk.Listbox(w, width=44, height=14)
-        self.lb.pack(fill="both", expand=1, padx=4, pady=4)
-        self.lb.bind("<<ListboxSelect>>", lambda e: self.pick())
-        self.desc = tk.Label(w, text="Выберите ключ", anchor="w", justify="left", wraplength=360)
-        self.desc.pack(fill="x", padx=6)
-        self.ent = tk.Entry(w)
-        self.ent.pack(fill="x", padx=4, pady=4)
-        self.ent.bind("<Return>", lambda e: self.save())
-        row = tk.Frame(w)
-        row.pack(fill="x", padx=4, pady=(0, 6))
-        tk.Button(row, text="Сохранить", command=self.save).pack(side="left")
-        tk.Button(row, text="По умолчанию", command=self.reset).pack(side="left", padx=6)
+        self.t = tk.Frame(w)
+        self.t.pack(fill="both", expand=1, padx=4, pady=4)
+        self.t.columnconfigure(1, weight=1)
+        tk.Label(self.t, text="ключ", fg="#888", anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        tk.Label(self.t, text="значение", fg="#888", anchor="w").grid(row=0, column=1, sticky="w")
         self.load()
         app.add(self)
 
-    def load(self, keep=None):
+    def load(self):
         try:
             self.vals = kt.cfg() or {}
         except Exception as e:
             messagebox.showerror("Реестр", str(e), parent=self.w)
             self.vals = {}
-        self.descs = descriptions()
-        self.keys = sorted(set(self.vals) | set(self.descs))
-        self.lb.delete(0, "end")
-        for k in self.keys:
-            self.lb.insert("end", "%s = %s" % (k, show(self.vals.get(k))))
-        if keep in self.keys:
-            i = self.keys.index(keep)
-            self.lb.selection_set(i)
-            self.lb.see(i)
-            self.pick()
+        descs = descriptions()
+        for r in self.rows:
+            for x in r:
+                x.destroy()
+        self.rows = []
+        for i, k in enumerate(sorted(set(self.vals) | set(descs))):
+            r = 1 + i * 2
+            v = self.vals.get(k)
+            key = tk.Label(self.t, text=k, anchor="w")
+            key.grid(row=r, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+            cell = self.cell(k, v)
+            cell.grid(row=r, column=1, sticky="we", pady=(6, 0))
+            back = tk.Button(self.t, text="↺", padx=6, command=lambda k=k: self.reset(k))
+            back.grid(row=r, column=2, padx=(4, 0), pady=(6, 0))
+            row = [key, cell, back]
+            if descs.get(k):
+                d = tk.Label(self.t, text=descs[k], fg="#888", anchor="w", justify="left")
+                d.grid(row=r + 1, column=0, columnspan=3, sticky="w")
+                row.append(d)
+            self.rows.append(row)
 
-    def current(self):
-        s = self.lb.curselection()
-        return self.keys[s[0]] if s else None
+    def cell(self, k, v):
+        """Значение на месте: галочка для on/off, список для известных вариантов, иначе поле ввода."""
+        if v is True or v is False:
+            var = tk.BooleanVar(value=v)
+            c = tk.Checkbutton(self.t, text="on" if v else "off", variable=var, anchor="w")
+            c.configure(command=lambda: (c.configure(text="on" if var.get() else "off"), self.set(k, var.get())))
+            c._var = var
+            return c
+        if k in CHOICES:
+            c = ttk.Combobox(self.t, values=CHOICES[k], state="readonly", width=12)
+            c.set(show(v))
+            c.bind("<<ComboboxSelected>>", lambda e: self.set(k, c.get()))
+            return c
+        secret = k.rsplit(".", 1)[-1] in ("key", "token", "pass", "password", "secret")
+        e = tk.Entry(self.t, show="•" if secret else "")  # ключ API на экране не нужен
+        e.insert(0, show(v))
+        e._old = show(v)
 
-    def pick(self):
-        k = self.current()
-        if k is None:
-            return
-        d = self.descs.get(k, "")
-        self.desc.configure(text="%s%s" % (k, " - " + d if d else ""))
-        self.ent.delete(0, "end")
-        self.ent.insert(0, show(self.vals.get(k)))
+        def commit(ev=None):
+            if e.get() != e._old:
+                e._old = e.get()
+                self.set(k, parse(e.get(), self.vals.get(k)))
+        e.bind("<Return>", commit)
+        e.bind("<FocusOut>", commit)
+        return e
 
-    def save(self):
-        k = self.current()
-        if k is None:
-            return
+    def set(self, k, v):
         try:
-            kt.cfg[k] = parse(self.ent.get(), self.vals.get(k))
+            kt.cfg[k] = v
+            self.vals[k] = v
         except Exception as e:
             messagebox.showerror(k, str(e), parent=self.w)
-            return
-        self.load(keep=k)
+            self.load()
 
-    def reset(self):
-        k = self.current()
-        if k is None:
-            return
+    def reset(self, k):
         try:
             del kt.cfg[k]
         except KeyError:
             pass
         except Exception as e:
             messagebox.showerror(k, str(e), parent=self.w)
-        self.load(keep=k)
+        self.load()
 
     def new(self):
         k = simpledialog.askstring("Новый ключ", "Имя (свои - вида имя.ключ):", parent=self.w)
         if not k or not k.strip():
             return
-        k = k.strip()
-        v = simpledialog.askstring(k, "Значение:", parent=self.w)
+        v = simpledialog.askstring(k.strip(), "Значение:", parent=self.w)
         if v is None:
             return
-        try:
-            kt.cfg[k] = parse(v, None)
-        except Exception as e:
-            messagebox.showerror(k, str(e), parent=self.w)
-            return
-        self.load(keep=k)
+        self.set(k.strip(), parse(v, None))
+        self.load()
 
     def close(self):
         self.w.destroy()
