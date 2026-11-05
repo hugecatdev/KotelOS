@@ -1,16 +1,13 @@
-# реестр: ключи kt cfg таблицей - ключ, значение (правится на месте), описание, «↺» - вернуть умолчание
+# реестр: ключи kt cfg таблицей - ключ, значение (правится на месте), описание, «↺» - вернуть умолчание.
+# Какие значения бывают у ключей, он не знает: тип берёт у текущего значения
 import os
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, simpledialog
 
 import kt
 
 from . import read
 from .entry import DATA_DIRS
-
-# у этих ключей значения из списка - выбор вместо ввода
-CHOICES = {"term.theme": ["dark", "light", "amber", "green", "gray"], "term.render": ["dom", "canvas"],
-           "term.cursor": ["block", "bar", "underline"]}
 
 
 def descriptions():
@@ -99,18 +96,7 @@ class Registry:
             self.rows.append(row)
 
     def cell(self, k, v):
-        """Значение на месте: галочка для on/off, список для известных вариантов, иначе поле ввода."""
-        if v is True or v is False:
-            var = tk.BooleanVar(value=v)
-            c = tk.Checkbutton(self.t, text="on" if v else "off", variable=var, anchor="w")
-            c.configure(command=lambda: (c.configure(text="on" if var.get() else "off"), self.set(k, var.get())))
-            c._var = var
-            return c
-        if k in CHOICES:
-            c = ttk.Combobox(self.t, values=CHOICES[k], state="readonly", width=12)
-            c.set(show(v))
-            c.bind("<<ComboboxSelected>>", lambda e: self.set(k, c.get()))
-            return c
+        """Значение текстом; по Enter или уходу из поля - в kt cfg, в тип текущего значения."""
         secret = k.rsplit(".", 1)[-1] in ("key", "token", "pass", "password", "secret")
         e = tk.Entry(self.t, show="•" if secret else "")  # ключ API на экране не нужен
         e.insert(0, show(v))
