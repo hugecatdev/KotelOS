@@ -2,7 +2,7 @@
 import os
 import time
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 
 import kt
 
@@ -125,7 +125,7 @@ class Desktop:
         elif c in ("files", "notepad", "imgview", "cfgedit"):
             getattr(self.app, c)(f)
 
-    # --- панель: кнопки окон всех программ (список даёт страница, как _NET_CLIENT_LIST в X11)
+    # --- панель: кнопки окон всех программ (список даёт страница событием tkwm)
 
     def on_wins(self, d):
         wins = [x for x in d.get("w", []) if isinstance(x, list) and len(x) >= 3]
@@ -214,7 +214,7 @@ class Desktop:
         months = "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split()
         messagebox.showinfo("Сегодня", "%s, %d %s %d" % (days[t[6]], t[2], months[t[1] - 1], t[0]))
 
-    # --- меню «Пуск»: программы по категориям freedesktop, места, выполнить, терминал, выход
+    # --- меню «Пуск»: программы по категориям freedesktop, места, о системе, обратно в терминал
 
     def menu_open(self):
         m, a = self.menu, self.app
@@ -237,16 +237,10 @@ class Desktop:
                       command=lambda: a.files(HOME))
         m.add_command(label="Корзина", image=a.image("user-trash", 24), compound="left",
                       command=lambda: a.files(TRASH + "/files"))
-        m.add_command(label="Выполнить…", command=self.run_dialog)
         m.add_command(label="О системе", command=self.about)
         m.add_separator()
         m.add_command(label=BACK, image=a.image("system-log-out", 24), compound="left", command=self.quit)
         m.tk_popup(self.start.winfo_rootx(), self.start.winfo_rooty())
-
-    def run_dialog(self):
-        c = simpledialog.askstring("Выполнить", "Команда (вывод - в ~/.xsession-errors):")
-        if c and c.strip():
-            self.app.run(c)
 
     def about(self):
         rel = dict(l.split("=", 1) for l in read("/etc/os-release").split("\n") if "=" in l)

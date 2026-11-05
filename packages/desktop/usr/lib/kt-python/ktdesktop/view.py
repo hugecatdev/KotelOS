@@ -1,4 +1,4 @@
-# папка значками - общий вид рабочего стола и окна файлов (как pcmanfm и pcmanfm --desktop)
+# папка значками - общий вид рабочего стола и окна файлов
 import os
 import time
 import tkinter as tk

@@ -5,7 +5,7 @@ import time
 HOME = os.getenv("HOME") or "/root"
 DESKTOP = HOME + "/Desktop"
 CONFIG = HOME + "/.config/ktdesktop"
-LOG = HOME + "/.xsession-errors"
+LOG = HOME + "/.cache/desktop.log"
 PIDFILE = "/run/ktdesktop.pid"
 TRASH = HOME + "/.local/share/Trash"
 
@@ -80,7 +80,8 @@ def sh(cmd):
 
 
 def spawn(cmd, cwd=None):
-    """Запустить в фоне, вывод - в ~/.xsession-errors, как у сессии X."""
+    """Запустить в фоне, вывод - в ~/.cache/desktop.log."""
+    mkdirs(dirname(LOG))
     pre = "cd %s && " % q(cwd) if cwd else ""
     os.system("(%s%s) >> %s 2>&1 < /dev/null &" % (pre, cmd, q(LOG)))
 

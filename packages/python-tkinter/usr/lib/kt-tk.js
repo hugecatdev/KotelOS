@@ -358,7 +358,7 @@
     w.ro.observe(w.body || w.el);
   };
 
-  // типы окон как в EWMH: desktop всегда снизу и во весь экран, dock - панель снизу поверх окон
+  // типы окон (wm attributes -type): desktop всегда снизу и во весь экран, dock - панель снизу поверх окон
   const kind = (el) => (el.classList.contains("tk-desk") ? 0 : el.classList.contains("tk-dock") ? 99998 : -1);
   const lift = (el) => {
     const k = kind(el);

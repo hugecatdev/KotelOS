@@ -2158,7 +2158,7 @@ class Wm:
             elif k in ("zoomed", "fullscreen"):
                 self._prop("zoom", 1 if _bool(v) else 0)
             elif k == "type":
-                # как _NET_WM_WINDOW_TYPE в X11: desktop - под всеми окнами во весь экран, dock - панель снизу
+                # тип окна: desktop - под всеми окнами во весь экран, dock - панель снизу поверх окон
                 t = (v.split() if isinstance(v, str) else list(v) or ["normal"])[0]
                 self._prop("type", t if t in ("desktop", "dock") else "normal")
             else:

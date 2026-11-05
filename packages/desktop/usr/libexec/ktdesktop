@@ -1,6 +1,6 @@
 #!/bin/sh
 # ktdesktop команда [путь]: при запущенном рабочем столе отдать команду ему (окно откроется в его процессе),
-# иначе запустить свой питон; рабочий стол уходит в фон, вывод программ - в ~/.xsession-errors
+# иначе запустить свой питон; рабочий стол уходит в фон, вывод программ - в ~/.cache/desktop.log
 cmd=$1
 shift
 f=
@@ -27,7 +27,8 @@ else
   set -- micropython -X heapsize=16M
 fi
 if [ "$cmd" = desktop ]; then
-  setsid "$@" -m ktdesktop desktop >> "$HOME/.xsession-errors" 2>&1 < /dev/null &
+  mkdir -p "$HOME/.cache"
+  setsid "$@" -m ktdesktop desktop >> "$HOME/.cache/desktop.log" 2>&1 < /dev/null &
   # pid сразу: второй desktop следом (post-install и profile.d при первом входе) не поднимет второй стол;
   # питон потом запишет свой (с pyzygote он другой, а этот - клиент, живёт столько же)
   echo $! > /run/ktdesktop.pid

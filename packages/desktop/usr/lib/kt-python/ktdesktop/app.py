@@ -130,9 +130,6 @@ class App:
         if self.desk:
             self.desk.starting(e)
 
-    def run(self, cmd):
-        spawn(cmd)
-
     def in_terminal(self, cmd):
         """Команда в шелл терминала: рабочий стол прячется, команда набирается, как с клавиатуры."""
         if self.desk:
