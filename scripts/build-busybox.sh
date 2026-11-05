@@ -1,15 +1,22 @@
 #!/bin/sh
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 VER=1.36.1
-BR=buildroot-2024.02.5
+BRVER=2024.02.5
 CACHE=.cache
 TC=$CACHE/i686-linux-musl-cross
 SRC=$CACHE/busybox-$VER
+BR=$CACHE/buildroot-$BRVER
 
 mkdir -p $CACHE
 [ -x $TC/bin/i686-linux-musl-gcc ] || curl -fsSL https://musl.cc/i686-linux-musl-cross.tgz | tar -xz -C $CACHE
+
+# патчи и конфиг busybox берутся из Buildroot
+if [ ! -d $BR/package/busybox ]; then
+  [ -f $CACHE/buildroot-$BRVER.tar.gz ] || curl -fsSL https://buildroot.org/downloads/buildroot-$BRVER.tar.gz -o $CACHE/buildroot-$BRVER.tar.gz
+  tar -xzf $CACHE/buildroot-$BRVER.tar.gz -C $CACHE buildroot-$BRVER/package/busybox
+fi
 
 rm -rf $SRC
 [ -f $CACHE/busybox-$VER.tar.bz2 ] || curl -fsSL https://busybox.net/downloads/busybox-$VER.tar.bz2 -o $CACHE/busybox-$VER.tar.bz2
@@ -29,7 +36,7 @@ cp $BR/package/busybox/busybox.config $SRC/.config
   echo "# CONFIG_NOMMU is not set"
   echo "# CONFIG_SHA1_HWACCEL is not set"
   echo "# CONFIG_SHA256_HWACCEL is not set"
-  cat busybox.fragment
+  cat config/busybox.fragment
 } > $CACHE/fragment
 sed -n 's/^\(# \)\{0,1\}\(CONFIG_[A-Z0-9_]*\)[= ].*/\2/p' $CACHE/fragment | while read -r k; do
   sed -i "/^\(# \)\{0,1\}$k[= ]/d" $SRC/.config

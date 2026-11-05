@@ -1,3 +1,7 @@
+# Чем был собран base/rootfs.base.cpio: Buildroot 2024.02.5 (output/images/rootfs.cpio),
+# потом немного правок руками. Сейчас ядро и busybox собирают scripts/build-*.sh,
+# а из этого rootfs build.sh берёт только каркас (/etc, init, ссылки), см. config/base.exclude.
+# Из корня репозитория: docker build -f config/buildroot/Dockerfile .
 FROM debian:bookworm
 
 # Зависимости Buildroot
@@ -20,10 +24,10 @@ RUN wget -q https://buildroot.org/downloads/buildroot-2024.02.5.tar.gz \
 WORKDIR /home/builder/buildroot
 
 # Конфиги и overlay с твоими командами
-COPY --chown=builder buildroot.config  .config
-COPY --chown=builder linux.config      linux.config
-COPY --chown=builder busybox.fragment  /home/builder/busybox.fragment
-COPY --chown=builder overlay/          /home/builder/overlay/
+COPY --chown=builder config/buildroot/buildroot.config  .config
+COPY --chown=builder config/linux.config               linux.config
+COPY --chown=builder config/busybox.fragment            /home/builder/busybox.fragment
+COPY --chown=builder overlay/                           /home/builder/overlay/
 
 # Права на исполняемые скрипты overlay
 USER root

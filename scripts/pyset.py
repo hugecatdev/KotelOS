@@ -1,7 +1,10 @@
 import argparse
 import os
 import re
-import alpine
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import alpine  # noqa: E402
 
 GUI = re.compile(r"qt[56]|gtk|webkit|mesa|llvm|clang|wayland|libx11|cairo|pango|gdk|gstreamer|ffmpeg|sdl2|^R$|openjdk|vulkan|xorg|libdrm")
 
@@ -12,7 +15,7 @@ def main():
     ap.add_argument("--skip", action="append", default=[])
     a = ap.parse_args()
     pkgs, provides = alpine.index()
-    have = set(os.listdir("packages")) | set(a.skip) | {"python3"}
+    have = alpine.local_packages() | set(a.skip) | {"python3"}
 
     def deps(n):
         for d in pkgs[n]["deps"]:

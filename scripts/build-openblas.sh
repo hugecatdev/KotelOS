@@ -1,14 +1,14 @@
 #!/bin/sh
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 VER=0.3.28
 CACHE=.cache
 TC=$CACHE/i686-linux-musl-cross
 SRC=$CACHE/OpenBLAS-$VER
-OUT=packages/openblas
+OUT=build/packages/openblas
 
-[ -x $TC/bin/i686-linux-musl-gfortran ] || { echo "нет тулчейна, сначала ./build-busybox.sh"; exit 1; }
+[ -x $TC/bin/i686-linux-musl-gfortran ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
 [ -f $CACHE/OpenBLAS-$VER.tar.gz ] || curl -fsSL https://github.com/OpenMathLib/OpenBLAS/releases/download/v$VER/OpenBLAS-$VER.tar.gz -o $CACHE/OpenBLAS-$VER.tar.gz
 rm -rf $SRC
 tar -xzf $CACHE/OpenBLAS-$VER.tar.gz -C $CACHE

@@ -6,7 +6,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import alpine
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import alpine  # noqa: E402
+
+DEST = os.path.join(alpine.GEN, "jdk8")
 
 J = "usr/lib/jvm/java-1.8-openjdk"
 JSA = J + "/jre/lib/i386/server/classes.jsa"
@@ -20,7 +25,7 @@ DROP = alpine.DROP + [
 
 def main():
     pkgs, _ = alpine.index()
-    dest = "packages/jdk8"
+    dest = DEST
     shutil.rmtree(dest, ignore_errors=True)
     os.makedirs(dest)
     for n in ("openjdk8-jre-lib", "openjdk8-jre-base", "openjdk8-jdk"):
@@ -66,10 +71,11 @@ def cds():
         finally:
             c.close()
     raw = base64.b64decode(data)
-    with open(os.path.join("packages/jdk8", JSA), "wb") as f:
+    with open(os.path.join(DEST, JSA), "wb") as f:
         f.write(raw)
-    print("classes.jsa %.1f МБ -> packages/jdk8/%s (пересобери ./build.sh)" % (len(raw) / 1048576, JSA))
+    print("classes.jsa %.1f МБ -> %s/%s (пересобери ./build.sh)" % (len(raw) / 1048576, DEST, JSA))
 
 
 if __name__ == "__main__":
+    os.chdir(ROOT)
     cds() if sys.argv[1:] == ["--cds"] else main()

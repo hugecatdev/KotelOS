@@ -13,6 +13,8 @@ MIRROR = "https://dl-cdn.alpinelinux.org/alpine/v3.22"
 KT_MIRRORS = ["https://mirrors.sdu.edu.cn/alpine/v3.22", "https://mirror.xtom.com.hk/alpine/v3.22"]
 REPOS = ["main", "community"]
 CACHE = ".cache/alpine"
+OWN = "packages"  # свои пакеты, в git
+GEN = "build/packages"  # скачанные из Alpine и собранные скриптами
 BASE_PROVIDES = {"/bin/sh", "busybox", "ca-certificates"}
 DROP = [
     "usr/share/man/*", "usr/share/doc/*", "usr/share/info/*", "usr/share/licenses/*",
@@ -20,6 +22,11 @@ DROP = [
     "usr/lib/pkgconfig/*", "usr/lib/cmake/*", "*.a", "*.la",
     "usr/share/applications/*", "usr/share/icons/*", "usr/share/pixmaps/*",
 ]
+
+
+def local_packages():
+    """Имена пакетов репозитория: свои и сгенерированные."""
+    return {n for d in (OWN, GEN) if os.path.isdir(d) for n in os.listdir(d) if os.path.isdir(os.path.join(d, n))}
 
 
 def fetch(url, path, max_age=None):
@@ -169,7 +176,7 @@ def main():
     old, _, new = a.rename.partition(":")
     if a.kt_index:
         mirrors = [m.rstrip("/") for m in a.mirror or KT_MIRRORS]
-        kt_index(a.kt_index, mirrors, set(os.listdir("packages")), alias, old, new, a.desc)
+        kt_index(a.kt_index, mirrors, local_packages(), alias, old, new, a.desc)
         return
     if not a.packages:
         ap.error("нужны пакеты")
@@ -181,12 +188,13 @@ def main():
             return alias[n]
         return new + n[len(old):] if old and n.startswith(old) else n
 
-    existing = {n for n in pkgs if a.keep_existing and os.path.isdir(os.path.join("packages", ours(n)))}
+    have = local_packages() if a.keep_existing else set()
+    existing = {n for n in pkgs if ours(n) in have}
     for n in resolve(a.packages, pkgs, provides, skip, set(alias) | existing):
         if n in alias or n in existing:
             continue
         p = pkgs[n]
-        dest = os.path.join("packages", ours(n))
+        dest = os.path.join(GEN, ours(n))
         shutil.rmtree(dest, ignore_errors=True)
         os.makedirs(dest)
         fname = f"{n}-{p['ver']}.apk"

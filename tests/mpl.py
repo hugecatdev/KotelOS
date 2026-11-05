@@ -8,9 +8,10 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PKG = ROOT + "/packages"
+PKG = ROOT + "/build/packages"
+OWN = ROOT + "/packages"
 SITE = "usr/lib/python3.12/site-packages"
-PATCH = ROOT + "/matplotlib.patch"
+PATCH = ROOT + "/patches/matplotlib.patch"
 
 
 def tree(dst, original):
@@ -31,8 +32,8 @@ def tree(dst, original):
 
 def render(top, out, extra):
     std = sorted(glob.glob(PKG + "/python3*/usr/lib/python3.12"))
-    path = [os.path.join(top, SITE)] + std + [d + "/lib-dynload" for d in std] + sorted(glob.glob(PKG + "/python-*/" + SITE))
-    libs = ":".join(glob.glob(PKG + "/*/usr/lib") + glob.glob(PKG + "/*/lib"))
+    path = [os.path.join(top, SITE)] + std + [d + "/lib-dynload" for d in std] + sorted(glob.glob(PKG + "/python-*/" + SITE) + glob.glob(OWN + "/python-*/" + SITE))
+    libs = ":".join(glob.glob(PKG + "/*/usr/lib") + glob.glob(PKG + "/*/lib") + glob.glob(OWN + "/*/usr/lib"))
     env = dict(os.environ, PYTHONHOME=PKG + "/minipython/usr", PYTHONPATH=":".join(path), PYTHONDONTWRITEBYTECODE="1",
                MPLCONFIGDIR=top + "/cfg")
     r = subprocess.run([PKG + "/musl/lib/ld-musl-i386.so.1", "--library-path", libs, PKG + "/minipython/usr/bin/python3.12",

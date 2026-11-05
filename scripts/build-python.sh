@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 VER=3.12.15
 CACHE=$PWD/.cache
@@ -9,12 +9,12 @@ SRC=$CACHE/Python-$VER
 HOST=$CACHE/cpython-host
 SR=$CACHE/pysysroot
 B=$CACHE/cpython-build
-LD=$PWD/packages/musl/lib/ld-musl-i386.so.1
+LD=$PWD/build/packages/musl/lib/ld-musl-i386.so.1
 ARCH="-march=pentium4 -mtune=generic -mfpmath=sse -fno-asynchronous-unwind-tables -fno-unwind-tables"
 LTO="-fno-semantic-interposition -flto -ffat-lto-objects -flto-partition=none"
 
-[ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала ./build-busybox.sh"; exit 1; }
-[ -x $LD ] || { echo "нет packages/musl, сначала ./get-packages.sh"; exit 1; }
+[ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
+[ -x $LD ] || { echo "нет build/packages/musl, сначала scripts/get-packages.sh"; exit 1; }
 [ -f $CACHE/Python-$VER.tar.xz ] || curl -fsSL https://www.python.org/ftp/python/$VER/Python-$VER.tar.xz -o $CACHE/Python-$VER.tar.xz
 rm -rf $SRC
 tar -xJf $CACHE/Python-$VER.tar.xz -C $CACHE
@@ -29,7 +29,7 @@ s = s.replace(old, "import re, codecs\n").replace(
     "def nameprep(label):\n", "def nameprep(label):\n    import stringprep\n    from unicodedata import ucd_3_2_0 as unicodedata\n")
 open(p, "w").write(s)
 EOF
-python3 pymin.py $SRC/Modules/getpath.py $(for m in importlib/_bootstrap importlib/_bootstrap_external zipimport abc codecs io \
+python3 scripts/pymin.py $SRC/Modules/getpath.py $(for m in importlib/_bootstrap importlib/_bootstrap_external zipimport abc codecs io \
   _collections_abc _sitebuiltins genericpath ntpath posixpath os site stat importlib/util importlib/machinery runpy; do echo $SRC/Lib/$m.py; done)
 python3 - $SRC <<'EOF'
 import re
@@ -135,6 +135,6 @@ rm -rf stage
 make install DESTDIR=$B/stage LINKFORSHARED="-Xlinker -export-dynamic -no-pie" > inst.log 2>&1 || { tail -30 inst.log; exit 1; }
 cd - > /dev/null
 
-python3 pysplit.py $B/stage --strip $TC/bin/i686-linux-musl-strip
-printf '' | i686-linux-musl-gcc -shared -nostdlib -Wl,-soname,libpython3.12.so.1.0 -o packages/python3/usr/lib/libpython3.12.so.1.0 -x c -
-i686-linux-musl-strip packages/python3/usr/lib/libpython3.12.so.1.0
+python3 scripts/pysplit.py $B/stage --strip $TC/bin/i686-linux-musl-strip
+printf '' | i686-linux-musl-gcc -shared -nostdlib -Wl,-soname,libpython3.12.so.1.0 -o build/packages/python3/usr/lib/libpython3.12.so.1.0 -x c -
+i686-linux-musl-strip build/packages/python3/usr/lib/libpython3.12.so.1.0

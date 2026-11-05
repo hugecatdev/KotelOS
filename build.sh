@@ -5,12 +5,27 @@ cd "$(dirname "$0")"
 BASE=base/rootfs.base.cpio
 OUT=images
 PKG=site/repo
+GEN=build/packages
 
 if [ ! -f "$BASE" ]; then
   echo "Нет $BASE - положи туда rootfs.cpio из Buildroot (output/images/rootfs.cpio)"
   exit 1
 fi
+if [ ! -x overlay/bin/busybox ]; then
+  echo "Нет overlay/bin/busybox - сначала scripts/build-busybox.sh"
+  exit 1
+fi
+if [ ! -d "$GEN" ]; then
+  echo "Нет $GEN - сначала scripts/get-packages.sh"
+  exit 1
+fi
+dup=$( { ls packages; ls "$GEN"; } | LC_ALL=C sort | uniq -d)
+if [ -n "$dup" ]; then
+  echo "Пакеты есть и в packages/, и в $GEN/: $dup"
+  exit 1
+fi
 
+mkdir -p "$OUT"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -22,7 +37,7 @@ minify() {
     esac
     sed -i -e '1!{/^[[:space:]]*#/d;/^[[:space:]]*$/d;s/^[[:space:]]*//}' "$f"
   done
-  find "$1" -type f -name '*.py' ! -path "$1/root/*" ! -path "*/site-packages/*" -print0 | xargs -0 -r python3 pymin.py
+  find "$1" -type f -name '*.py' ! -path "$1/root/*" ! -path "*/site-packages/*" -print0 | xargs -0 -r python3 scripts/pymin.py
   find "$1" -type f -path '*/usr/lib/kt-*.js' | while read -r f; do
     case $(head -c 5 "$f") in
       async|"("*) { printf 'var __f='; cat "$f"; } > "$f.in"; w=1 ;;
@@ -36,7 +51,7 @@ minify() {
 }
 
 overlay/bin/busybox --list-full > "$tmp/applets"
-python3 cpio-filter.py filter "$BASE" base.exclude "$tmp/applets" > "$tmp/base.cpio"
+python3 scripts/cpio-filter.py filter "$BASE" config/base.exclude "$tmp/applets" > "$tmp/base.cpio"
 
 mkdir "$tmp/root"
 cp -a overlay/. "$tmp/root/"
@@ -53,7 +68,7 @@ hash=$(cat "$tmp/base.cpio" "$tmp/overlay.cpio" | sha256sum | cut -c1-10)
 mkdir -p "$tmp/ver/usr/lib" "$tmp/ver/var/lib/kt/pkg"
 printf 'NAME=KotelOS\nID=kotelos\nVERSION_ID=%s\nPRETTY_NAME="KotelOS %s"\n' "$hash" "$hash" > "$tmp/ver/usr/lib/os-release"
 : > "$tmp/ver/var/lib/kt/pkg/base"
-python3 cpio-filter.py list "$tmp/base.cpio" "$tmp/overlay.cpio" > "$tmp/own"
+python3 scripts/cpio-filter.py list "$tmp/base.cpio" "$tmp/overlay.cpio" > "$tmp/own"
 ( cd "$tmp/ver" && find . -mindepth 1 \( -type d -printf '%P/\n' -o -printf '%P\n' \) ) >> "$tmp/own"
 LC_ALL=C sort -u "$tmp/own" > "$tmp/ver/var/lib/kt/pkg/base"
 find "$tmp/ver" -exec touch -h -d @1767225600 {} +
@@ -62,11 +77,11 @@ find "$tmp/ver" -exec touch -h -d @1767225600 {} +
 cat "$tmp/base.cpio" "$tmp/overlay.cpio" "$tmp/ver.cpio" > "$OUT/rootfs.cpio"
 printf '{"build":"%s"}\n' "$hash" > "$OUT/build.json"
 
-PYLIBS=$(ls -d "$PWD"/packages/*/usr/lib "$PWD"/packages/*/lib 2>/dev/null | tr '\n' ':')
+PYLIBS=$(ls -d "$PWD"/packages/*/usr/lib "$PWD"/packages/*/lib "$PWD/$GEN"/*/usr/lib "$PWD/$GEN"/*/lib 2>/dev/null | tr '\n' ':')
 pyc() {
-  [ -d "$1/usr/lib/python3.12" ] && [ -x packages/minipython/usr/bin/python3.12 ] || return 0
-  PYTHONDONTWRITEBYTECODE=1 PYTHONHOME=packages/minipython/usr PYTHONPATH=packages/python3/usr/lib/python3.12/lib-dynload \
-    packages/musl/lib/ld-musl-i386.so.1 --library-path "$PYLIBS" packages/minipython/usr/bin/python3.12 \
+  [ -d "$1/usr/lib/python3.12" ] && [ -x $GEN/minipython/usr/bin/python3.12 ] || return 0
+  PYTHONDONTWRITEBYTECODE=1 PYTHONHOME=$GEN/minipython/usr PYTHONPATH=$GEN/python3/usr/lib/python3.12/lib-dynload \
+    $GEN/musl/lib/ld-musl-i386.so.1 --library-path "$PYLIBS" $GEN/minipython/usr/bin/python3.12 \
     -X no_debug_ranges -m compileall -b -q -s "$1" -p / "$1/usr/lib/python3.12" > /dev/null || :
   find "$1/usr/lib/python3.12" -name '*.py' | while read -r f; do
     if [ -f "${f}c" ]; then rm "$f"; fi
@@ -74,9 +89,9 @@ pyc() {
 }
 
 ktpyc() {
-  [ -d "$1/usr/lib/kt-python" ] && [ -x packages/minipython/usr/bin/python3.12 ] || return 0
-  PYTHONHOME=packages/minipython/usr packages/musl/lib/ld-musl-i386.so.1 \
-    --library-path "$PYLIBS" packages/minipython/usr/bin/python3.12 -X no_debug_ranges -m compileall \
+  [ -d "$1/usr/lib/kt-python" ] && [ -x $GEN/minipython/usr/bin/python3.12 ] || return 0
+  PYTHONHOME=$GEN/minipython/usr $GEN/musl/lib/ld-musl-i386.so.1 \
+    --library-path "$PYLIBS" $GEN/minipython/usr/bin/python3.12 -X no_debug_ranges -m compileall \
     --invalidation-mode checked-hash -q -s "$1" -p / "$1/usr/lib/kt-python" > /dev/null || return 0
 }
 
@@ -85,10 +100,10 @@ rm -rf "$NEW"
 mkdir -p "$NEW"
 PC=.cache/pkg
 mkdir -p $PC
-tools=$( { sed -n '/^minify()/,/^}/p; /^pyc()/,/^}/p; /xz --check/p' build.sh; cat pymin.py; } | sha256sum | cut -c1-16)
+tools=$( { sed -n '/^minify()/,/^}/p; /^pyc()/,/^}/p; /xz --check/p' build.sh; cat scripts/pymin.py; } | sha256sum | cut -c1-16)
 printf 'base\t0/%s\t\n' "$(( $(stat -c %s "$OUT/rootfs.cpio") / 1024 ))" > "$tmp/index"
 : > "$tmp/pypi"
-for d in packages/*/; do
+for d in $(printf '%s\n' packages/*/ "$GEN"/*/ | awk -F/ '{ print $(NF - 1) "\t" $0 }' | LC_ALL=C sort | cut -f2); do
   n=$(basename "$d")
   key=$( { echo "$tools"; cd "$d" && find . -printf '%P %s %T@ %m %l\n' | LC_ALL=C sort; } | sha256sum | cut -c1-32)
   if [ "$(cat $PC/$n.key 2>/dev/null)" = "$key" ] && [ -f $PC/$n.tar.xz ] && [ -f $PC/$n.kb ]; then
@@ -132,7 +147,7 @@ awk -F'\t' -v OFS='\t' '
     for (i = 1; i <= no; i++) if (order[i] in line) { print line[order[i]], desc[order[i]]; done[order[i]] = 1 }
     for (i = 1; i <= nn; i++) if (!(names[i] in done)) print line[names[i]], ""
   }
-' programs.txt "$tmp/index" > "$NEW/index.txt"
+' config/programs.txt "$tmp/index" > "$NEW/index.txt"
 if ! python3 alpine.py --kt-index "$NEW/alpine.txt.gz" --desc "$NEW/index.txt" --alias py3-requests=python-requests --alias py3-pip=pip --rename py3-:python- 2> "$tmp/alpine.err"; then
   cat "$tmp/alpine.err" >&2
   if [ -f "$PKG/alpine.txt.gz" ]; then cp "$PKG/alpine.txt.gz" "$NEW/"; echo "alpine: беру прошлый индекс" >&2; fi

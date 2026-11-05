@@ -42,7 +42,7 @@ def main():
     ap = argparse.ArgumentParser(description="раскладка собранного CPython по пакетам minipython/python3")
     ap.add_argument("stage", help="DESTDIR после make install")
     ap.add_argument("--strip", required=True)
-    ap.add_argument("--out", default="packages")
+    ap.add_argument("--out", default="build/packages")
     a = ap.parse_args()
     lib = os.path.join(a.stage, L)
     for n in DEPS:

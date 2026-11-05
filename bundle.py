@@ -14,7 +14,8 @@ import time
 import urllib.request
 import alpine
 
-IMG = "images"
+IMG = "images"  # собирают build.sh и scripts/build-kernel.sh
+V86 = "vendor/v86"  # libv86.js, v86.wasm и BIOS из проекта v86
 REPO = "site/repo"
 PAGE = "page.html"
 CACHE = ".cache/cdn"
@@ -353,9 +354,9 @@ def main():
     names = closure(a.packages)
     initrd = open(IMG + "/rootfs.cpio", "rb").read() + packages_cpio(names, a.packages, a.file)
     files = {
-        "wasm": blob(open(IMG + "/v86.wasm", "rb").read()),
-        "bios": blob(open(IMG + "/seabios.bin", "rb").read()),
-        "vgabios": blob(open(IMG + "/vgabios.bin", "rb").read()),
+        "wasm": blob(open(V86 + "/v86.wasm", "rb").read()),
+        "bios": blob(open(V86 + "/seabios.bin", "rb").read()),
+        "vgabios": blob(open(V86 + "/vgabios.bin", "rb").read()),
     }
     boot = {
         "bzimage": blob(open(IMG + "/bzImage", "rb").read(), gz=False),

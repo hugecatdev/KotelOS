@@ -1,46 +1,18 @@
 # загрузки, исходники и деревья сборки сторонних проектов
 /.cache/
 /buildroot-2024.02.5/
-/buildroot-2024.02.5.tar.gz
 /rootfs/
 /out-images/
 
 # результаты сборки
-/images/bzImage
-/images/rootfs.cpio
-/images/build.json
+/build/
+/images/
 /site/
 /versions/
 /overlay/bin/busybox
 /overlay/usr/sbin/kt-net
 /overlay/usr/sbin/kt-seed
 /packages/pyzygote/usr/local/bin/python3
-
-# пакеты из Alpine и собранные скриптами (временно, до переноса в build/)
-/packages/*
-!/packages/ai/
-!/packages/curl/
-!/packages/examples/
-!/packages/examples-c/
-!/packages/examples-lua/
-!/packages/examples-python/
-!/packages/fun/
-!/packages/neofetch/
-!/packages/notify/
-!/packages/pack/
-!/packages/pip/
-!/packages/python-idle/
-!/packages/python-matplotlib-demo/
-!/packages/python-matplotlib-tk/
-!/packages/python-mpy/
-!/packages/python-requests/
-!/packages/python-tkinter/
-!/packages/python-turtle/
-!/packages/python-turtledemo/
-!/packages/pyzygote/
-!/packages/sync/
-!/packages/unixporn/
-!/packages/wget/
 
 __pycache__/
 *.pyc

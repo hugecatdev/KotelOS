@@ -15,8 +15,9 @@ import bundle
 VERSIONS = "versions"
 DEFS = "bundles"
 SITE = "site"
-TREE = ["bundle.py", "alpine.py", bundle.PAGE] + [bundle.IMG + "/" + f for f in (
-    "bzImage", "rootfs.cpio", "build.json", "libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin")]
+TREE = (["bundle.py", "alpine.py", bundle.PAGE]
+        + [bundle.IMG + "/" + f for f in ("bzImage", "rootfs.cpio", "build.json")]
+        + [bundle.V86 + "/" + f for f in ("libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin")])
 
 
 def sha(path):
