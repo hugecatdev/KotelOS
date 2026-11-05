@@ -117,7 +117,9 @@ class IconView(tk.Frame):
             l.destroy()
         self.labels = []
         for k, it in enumerate(self.items):
-            img = self.app.image(it.icon, 48) or self.app.image("application-x-generic", 48)
+            # нет своей иконки (у программ из Alpine их нет): программа - значок исполняемого, файл - «?»
+            img = self.app.image(it.icon, 48) or self.app.image(
+                "application-x-executable" if it.kind == "app" else "application-x-generic", 48)
             l = tk.Label(self, image=img, text=wrap(it.name), compound="top", width=CELL, height=CELL_H,
                          anchor="n", bg=self.bg, fg=self.fg)
             l._i = k
@@ -231,6 +233,9 @@ class IconView(tk.Frame):
                 m.add_command(label="Копировать", command=lambda: self.app.set_clip(items, False))
             if one and one.kind == "dir" and self.app.clip:
                 m.add_command(label="Вставить в папку", command=lambda: self.paste(one.path))
+            if one and one.kind == "dir" and one.path not in (HOME, TRASH + "/files") \
+                    and one.path not in [p for p, _ in self.app.places()]:
+                m.add_command(label="Добавить в места", command=lambda: self.app.add_place(one.path))
             if one and one.path not in (HOME, TRASH + "/files"):
                 m.add_command(label="Переименовать…", command=lambda: self.rename(one))
             if not (one and one.path in (HOME, TRASH + "/files")):
@@ -263,7 +268,7 @@ class IconView(tk.Frame):
         m.add_separator()
         if self.desktop:
             m.add_command(label="Открыть в файлах", command=lambda: self.app.files(self.folder))
-        m.add_command(label="Терминал здесь", command=lambda: self.app.in_terminal("cd " + q(self.folder)))
+        m.add_command(label="Терминал здесь", command=lambda: self.app.in_terminal(cwd=self.folder))
         self._post(e)
 
     # --- действия

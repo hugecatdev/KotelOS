@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Name[ru]=Терминал
+Comment=Shell in a window
+Comment[ru]=Шелл в окне
+Exec=terminal
+Icon=terminal
+Terminal=false
+Categories=System;TerminalEmulator;

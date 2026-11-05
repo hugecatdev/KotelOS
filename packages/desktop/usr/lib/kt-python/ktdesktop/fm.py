@@ -1,13 +1,16 @@
 # окно файлов: путь сверху, панель мест, папка значками, меню, история; полоса меню не прокручивается
 import tkinter as tk
+from tkinter import ttk
 
-from . import DESKTOP, HOME, TRASH, basename, dirname, exists, isdir, q
+from . import DESKTOP, HOME, TRASH, basename, dirname, exists, isdir
 from .view import IconView, SEL_BG, SEL_FG
 
+# постоянные места; свои добавляются из меню папки («Добавить в места») - ~/.config/ktdesktop/places
 PLACES = [("Домашняя папка", HOME, "user-home"), ("Рабочий стол", DESKTOP, "user-desktop"),
-          ("Примеры", HOME + "/examples", "folder"), ("Корзина", TRASH + "/files", "user-trash"),
-          ("Корень /", "/", "folder")]
+          ("Корзина", TRASH + "/files", "user-trash"), ("Корень /", "/", "folder")]
+SHORT = {"Домашняя папка": "Домой", "Корень /": "/"}
 SIDE = 150  # ширина панели мест сбоку, px
+SIDE_BG, SIDE_FG = "#22272e", "#d8d8d2"
 
 
 class FileManager:
@@ -25,7 +28,7 @@ class FileManager:
         f.add_command(label="Создать файл…", command=lambda: self.view.new_file())
         f.add_separator()
         f.add_command(label="Перейти…", accelerator="Ctrl+L", command=self.goto)
-        f.add_command(label="Терминал здесь", command=lambda: app.in_terminal("cd " + q(self.view.folder)))
+        f.add_command(label="Терминал здесь", command=lambda: app.in_terminal(cwd=self.view.folder))
         f.add_separator()
         f.add_command(label="Закрыть", accelerator="Ctrl+W", command=self.close)
         mb.add_cascade(label="Файл", menu=f)
@@ -52,20 +55,14 @@ class FileManager:
         self.path.pack(side="top", fill="x", padx=4, pady=(4, 2))
         self.path.bind("<Return>", lambda e: self._path() or "break")
         # места: на широком экране столбцом слева, на узком - рядом кнопок под путём, иначе значкам не хватит ширины
-        narrow = w.winfo_screenwidth() <= 520
-        side = tk.Frame(w)
-        side.pack(side="top" if narrow else "left", fill="x" if narrow else "y", padx=2)
+        self.narrow = narrow = w.winfo_screenwidth() <= 520
+        self.side = tk.Frame(w, bg=SIDE_BG)
+        self.side.pack(side="top" if narrow else "left", fill="x" if narrow else "y")
+        ttk.Separator(w, orient="horizontal" if narrow else "vertical").pack(
+            side="top" if narrow else "left", fill="x" if narrow else "y")
+        self.pmenu = tk.Menu(w, tearoff=0)
         self.places = []
-        for name, place, icon in PLACES:
-            b = tk.Button(side, text=name if not narrow else name.replace("Домашняя папка", "Домой").replace("Корень /", "/"),
-                          image=app.image(icon, 24), compound="left", relief="flat", anchor="w", padx=4,
-                          command=lambda place=place: self.go(place))
-            if narrow:
-                b.pack(side="left", padx=1, pady=1)
-            else:
-                b.configure(width=SIDE)
-                b.pack(side="top", fill="x", pady=1)
-            self.places.append((place, b))
+        self.build_places()
         self.view = IconView(w, app, w, path, on_change=self.title)
         self.view.reserve = 0 if narrow else SIDE + 12
         self.view.on_dir = self.go
@@ -91,7 +88,34 @@ class FileManager:
             self.path.insert(0, f)
         for place, b in self.places:
             on = place == f
-            b.configure(bg=SEL_BG if on else "", fg=SEL_FG if on else "")
+            b.configure(bg=SEL_BG if on else SIDE_BG, fg=SEL_FG if on else SIDE_FG)
+
+    def build_places(self):
+        """Постоянные места и свои; своё убирается из его меню (правая кнопка, долгое нажатие)."""
+        for _, b in self.places:
+            b.destroy()
+        self.places = []
+        own = [(name, path, "folder", True) for path, name in self.app.places()]
+        for name, place, icon, mine in [(n, p, i, False) for n, p, i in PLACES] + own:
+            b = tk.Button(self.side, text=SHORT.get(name, name) if self.narrow else name, image=self.app.image(icon, 24),
+                          compound="left", relief="flat", anchor="w", padx=4, bg=SIDE_BG, fg=SIDE_FG,
+                          command=lambda place=place: self.go(place))
+            if mine:
+                b.bind("<Button-3>", lambda e, place=place: self.place_menu(e, place))
+            if self.narrow:
+                b.pack(side="left", padx=1, pady=2)
+            else:
+                b.configure(width=SIDE)
+                b.pack(side="top", fill="x", padx=2, pady=1)
+            self.places.append((place, b))
+        if getattr(self, "view", None) is not None:
+            self.title()
+
+    def place_menu(self, e, place):
+        m = self.pmenu
+        m.delete(0, "end")
+        m.add_command(label="Убрать из мест", command=lambda: self.app.remove_place(place))
+        m.tk_popup(e.x_root, e.y_root)
 
     def go(self, path):
         if path == TRASH + "/files" and not exists(path):

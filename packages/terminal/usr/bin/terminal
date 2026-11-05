@@ -1,0 +1,3 @@
+#!/bin/sh
+# terminal [-T заголовок] [--cd папка] [-e команда...]: терминал в окне
+exec python3 -m ktterm "$@"

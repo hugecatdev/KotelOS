@@ -20,7 +20,7 @@ DROP = [
     "usr/share/man/*", "usr/share/doc/*", "usr/share/info/*", "usr/share/licenses/*",
     "usr/share/locale/*", "usr/share/bash-completion/*", "usr/share/zsh/*", "usr/share/fish/*",
     "usr/lib/pkgconfig/*", "usr/lib/cmake/*", "*.a", "*.la",
-    "usr/share/applications/*", "usr/share/icons/*", "usr/share/pixmaps/*",
+    "usr/share/icons/*", "usr/share/pixmaps/*",  # .desktop (usr/share/applications) остаются: их показывает рабочий стол
 ]
 
 

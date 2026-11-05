@@ -170,7 +170,7 @@ def handlers(mime):
     if (mime.startswith("text/") or mime in TEXTISH) and mime != "text/plain":
         exact += [e for e in all_ if "text/plain" in e.mimes and e not in exact]
     default = _default(mime)
-    exact.sort(key=lambda e: 0 if e.id == default else 1)
+    exact.sort(key=lambda e: (0 if e.id == default else 1, 1 if e.terminal else 0))
     return exact
 
 

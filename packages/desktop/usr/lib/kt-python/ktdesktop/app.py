@@ -5,11 +5,12 @@ from tkinter import messagebox
 
 import kt
 
-from . import HOME, TRASH, basename, exists, mkdirs, q, spawn, stat
+from . import CONFIG, HOME, TRASH, basename, exists, mkdirs, q, read, spawn, stat, write
 from . import entry
 
 # свои программы этого пакета: при запущенном рабочем столе окно открывается в его же процессе
 INTERNAL = ("files", "notepad", "imgview", "cfgedit")
+PLACES = CONFIG + "/places"
 
 
 class App:
@@ -84,6 +85,31 @@ class App:
             if v is not None:
                 v.refresh()
 
+    # --- свои места окна файлов: строка - путь, после табуляции - имя (без него - имя папки)
+
+    def places(self):
+        out = []
+        for line in read(PLACES).split("\n"):
+            path, _, name = line.partition("\t")
+            if path.strip():
+                out.append((path.strip(), name.strip() or basename(path.strip())))
+        return out
+
+    def _save_places(self, items):
+        write(PLACES, "".join("%s\t%s\n" % x for x in items))
+        from .fm import FileManager
+        for w in self.wins:
+            if isinstance(w, FileManager):
+                w.build_places()
+
+    def add_place(self, path):
+        items = self.places()
+        if path not in [p for p, _ in items]:
+            self._save_places(items + [(path, basename(path))])
+
+    def remove_place(self, path):
+        self._save_places([x for x in self.places() if x[0] != path])
+
     def set_clip(self, items, move):
         self.clip = (move, [i.path for i in items])
 
@@ -125,13 +151,27 @@ class App:
             return getattr(self, basename(a[0]))(*a[1:2])
         cmd = " ".join(q(x) for x in a)
         if e.terminal:
-            return self.in_terminal(cmd)
+            return self.in_terminal(cmd, title=e.name)
         spawn(cmd, e.workdir or None)
         if self.desk:
             self.desk.starting(e)
 
-    def in_terminal(self, cmd):
-        """Команда в шелл терминала: рабочий стол прячется, команда набирается, как с клавиатуры."""
+    def in_terminal(self, cmd=None, cwd=None, title=None):
+        """Команда в терминале. Есть программа-терминал (Categories=TerminalEmulator) - в её окне
+        (`-T`, `--cd`, `-e`), нет - в консоли: рабочий стол прячется, команда набирается, как с клавиатуры."""
+        emu = [e for e in entry.apps() if "TerminalEmulator" in e.cats]
+        if emu:
+            a = entry.argv(emu[0].exec)[:1]
+            if title:
+                a += ["-T", title]
+            if cwd:
+                a += ["--cd", cwd]
+            if cmd:
+                a += ["-e", "sh", "-c", cmd]
+            spawn(" ".join(q(x) for x in a))
+            return
+        if cwd:
+            cmd = "cd " + q(cwd) + ("; " + cmd if cmd else "")
         if self.desk:
             self.desk.hide()
         try:
