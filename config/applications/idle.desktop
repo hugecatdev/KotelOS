@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=IDLE
+Comment=Python IDE
+Comment[ru]=Среда разработки на Python
+Exec=idle %F
+Icon=/usr/lib/python3.12/idlelib/Icons/idle_48.png
+Terminal=false
+Categories=Development;IDE;
+MimeType=text/x-python;

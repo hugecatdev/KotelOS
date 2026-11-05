@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Matplotlib Demo
+Name[ru]=Примеры matplotlib
+Comment=Charts: lines, bars, 3D, animation
+Comment[ru]=Графики: линии, столбцы, 3D, анимация
+Exec=mpldemo
+Icon=mpldemo
+Terminal=false
+Categories=Education;Science;Graphics;

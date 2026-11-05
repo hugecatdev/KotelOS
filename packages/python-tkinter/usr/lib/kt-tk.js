@@ -51,8 +51,8 @@
 .tk-probe .tk-hid{display:none!important}
 .tk-label,.tk-btn,.tk-in,.tk-chk,.tk-frame{padding:calc(var(--py) + var(--iy,0px)) calc(var(--px) + var(--ix,0px))}
 .tk-frame{--px:0px;--py:0px}
-.tk-label{--px:2px;--py:1px;display:flex;align-items:center;justify-content:center;justify-content:safe center;white-space:pre}
-.tk-btn{--px:10px;--py:2px;font:inherit;color:var(--hi,#eee);background:var(--bg,#000);border:1px solid #555;cursor:pointer;white-space:pre;display:flex;align-items:center;justify-content:center;border-radius:0}
+.tk-label{--px:2px;--py:1px;display:flex;align-items:center;justify-content:center;justify-content:safe center;white-space:pre;text-align:center}
+.tk-btn{--px:10px;--py:2px;font:inherit;color:var(--hi,#eee);background:var(--bg,#000);border:1px solid #555;cursor:pointer;white-space:pre;display:flex;align-items:center;justify-content:center;border-radius:0;text-align:center}
 .tk-btn:hover{border-color:#999}
 .tk-btn:active{background:#222}
 .tk-btn:disabled{color:#555;border-color:#333;cursor:default}
@@ -77,6 +77,13 @@
 .tk-layer>.tk-max{left:0!important;top:0!important;width:var(--tk-vw,100vw);height:var(--tk-vh,100vh);max-width:none;max-height:none}
 .tk-max>.tk-body{width:auto!important;height:auto!important}
 .tk-max>.tk-grip{display:none}
+.tk-layer>.tk-desk{left:0!important;top:0!important;width:var(--tk-vw,100vw);height:var(--tk-vh,100vh);max-width:none;max-height:none;border:0}
+.tk-layer>.tk-dock{left:0!important;top:auto!important;bottom:0;width:100%;max-width:none;max-height:none;border:0;border-top:1px solid #444}
+.tk-desk>.tk-body,.tk-dock>.tk-body{width:auto!important;height:auto!important}
+.tk-desk>.tk-bar,.tk-desk>.tk-grip,.tk-dock>.tk-bar,.tk-dock>.tk-grip{display:none}
+.tk-layer:not(.tk-wm) .tk-min{display:none}
+.tk-bar>span{flex:1 1 auto}
+.tk-dd>button img,.tk-dd .h img{vertical-align:middle;margin-right:6px}
 .tk-chk{--px:2px;--py:1px;display:flex;align-items:center;gap:6px;cursor:pointer;white-space:pre}
 .tk-chk input{appearance:none;margin:0;width:11px;height:11px;border:1px solid #888;display:grid;place-content:center;cursor:pointer;flex:none}
 .tk-chk input[type=radio]{border-radius:50%}
@@ -133,6 +140,7 @@
     return e;
   };
   const sv = (tag) => document.createElementNS(NS, tag);
+  const ik = (s, name) => s + " " + name; // картинки у каждого процесса свои, как у интерпретатора Tk
   const pair = (v) => (Array.isArray(v) ? v : [v, v]).map((x) => (+x || 0) + "px");
   const hz = (a) => (a === "center" ? "safe center" : a.includes("w") ? "flex-start" : a.includes("e") ? "safe flex-end" : "safe center");
   const vt = (a) => (a === "center" ? "safe center" : a.includes("n") ? "flex-start" : a.includes("s") ? "safe flex-end" : "safe center");
@@ -306,6 +314,35 @@
     on("focusout", "fout");
     el.addEventListener("pointerover", (e) => hover(win, e));
     el.addEventListener("pointerleave", () => hover(win, null));
+    // долгое нажатие пальцем (0.55 с без сдвига) - правая кнопка: на сенсорном экране меню по Button-3 иначе не вызвать.
+    // По таймеру, а не по contextmenu: iOS его на долгое нажатие не шлёт. В полях ввода нажатие остаётся родным (выделение)
+    const lpStop = () => {
+      clearTimeout(S.lp);
+      S.lp = 0;
+    };
+    el.addEventListener("pointerdown", (e) => {
+      lpStop();
+      S.lpEat = 0;
+      if (e.pointerType !== "touch" || e.target.closest?.("textarea,input,select")) return;
+      const x = e.clientX, y = e.clientY, t = e.target;
+      S.lpxy = [x, y];
+      S.lp = setTimeout(() => {
+        S.lp = 0;
+        S.lpEat = 1; // щелчок после долгого нажатия - не щелчок
+        const d = { clientX: x, clientY: y, button: 2, buttons: 0, target: t, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false, preventDefault() {} };
+        fire(d, "down");
+        fire(d, "up");
+      }, 550);
+    }, true);
+    el.addEventListener("pointermove", (e) => S.lp && Math.hypot(e.clientX - S.lpxy[0], e.clientY - S.lpxy[1]) > 10 && lpStop(), true);
+    el.addEventListener("pointerup", lpStop, true);
+    el.addEventListener("pointercancel", lpStop, true);
+    el.addEventListener("click", (e) => {
+      if (!S.lpEat) return;
+      S.lpEat = 0;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
     el.addEventListener("contextmenu", (e) => {
       const w = at(e);
       if (w && want(w, "down")) e.preventDefault();
@@ -321,8 +358,57 @@
     w.ro.observe(w.body || w.el);
   };
 
+  // типы окон как в EWMH: desktop всегда снизу и во весь экран, dock - панель снизу поверх окон
+  const kind = (el) => (el.classList.contains("tk-desk") ? 0 : el.classList.contains("tk-dock") ? 99998 : -1);
   const lift = (el) => {
-    if (el.style.zIndex !== "100000") el.style.zIndex = ++S.z;
+    const k = kind(el);
+    if (k >= 0) el.style.zIndex = k;
+    else if (el.style.zIndex !== "100000") el.style.zIndex = ++S.z;
+    S.wmq?.();
+  };
+  // окна для панели задач: обычные верхние окна, видимые или свёрнутые (hide 2), без рамки и диалогов - нет
+  const client = (w) => WIN.has(w.k) && !w.p.bare && !w.p.transient && (!w.p.type || w.p.type === "normal") && w.p.hide !== 1 && !!w.el;
+  const isDock = (w) => WIN.has(w.k) && w.p.type === "dock";
+  S.wmq = () => {
+    S.wmt ||= setTimeout(() => {
+      S.wmt = 0;
+      const all = Object.values(S.w);
+      if (!all.some(isDock)) return void (S.wml = "");
+      let a = null, z = -1;
+      const list = all.filter(client).map((w) => {
+        if (!w.p.hide && +w.el.style.zIndex > z) [a, z] = [w.id, +w.el.style.zIndex];
+        return [w.id, w.p.title || "", w.p.hide ? 1 : 0];
+      });
+      const s = JSON.stringify([list, a]);
+      if (s === S.wml) return;
+      S.wml = s;
+      kt.emit("tkwm", { w: list, a });
+    }, 150);
+  };
+  // рабочая область: высота экрана без видимых панелей
+  const docks = () => {
+    let dh = 0, any = false;
+    for (const w of Object.values(S.w)) {
+      if (!isDock(w)) continue;
+      any = true;
+      if (!w.p.hide) dh = Math.max(dh, w.el.offsetHeight);
+      if (!w.dro) (w.dro = new ResizeObserver(() => S.w[w.id] === w && docks())).observe(w.el);
+    }
+    S.layer.classList.toggle("tk-wm", any);
+    if (dh === (S.dh || 0)) return;
+    S.dh = dh;
+    S.view();
+  };
+  // запрос панели задач к чужому окну: поднять сразу, остальное (свернуть, развернуть, закрыть) - через его процесс
+  S.wm = (id, op) => {
+    const w = S.w[id];
+    if (!w || !WIN.has(w.k)) return 0;
+    if (op === "raise") {
+      raise(w);
+      w.el.focus({ preventScroll: true });
+    } else if (op === "close") push(w, "close");
+    else push(w, "wm", op);
+    return 1;
   };
   const raise = (w, seen = new Set()) => {
     if (!w?.el || seen.has(w)) return;
@@ -337,9 +423,14 @@
     const v = window.visualViewport;
     return v ? { x: v.offsetLeft, y: v.offsetTop, w: v.width, h: v.height } : { x: 0, y: 0, w: innerWidth, h: innerHeight };
   };
+  const area = () => {
+    const v = vp();
+    v.h = Math.max(0, v.h - (S.dh || 0));
+    return v;
+  };
   const fit = (el) => {
-    if (!el.isConnected) return;
-    const r = el.getBoundingClientRect(), v = vp();
+    if (!el.isConnected || kind(el) >= 0) return;
+    const r = el.getBoundingClientRect(), v = area();
     if (el.offsetLeft + r.width > v.w) el.style.left = Math.max(0, v.w - r.width - 4) + "px";
     if (el.offsetTop + r.height > v.h) el.style.top = Math.max(0, v.h - r.height - 4) + "px";
   };
@@ -350,7 +441,7 @@
     st.width = v.w + "px";
     st.height = v.h + "px";
     st.setProperty("--tk-vw", v.w + "px");
-    st.setProperty("--tk-vh", v.h + "px");
+    st.setProperty("--tk-vh", Math.max(0, v.h - (S.dh || 0)) + "px");
     S.layer.classList.toggle("tk-narrow", v.w <= 520);
     for (const el of S.layer.children) if (el.classList.contains("tk-win") || el.classList.contains("tk-dd")) fit(el);
   };
@@ -362,6 +453,7 @@
     addEventListener("resize", f);
   }
   S.view();
+  docks(); // код страницы грузит каждый новый процесс tkinter: класс слоя сброшен, панели уже есть
   const drag = (w) => {
     const { bar, el } = w;
     bar.onpointerdown = (e) => {
@@ -369,7 +461,7 @@
       const dx = e.clientX - el.offsetLeft, dy = e.clientY - el.offsetTop;
       bar.setPointerCapture(e.pointerId);
       bar.onpointermove = (e) => {
-        const v = vp();
+        const v = area();
         w.moved = 1;
         el.style.left = Math.max(60 - el.offsetWidth, Math.min(v.w - 60, e.clientX - dx)) + "px";
         el.style.top = Math.max(0, Math.min(v.h - 30, e.clientY - dy)) + "px";
@@ -379,8 +471,10 @@
   };
   const grip = (w) => {
     const rs = w.p.rs;
-    w.grip.hidden = !!w.p.bare || (!!rs && !rs[0] && !rs[1]);
-    w.el.classList.toggle("tk-main", !w.p.bare && !w.p.transient && (!rs || !!rs[0]));
+    const plain = !w.p.type || w.p.type === "normal";
+    w.mn.hidden = !!w.p.transient; // диалог не на панели задач: свёрнутый потерялся бы
+    w.grip.hidden = !!w.p.bare || !plain || (!!rs && !rs[0] && !rs[1]);
+    w.el.classList.toggle("tk-main", !w.p.bare && !w.p.transient && plain && (!rs || !!rs[0]));
   };
   const resize = (w) => {
     const g = w.grip;
@@ -424,14 +518,25 @@
         h("hr", "", d);
         continue;
       }
+      const im = it.img && S.img?.[ik(m.s, it.img)];
+      const pic = (e) => {
+        if (!im) return;
+        const i = h("img", "", e);
+        Object.assign(i, { src: im.u, width: im.w, height: im.h });
+      };
       if (it.t === "m") {
-        h("div", "h", d).textContent = ind + (it.label || "");
+        const e = h("div", "h", d);
+        e.append(ind);
+        pic(e);
+        e.append(it.label || "");
         if (S.w[it.sub]) menuFill(d, S.w[it.sub], ind + "  ");
         continue;
       }
       const b = h("button", "", d);
       const mark = it.t === "k" ? (it.on ? "✓ " : "  ") : it.t === "r" ? (it.on ? "• " : "  ") : "";
-      b.textContent = ind + mark + (it.label || "") + (it.acc ? "   " + it.acc : "");
+      b.append(ind + mark);
+      pic(b);
+      b.append((it.label || "") + (it.acc ? "   " + it.acc : ""));
       b.disabled = it.state === "disabled";
       b.onclick = () => {
         closeDrop();
@@ -632,8 +737,11 @@
       return p.orient === "vertical" ? nat(w, "8px", n) : nat(w, n, "8px");
     }
     if (k === "Separator") return w.el.classList.toggle("tk-v", p.orient === "vertical");
-    st.width = p.width ? p.width + "ch" : "";
-    st.height = p.height ? p.height * 1.4 + "em" : "";
+    // как в Tk: с картинкой размер в пикселях, с одним текстом - в символах и строках
+    const px = !!p.image;
+    st.width = p.width ? p.width + (px ? "px" : "ch") : "";
+    st.height = p.height ? (px ? p.height + "px" : p.height * 1.4 + "em") : "";
+    if (px && w.k === "Label") st.overflow = p.width || p.height ? "hidden" : "";
   };
   const border = (w) => {
     const { relief: r, bd } = w.p, st = (w.body || w.el).style;
@@ -665,8 +773,8 @@
       w.im.style.display = "block";
       w.tx.before(w.im);
     }
-    const im = (S.img ||= {})[name];
-    w.im.dataset.img = name;
+    const key = ik(w.s, name), im = (S.img ||= {})[key];
+    w.im.dataset.img = key;
     if (im) {
       w.im.src = im.u;
       w.im.width = im.w;
@@ -676,6 +784,15 @@
     w.tx.hidden = c === "none";
     el.style.flexDirection = c === "top" ? "column" : c === "bottom" ? "column-reverse" : c === "right" ? "row-reverse" : "";
     el.style.gap = c !== "none" ? "4px" : "";
+    anchor(w);
+  };
+  // anchor: при картинке над текстом (compound top/bottom) главная ось вертикальная - оси меняются местами
+  const anchor = (w) => {
+    const v = w.p.anchor, st = w.el.style;
+    if (!v) return;
+    const col = w.p.image && (w.p.compound === "top" || w.p.compound === "bottom");
+    al(st, "justifyContent", col ? vt(v) : hz(v));
+    al(st, "alignItems", col ? hz(v) : vt(v));
   };
   const LATE = ["items", "sel", "value", "on"];
   const apply = (w, p) => {
@@ -690,8 +807,19 @@
           if (w.k === "LabelFrame") w.lg.textContent = v;
           else (w.tx || el).textContent = v;
           break;
-        case "title": w.ttl.textContent = v; break;
-        case "image": case "compound": setImage(w, w.p.image); break;
+        case "title": w.ttl.textContent = v; S.wmq(); break;
+        case "type":
+          el.classList.toggle("tk-desk", v === "desktop");
+          el.classList.toggle("tk-dock", v === "dock");
+          grip(w);
+          lift(el);
+          docks();
+          if (v === "dock") {
+            S.wml = ""; // новой панели - весь список окон сразу
+            S.wmq();
+          }
+          break;
+        case "image": case "compound": setImage(w, w.p.image); size(w); break;
         case "bg": {
           const t = w.body || el;
           t.style.background = color(v);
@@ -714,7 +842,7 @@
         case "padx": st.setProperty("--px", (+v || 0) + "px"); break;
         case "pady": st.setProperty("--py", (+v || 0) + "px"); break;
         case "padding": st.padding = (Array.isArray(v) ? v : [v]).map((x) => (+x || 0) + "px").join(" "); break;
-        case "anchor": al(st, "justifyContent", hz(v)); al(st, "alignItems", vt(v)); break;
+        case "anchor": anchor(w); break;
         case "justify": (w.in || el).style.textAlign = v; break;
         case "wraplength": st.whiteSpace = +v ? "pre-wrap" : ""; st.maxWidth = +v ? v + "px" : ""; break;
         case "cursor": st.cursor = CUR[v] || v; break;
@@ -782,8 +910,18 @@
         case "rs": grip(w); break;
         case "minsize": w.body.style.minWidth = v[0] ? v[0] + "px" : ""; w.body.style.minHeight = v[1] ? v[1] + "px" : ""; break;
         case "maxsize": w.body.style.maxWidth = v[0] ? v[0] + "px" : ""; w.body.style.maxHeight = v[1] ? v[1] + "px" : ""; break;
-        case "hide": el.hidden = !!v; if (!v && WIN.has(w.k)) S.fresh?.push(el); break;
-        case "bare": w.bar.hidden = !!v; grip(w); break;
+        case "hide":
+          if (WIN.has(w.k) && !v && el.hidden) {
+            S.fresh?.push(el);
+            lift(el);
+          }
+          el.hidden = !!v;
+          if (WIN.has(w.k)) {
+            S.wmq();
+            if (w.p.type === "dock") docks();
+          }
+          break;
+        case "bare": w.bar.hidden = !!v; grip(w); S.wmq(); break;
         case "topmost": st.zIndex = v ? 100000 : ++S.z; break;
         case "transient": lift(el); grip(w); break;
         case "alpha": st.opacity = v; break;
@@ -1136,6 +1274,9 @@
       el.tabIndex = -1;
       w.bar = h("div", "tk-bar", el);
       w.ttl = h("span", "", w.bar);
+      const mn = (w.mn = h("button", "tk-x tk-min", w.bar));
+      mn.textContent = "–";
+      mn.onclick = () => push(w, "wm", "iconic");
       const x = h("button", "tk-x", w.bar);
       x.textContent = "×";
       x.onclick = () => {
@@ -1287,6 +1428,7 @@
     if (WIN.has(k)) grip(w);
     size(w);
     if (WIN.has(k) && !Object.values(S.w).some((o) => o.s === s && WIN.has(o.k) && o !== w && o.el.contains(document.activeElement))) el.focus({ preventScroll: true });
+    if (WIN.has(k)) S.wmq();
   };
   const kill = (id) => {
     const w = S.w[id];
@@ -1295,8 +1437,13 @@
     w.ro?.disconnect();
     w.wo?.disconnect();
     w.vo?.disconnect();
+    w.dro?.disconnect();
     (w.pc || w.el)?.remove();
     delete S.w[id];
+    if (WIN.has(w.k)) {
+      S.wmq();
+      if (w.p.type === "dock") docks();
+    }
   };
   const gone = (s) => {
     for (const w of Object.values(S.w)) {
@@ -1304,10 +1451,14 @@
       w.ro?.disconnect();
       w.wo?.disconnect();
       w.vo?.disconnect();
+      w.dro?.disconnect();
       if (WIN.has(w.k)) w.el.remove();
       delete S.w[w.id];
     }
+    S.wmq();
+    docks();
     S.layer.querySelectorAll(`.tk-modal[data-s="${s}"]`).forEach((e) => e.remove());
+    for (const k in S.img || {}) if (k.startsWith(s + " ")) delete S.img[k];
     clearTimeout(S.q[s]?.t);
     delete S.q[s];
     closeDrop();
@@ -1542,8 +1693,8 @@
     const col = (v, d) => (v === undefined || v === null ? d : v === "" ? "none" : color(v) || d);
     e.style.display = o.state === "hidden" ? "none" : "";
     if (t === "image") {
-      const im = (S.img ||= {})[o.img], iw = o.iw || im?.w || 0, ih = o.ih || im?.h || 0, a = o.anchor || "center";
-      e.dataset.img = o.img || "";
+      const key = ik(e.s, o.img), im = (S.img ||= {})[key], iw = o.iw || im?.w || 0, ih = o.ih || im?.h || 0, a = o.anchor || "center";
+      e.dataset.img = o.img ? key : "";
       A("href", im?.u);
       A("width", iw);
       A("height", ih);
@@ -1616,6 +1767,7 @@
     if (!e) {
       e = w.it[i] = sv(TAG[t] || "path");
       e.t = t;
+      e.s = w.s;
       e.o = {};
       e.dataset.ti = i;
       w.g.append(e);
@@ -1695,16 +1847,22 @@
       case "yv": if (w) { w.yvq = o[2]; txDirty(w); } break;
       case "sr": if (w?.in?.setSelectionRange) try { w.in.setSelectionRange(o[2], o[3]); } catch {} break;
       case "ls": if (w) w.el.children[o[2]]?.scrollIntoView({ block: "nearest" }); break;
-      case "r": if (w) o[2] ? raise(w) : (w.el.style.zIndex = 0); break;
+      case "r":
+        if (!w?.el) break;
+        if (o[2]) raise(w);
+        else if (kind(w.el) < 0) w.el.style.zIndex = 1;
+        S.wmq();
+        break;
       case "m": modal(s, id, o[2]); break;
       case "img": {
-        (S.img ||= {})[id] = { u: o[2], w: o[3], h: o[4] };
-        S.layer.querySelectorAll(`img[data-img="${CSS.escape(id)}"]`).forEach((e) => {
+        const key = ik(s, id);
+        (S.img ||= {})[key] = { u: o[2], w: o[3], h: o[4] };
+        S.layer.querySelectorAll(`img[data-img="${CSS.escape(key)}"]`).forEach((e) => {
           e.src = o[2];
           e.width = o[3];
           e.height = o[4];
         });
-        for (const c of Object.values(S.w)) if (c.k === "Canvas") for (const e of Object.values(c.it)) if (e.t === "image" && e.o.img === id) draw(e);
+        for (const c of Object.values(S.w)) if (c.k === "Canvas") for (const e of Object.values(c.it)) if (e.t === "image" && e.s === s && e.o.img === id) draw(e);
         break;
       }
       case "P": drop(S.w[id], null, o[2], o[3]); break;

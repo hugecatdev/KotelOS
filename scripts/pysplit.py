@@ -33,6 +33,7 @@ FULL = ["xmlrpc/*", "lib-dynload/*", "encodings/*"] + [
 TK = {"python-idle": ["idlelib/*"], "python-turtle": ["turtle.py"], "python-turtledemo": ["turtledemo/*"]}
 BIN = {"python-idle": ("idle", "idlelib"), "python-turtledemo": ("turtledemo", "turtledemo")}
 SRC = ["python-turtle", "python-turtledemo"]  # .src: показывают свои исходники, их не сжимать
+APPS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../config/applications")  # cmd.desktop, cmd.svg
 PARTS = [("python3-sqlite", ["sqlite3/*", "lib-dynload/_sqlite3*"]),
          ("python3-curses", ["curses/*", "lib-dynload/_curses*"]),
          ("minipython", ["lib-dynload/readline.*", "lib-dynload/_lsprof.*"] + ["encodings/%s.py" % m for m in ENC])
@@ -81,6 +82,12 @@ def main():
         with open(os.path.join(b, cmd), "w") as f:
             f.write('#!/bin/sh\nexec python3 -m %s "$@"\n' % mod)
         os.chmod(os.path.join(b, cmd), 0o755)
+        # ярлык для меню и рабочего стола (пакет desktop) и иконка, если своей у программы нет
+        for ext, sub in ((".desktop", "usr/share/applications"), (".svg", "usr/share/icons/hicolor/scalable/apps")):
+            src = os.path.join(APPS, cmd + ext)
+            if os.path.exists(src):
+                os.makedirs(os.path.join(a.out, n, sub), exist_ok=True)
+                shutil.copy2(src, os.path.join(a.out, n, sub, cmd + ext))
     for n in SRC:
         open(os.path.join(a.out, n, ".src"), "w").close()
     for n in DEPS:

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=tkinter Demo
+Name[ru]=Демо tkinter
+Comment[ru]=Вкладки, форма, рисование, меню, диалоги
+Exec=python /root/examples/python/tkdemo.py
+TryExec=python
+Icon=tkdemo
+Terminal=false
+Categories=Development;

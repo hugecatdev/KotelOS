@@ -1,0 +1,4 @@
+#!/bin/sh
+# xdg-open путь|адрес: открыть программой по типу файла (как в freedesktop)
+[ -n "$1" ] || { echo "xdg-open путь|адрес"; exit 1; }
+exec /usr/libexec/ktdesktop open "$1"

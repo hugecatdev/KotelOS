@@ -1,0 +1,3 @@
+#!/bin/sh
+# imgview файл: просмотр картинок
+exec /usr/libexec/ktdesktop imgview "$@"

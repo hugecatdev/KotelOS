@@ -1,0 +1,3 @@
+#!/bin/sh
+# notepad [файл]: блокнот
+exec /usr/libexec/ktdesktop notepad "$@"

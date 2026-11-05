@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Name[ru]=Файлы
+Comment=Browse folders and files
+Comment[ru]=Папки и файлы
+Exec=files %F
+Icon=system-file-manager
+Terminal=false
+Categories=Utility;System;FileManager;
+MimeType=inode/directory;

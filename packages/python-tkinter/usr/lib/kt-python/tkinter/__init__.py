@@ -746,7 +746,12 @@ def _handle(ev):
             _live[0] = False
             _send(_state())
         return
-    if name != "tk" or not isinstance(d, dict) or d.get("s") != _sid:
+    if name != "tk":
+        # остальные события страницы - обработчикам kt.on, пока идёт mainloop
+        for fn in list(getattr(_kt, "_handlers", {}).get(name, ())):
+            _call(fn, d)
+        return
+    if not isinstance(d, dict) or d.get("s") != _sid:
         return
     if "n" in d:
         _ack[0] = d["n"]
@@ -782,6 +787,8 @@ def _handle(ev):
                 w._lag = _slow[0] = _diff(_ms(), t) > _FRAME // 2
         elif kind == "close":
             w._close()
+        elif kind == "wm":
+            w._wmreq(x)
         elif kind == "sel":
             w._selev(x)
         _pending_run()
@@ -2098,18 +2105,34 @@ class Wm:
     def withdraw(self):
         self._prop("hide", 1)
 
+    def iconify(self):
+        # свёрнутое окно прячется, как и снятое, но остаётся в списке панели задач (hide 2)
+        self._prop("hide", 2)
+
     def deiconify(self):
         self._prop("hide", 0)
         self._prop("zoom", 0)
 
-    iconify = wm_withdraw = wm_iconify = withdraw
+    wm_withdraw = withdraw
+    wm_iconify = iconify
     wm_deiconify = deiconify
+
+    def _wmreq(self, op):
+        if op == "iconic":
+            self.iconify()
+        elif op == "normal":
+            if self._p.get("hide"):
+                self._prop("hide", 0)
+            self.lift()
 
     def state(self, newstate=None):
         if newstate is None:
-            return "withdrawn" if self._p.get("hide") else "zoomed" if self._p.get("zoom") else "normal"
-        if newstate in ("withdrawn", "iconic"):
+            h = self._p.get("hide")
+            return "iconic" if h == 2 else "withdrawn" if h else "zoomed" if self._p.get("zoom") else "normal"
+        if newstate == "withdrawn":
             self.withdraw()
+        elif newstate == "iconic":
+            self.iconify()
         elif newstate == "normal":
             self.deiconify()
         elif newstate == "zoomed":
@@ -2124,7 +2147,7 @@ class Wm:
         if len(args) == 1:
             k = str(args[0]).lstrip("-")
             return {"topmost": self._p.get("topmost", 0), "alpha": self._p.get("alpha", 1.0),
-                    "zoomed": self._p.get("zoom", 0)}.get(k, "")
+                    "zoomed": self._p.get("zoom", 0), "type": self._p.get("type", "normal")}.get(k, "")
         pairs = [(str(args[i]).lstrip("-"), args[i + 1]) for i in range(0, len(args) - 1, 2)]
         pairs.extend(kw.items())
         for k, v in pairs:
@@ -2134,7 +2157,11 @@ class Wm:
                 self._prop("alpha", float(v))
             elif k in ("zoomed", "fullscreen"):
                 self._prop("zoom", 1 if _bool(v) else 0)
-            elif k != "type":
+            elif k == "type":
+                # как _NET_WM_WINDOW_TYPE в X11: desktop - под всеми окнами во весь экран, dock - панель снизу
+                t = (v.split() if isinstance(v, str) else list(v) or ["normal"])[0]
+                self._prop("type", t if t in ("desktop", "dock") else "normal")
+            else:
                 _warn("attributes -" + k)
 
     wm_attributes = attributes
@@ -4487,6 +4514,8 @@ class Menu(Widget):
             d["state"] = str(it["state"])
         if it.get("accelerator"):
             d["acc"] = str(it["accelerator"])
+        if it.get("image"):
+            d["img"] = str(it["image"])
         return d
 
     def _push(self):
@@ -4499,10 +4528,8 @@ class Menu(Widget):
         it = {"t": t}
         for k in kw:
             if k in ("label", "command", "menu", "variable", "onvalue", "offvalue", "value", "state",
-                     "accelerator"):
+                     "accelerator", "image"):
                 it[k] = kw[k]
-            elif k == "image":
-                _warn("картинки")
             elif k not in ("underline", "compound", "font", "foreground", "background", "activebackground",
                            "activeforeground", "selectcolor", "columnbreak", "hidemargin", "indicatoron",
                            "bitmap", "selectimage"):
@@ -4977,6 +5004,27 @@ def _imgsize(data):
         return "image/png", int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
     if data[:4] == b"GIF8":
         return "image/gif", data[6] | data[7] << 8, data[8] | data[9] << 8
+    i = data.find(b"<svg", 0, 4096)
+    if i >= 0:
+        # SVG, как в Tk 9: размер из width/height корня, иначе из viewBox
+        head = data[i:data.find(b">", i) + 1].decode("utf-8", "replace")
+        def attr(k):
+            j = head.find(" " + k + "=")
+            if j < 0:
+                return None
+            q = head[j + len(k) + 2]
+            return head[j + len(k) + 3:head.find(q, j + len(k) + 3)]
+        def num(s):
+            s = (s or "").strip().replace("px", "")
+            try:
+                return float(s)
+            except ValueError:
+                return 0
+        w, h = num(attr("width")), num(attr("height"))
+        vb = (attr("viewBox") or "").replace(",", " ").split()
+        if (not w or not h) and len(vb) == 4:
+            w, h = w or num(vb[2]), h or num(vb[3])
+        return "image/svg+xml", int(w or 16), int(h or 16)
     return None, 0, 0
 
 

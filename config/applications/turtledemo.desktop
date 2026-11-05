@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Turtle Demo
+Name[ru]=Примеры turtle
+Comment=Turtle graphics examples
+Comment[ru]=Черепашья графика: 19 примеров с кодом
+Exec=turtledemo
+Icon=turtledemo
+Terminal=false
+Categories=Education;Development;
