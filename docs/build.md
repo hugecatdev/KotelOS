@@ -21,7 +21,7 @@ scripts/build-openblas.sh       # openblas без SSSE3 -> build/packages/openbl
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
 python3 tests/run.py            # тесты моста в headless Chromium (--build - сначала собрать, -k имя - выборочно)
 python3 tests/mpl.py            # matplotlib с patches/matplotlib.patch против исходного: те же картинки (--time - время кадров на хосте)
-./release.py 1.0                # заморозить версию и собрать её бандлы (standard, micro, python) в site/
+./release.py                    # бандлы сайта из bundles/ (standard, micro, python) -> site/ИМЯ/index.html
 python3 tests/mem.py site/standard/index.html  # память вкладки с бандлом (--save - всплеск при kt save, --profile папка - возврат из сохранения)
 ```
 

@@ -112,6 +112,8 @@ for d in $(printf '%s\n' packages/*/ "$GEN"/*/ | awk -F/ '{ print $(NF - 1) "\t"
     rm -rf "$tmp/pkg"
     cp -a "$d" "$tmp/pkg"
     rm -f "$tmp/pkg/.deps"
+    # остатки запусков питона на хосте; нужные __pycache__ (kt-python) ktpyc создаёт заново
+    find "$tmp/pkg" -name __pycache__ -type d -prune -exec rm -rf {} +
     if [ -f "$tmp/pkg/.src" ]; then
       rm -f "$tmp/pkg/.src"
     else

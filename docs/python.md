@@ -55,8 +55,11 @@ CPython 3.12.15 свой, собирает `scripts/build-python.sh`: тулче
 Вырезано совсем: docstring'и C-функций (`--without-doc-strings`, ~330 КБ:
 `help(len)` пустой, `inspect.signature` у встроенных функций не работает;
 питоновские docstring'и и так снимает `scripts/pymin.py`), `_ssl` и `_hashlib` (TLS
-делает браузер), `dbm`, `_uuid`, `tkinter`, `idlelib`, `lib2to3`, `ensurepip`,
+делает браузер), `dbm`, `_uuid`, `_tkinter` и `tkinter`, `lib2to3`, `ensurepip`,
 тесты, `audioop`, `crypt`, `nis`, `spwd`, `ossaudiodev`, субинтерпретаторы.
+Вместо `tkinter` свой пакет `python-tkinter` (окна рисует страница), а `idlelib`,
+`turtle` и `turtledemo` из CPython идут отдельными пакетами `python-idle`,
+`python-turtle` и `python-turtledemo` (см. [Окна](gui.md)).
 
 stdlib в zip (`python312.zip`) пробовал: в памяти на 2.6 МБ меньше, но импорт
 в 1.5 раза медленнее (zipimport написан на питоне и распаковывает каждый

@@ -92,7 +92,8 @@ MicroPython ~2.5 с. После `restore` окна рисуются заново
 сжатие длинного вывода, настройки, справка, браузер модулей и путей. Окно
 появляется через ~6 с после `idle` с `pyzygote` и ~16 с без него (CPython грузит
 idlelib в эмуляторе), код выполняется за ~0.3 с. В пакете нет `idle_test` и старых журналов изменений,
-`.py` собраны в `.pyc`.
+`.py` собраны в `.pyc`. Пакеты IDLE и turtle не лежат в git: их вместе с
+остальным CPython собирает `scripts/build-python.sh` (раскладка - в `scripts/pysplit.py`).
 
 ## turtle (`python-turtle`, `python-turtledemo`)
 

@@ -31,7 +31,7 @@ python3 bundle.py          # бандл -> site/index.html
 
 ## Документация
 
-- [Бандлы, версии и сохранения](docs/bundles.md) - `bundle.py`, `release.py`, `kt save`, публикация
+- [Бандлы и сохранения](docs/bundles.md) - `bundle.py`, `release.py`, `kt save`, публикация
 - [API, встраивание и настройки](docs/api.md) - `kt` в шелле, Python и на странице, `kt cfg`
 - [Пакеты](docs/packages.md) - `kt pkg`, репозиторий, свои пакеты, пакеты Alpine
 - [Python](docs/python.md) - свой CPython, `pyzygote`, pip, Telegram-боты
@@ -44,7 +44,7 @@ python3 bundle.py          # бандл -> site/index.html
 ## Структура
 
 ```
-build.sh  bundle.py  release.py   сборка образа, бандлов и версий
+build.sh  bundle.py  release.py   сборка образа, бандла и всех бандлов сайта
 alpine.py                         индекс и пакеты Alpine (для bundle.py и скриптов)
 page.html                         шаблон страницы бандла
 overlay/                          своё в rootfs: kt, агент, init-скрипты, kt.py
@@ -55,7 +55,7 @@ config/                           конфиги ядра и busybox, base.exclu
 scripts/                          сборка ядра, busybox, CPython, openblas, загрузка пакетов
 patches/                          правки сторонних пакетов (matplotlib)
 vendor/v86/                       libv86.js, v86.wasm, BIOS
-bundles/                          описания бандлов для release.py
+bundles/                          описания бандлов сайта для release.py
 docs/                             документация
 tests/                            тесты в headless Chromium
 
@@ -64,7 +64,6 @@ tests/                            тесты в headless Chromium
 build/packages/                   пакеты из Alpine и собранные скриптами
 images/                           собранные bzImage, rootfs.cpio, build.json
 site/                             бандлы и репозиторий пакетов для публикации
-versions/                         замороженные версии release.py
 ```
 
 ## Лицензия

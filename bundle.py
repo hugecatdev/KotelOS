@@ -335,13 +335,13 @@ def options(argv=None):
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/)")
-    ap.add_argument("--version", help="версия бандла: видна в kt info (её ставит release.py)")
+    ap.add_argument("--version", help="метка бандла: видна в kt info")
     a = ap.parse_args(argv)
     if a.bare:
         a.packages = []
     for v in (a.name, a.version or "0"):
         if not re.fullmatch(r"[\w.-]{1,32}", v):
-            sys.exit("имя и версия: буквы, цифры, . _ -")
+            sys.exit("имя и метка: буквы, цифры, . _ -")
     return a
 
 

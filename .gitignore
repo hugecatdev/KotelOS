@@ -8,7 +8,6 @@
 /build/
 /images/
 /site/
-/versions/
 /overlay/bin/busybox
 /overlay/usr/sbin/kt-net
 /overlay/usr/sbin/kt-seed
