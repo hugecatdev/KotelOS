@@ -1,0 +1,21 @@
+export PATH="/usr/local/bin:/bin:/sbin:/usr/bin:/usr/sbin"
+export PS1='\[\033[1;34m\]\W\[\033[0m\] \[\033[1;36m\]❯\[\033[0m\] '
+export EDITOR=vi
+if [ -s /var/lib/kt/post.pending ]; then
+  for i in $(cat /var/lib/kt/post.pending); do
+    [ -x /var/lib/kt/post/$i ] && /var/lib/kt/post/$i
+  done
+  rm -f /var/lib/kt/post.pending
+fi
+if [ -s /var/lib/kt/trigger.pending ]; then
+  for i in $(cat /var/lib/kt/trigger.pending); do
+    [ -f /var/lib/kt/trigger/$i ] && (cd / && sh /var/lib/kt/trigger/$i $(cat /var/lib/kt/trigger/$i.dirs)) > /dev/null 2>&1
+  done
+  rm -f /var/lib/kt/trigger.pending
+fi
+for i in /etc/profile.d/*.sh ; do
+	if [ -r "$i" ]; then
+		. $i
+	fi
+done
+unset i

@@ -1,0 +1,7 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без имени  текущее сохранение
+name       снимок
+формат файла: .v86state.gz'
+kt_meta "[name]" "сохранение в файл" "$@"
+kt_call export "$(kt_b64 "$1")"

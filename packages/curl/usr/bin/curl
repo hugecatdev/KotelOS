@@ -1,0 +1,220 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+R=$KT_RUN/curl.$$
+B=$R.body
+trap 'rm -f "$R" "$R.err" "$B"' EXIT
+: > "$B"
+
+warn() {
+  echo "curl: $1 - нет в kt-версии, игнорирую" >&2
+}
+
+usage() {
+  echo "usage: curl [-sSfiIvLGO] [-X method] [-H header] [-d data] [--json data] [-o file] [-u user:pass] [-T file] [-w fmt] [-m sec] <url>"
+  exit 0
+}
+
+url= method= hdrs= hasdata= upload= out= remote= silent= showerr= fail= inc= head= verbose= wout= get= json= auth= maxt=60
+
+adddata() {
+  [ -n "$hasdata" ] && [ "$2" != bin ] && printf '&' >> "$B"
+  if [ "$2" != raw ] && [ "${1#@}" != "$1" ]; then
+    f=${1#@}
+    if [ "$f" = - ]; then
+      if [ "$2" = bin ]; then cat >> "$B"; else tr -d '\r\n' >> "$B"; fi
+    elif [ "$2" = bin ]; then
+      cat "$f" >> "$B"
+    else
+      tr -d '\r\n' < "$f" >> "$B"
+    fi
+  else
+    printf '%s' "$1" >> "$B"
+  fi
+  hasdata=1
+}
+
+takes() {
+  case $1 in
+    -X|--request|-H|--header|-d|--data|--data-ascii|--data-raw|--data-binary|--data-urlencode|--json|-o|--output) return 0 ;;
+    -u|--user|-A|--user-agent|-e|--referer|-m|--max-time|-w|--write-out|-b|--cookie|-c|--cookie-jar) return 0 ;;
+    -x|--proxy|-T|--upload-file|-F|--form|--connect-timeout|--retry) return 0 ;;
+  esac
+  return 1
+}
+
+opt() {
+  case $1 in
+    -X|--request) method=$2 ;;
+    -H|--header) hdrs="$hdrs$2
+" ;;
+    -d|--data|--data-ascii) adddata "$2" strip ;;
+    --data-raw|--data-urlencode) adddata "$2" raw ;;
+    --data-binary) adddata "$2" bin ;;
+    --json) adddata "$2" bin; json=1 ;;
+    -o|--output) out=$2 ;;
+    -O|--remote-name) remote=1 ;;
+    -u|--user) auth=$2 ;;
+    -A|--user-agent) hdrs="${hdrs}User-Agent: $2
+" ;;
+    -m|--max-time) maxt=${2%.*} ;;
+    -w|--write-out) wout=$2 ;;
+    -T|--upload-file) upload=$2 ;;
+    -s|--silent) silent=1 ;;
+    -S|--show-error) showerr=1 ;;
+    -f|--fail) fail=1 ;;
+    -i|--include) inc=1 ;;
+    -I|--head) head=1 ;;
+    -v|--verbose) verbose=1 ;;
+    -G|--get) get=1 ;;
+    -L|--location|--compressed|-#|--progress-bar|--no-progress-meter) ;;
+    -h|--help) usage ;;
+    -V|--version) echo "curl 8-kt (fetch браузера)"; exit 0 ;;
+    *) warn "$1" ;;
+  esac
+}
+
+while [ $# -gt 0 ]; do
+  a=$1
+  shift
+  case $a in
+    --*=*)
+      opt "${a%%=*}" "${a#*=}" ;;
+    --*)
+      if takes "$a"; then opt "$a" "$1"; shift; else opt "$a"; fi ;;
+    -?*)
+      rest=${a#-}
+      while [ -n "$rest" ]; do
+        c=${rest%"${rest#?}"}
+        rest=${rest#?}
+        if takes "-$c"; then
+          if [ -n "$rest" ]; then opt "-$c" "$rest"; else opt "-$c" "$1"; shift; fi
+          rest=
+        else
+          opt "-$c"
+        fi
+      done ;;
+    *)
+      [ -z "$url" ] && url=$a || warn "второй url $a" ;;
+  esac
+done
+
+[ -n "$url" ] || { echo "curl: нет url (curl -h)" >&2; exit 2; }
+case $url in
+  *://*) ;;
+  *) url=https://$url ;;
+esac
+case $url in
+  *://wttr.in|*://wttr.in/*|*://*.wttr.in|*://*.wttr.in/*)
+    case $url in
+      *\?*) url="$url&A" ;;
+      *) url="$url?A" ;;
+    esac ;;
+esac
+
+has() {
+  printf '%s' "$hdrs" | grep -qi "^$1:"
+}
+
+if [ -n "$get" ] && [ -n "$hasdata" ]; then
+  case $url in
+    *\?*) url="$url&$(cat "$B")" ;;
+    *) url="$url?$(cat "$B")" ;;
+  esac
+  : > "$B"
+  hasdata=
+fi
+if [ -n "$upload" ]; then
+  cat "$upload" > "$B" || exit 26
+  hasdata=1
+  method=${method:-PUT}
+fi
+if [ -n "$json" ]; then
+  has Content-Type || hdrs="${hdrs}Content-Type: application/json
+"
+  has Accept || hdrs="${hdrs}Accept: application/json
+"
+elif [ -n "$hasdata" ] && [ -z "$upload" ]; then
+  has Content-Type || hdrs="${hdrs}Content-Type: application/x-www-form-urlencoded
+"
+fi
+[ -n "$auth" ] && hdrs="${hdrs}Authorization: Basic $(printf '%s' "$auth" | base64 | tr -d '\n')
+"
+if [ -n "$head" ]; then
+  method=${method:-HEAD}
+elif [ -n "$hasdata" ]; then
+  method=${method:-POST}
+fi
+method=$(echo "${method:-GET}" | tr a-z A-Z)
+case $method in
+  *[!A-Z]*) echo "curl: странный метод $method" >&2; exit 2 ;;
+esac
+
+if has User-Agent && grep -qE 'browser=(chrome|edge|opera)' /proc/cmdline $KT_RUN/env 2>/dev/null; then
+  echo "curl: User-Agent - Chrome его не отправляет, уйдёт браузерный" >&2
+fi
+if [ -n "$verbose" ]; then
+  {
+    echo "> $method $url"
+    printf '%s' "$hdrs" | sed 's/^/> /'
+  } >&2
+fi
+
+bb=
+[ -n "$hasdata" ] && bb=$(base64 < "$B" | tr -d '\n')
+code=$(printf '(async () => {
+const d = (x) => Uint8Array.from(atob(x), (c) => c.charCodeAt(0));
+const t = (x) => new TextDecoder().decode(d(x));
+const h = {};
+for (const l of t("%s").split("\\n")) { const i = l.indexOf(":"); if (i > 0) h[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
+const o = { method: "%s", headers: h };
+if ("%s") o.body = d("%s");
+let u = t("%s");
+if (location.protocol === "https:" && u.startsWith("http:")) u = "https:" + u.slice(5);
+const r = await fetch(u, o);
+const b = new Uint8Array(await r.arrayBuffer());
+let s = "";
+for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+return (r.status + " " + r.statusText).trim() + "\\n" + [...r.headers].map(([k, v]) => k + ": " + v).join("\\n") + "\\n\\n" + btoa(s);
+})()' "$(printf '%s' "$hdrs" | kt_b64)" "$method" "$bb" "$bb" "$(kt_b64 "$url")")
+
+kt_send js "$(printf '%s' "$code" | kt_b64)"
+if ! kt_status $((maxt * 10)) > "$R" 2> "$R.err"; then
+  msg=$(sed 's/^TypeError: //' "$R.err")
+  if grep -q "браузер не ответил" "$R.err"; then n=28; else n=7; msg="$msg (сайт без CORS или нет сети)"; fi
+  [ -z "$silent" ] || [ -n "$showerr" ] && echo "curl: ($n) $msg" >&2
+  exit $n
+fi
+
+st=$(head -n 1 "$R")
+status=${st%% *}
+headers=$(awk 'NR > 1 && $0 == "" { exit } NR > 1' "$R")
+if [ -n "$verbose" ]; then
+  {
+    echo "< HTTP/1.1 $st"
+    printf '%s\n' "$headers" | sed 's/^/< /'
+  } >&2
+fi
+if [ -n "$fail" ] && [ "$status" -ge 400 ]; then
+  [ -z "$silent" ] || [ -n "$showerr" ] && echo "curl: (22) The requested URL returned error: $status" >&2
+  exit 22
+fi
+
+body() {
+  if [ -n "$inc" ] || [ -n "$head" ]; then
+    printf 'HTTP/1.1 %s\n%s\n\n' "$st" "$headers"
+  fi
+  [ -n "$head" ] || tail -n 1 "$R" | base64 -d
+}
+
+if [ -n "$remote" ] && [ -z "$out" ]; then
+  out=${url%%[?#]*}
+  out=${out##*/}
+  [ -n "$out" ] || out=index.html
+fi
+if [ -n "$out" ]; then
+  body > "$out" || exit 23
+else
+  body
+fi
+[ -n "$wout" ] && printf '%b' "$(printf '%s' "$wout" | sed "s/%{http_code}/$status/g; s/%{response_code}/$status/g; s|%{url_effective}|$url|g")"
+exit 0

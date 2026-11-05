@@ -1,0 +1,5 @@
+#!/bin/sh
+[ "$1" = start ] || exit 0
+mkdir -p /run/pyzygote
+flock -n /run/pyzygote/lock true 2>/dev/null || exit 0
+HOME=/root setsid nice -n 10 /usr/bin/python3 /usr/sbin/pyzygote < /dev/null > /dev/null 2>&1 &

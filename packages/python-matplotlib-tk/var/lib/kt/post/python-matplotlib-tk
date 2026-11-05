@@ -1,0 +1,2 @@
+#!/bin/sh
+[ -s /var/lib/kt/post.pending ] || echo "matplotlib рисует в окнах: в новой оболочке сразу, в этой - export MPLBACKEND=TkAgg"

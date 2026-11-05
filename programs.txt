@@ -1,0 +1,61 @@
+base базовая система: busybox и kt
+fun приветствие
+pack хранение файлов в браузере
+sync копия папки с диска с обратной записью
+notify уведомления и диалоги браузера
+ai ИИ-ассистент в терминале
+curl curl через браузер
+wget wget через браузер
+python-requests requests через браузер
+python-tkinter tkinter в окнах браузера
+python-idle IDLE в окнах браузера
+python-turtle черепашья графика turtle
+python-turtledemo примеры turtle (команда turtledemo)
+python-matplotlib-tk окна matplotlib через tkinter
+python-matplotlib-demo примеры matplotlib (команда mpldemo)
+python-mpy команда python для micropython
+minipython лёгкий CPython 3.12
+python3 полный CPython 3.12
+python3-sqlite модуль sqlite3 для CPython
+python3-curses модуль curses для CPython
+python3-asyncio модуль asyncio для CPython
+python3-ctypes модуль ctypes для CPython
+python3-html модуль html для CPython
+python3-http http и urllib.request для CPython
+python3-xml модуль xml для CPython
+python3-multiprocessing модуль multiprocessing для CPython
+python3-venv модуль venv для CPython
+pyzygote быстрый старт python3
+pip pip через браузер (PyPI)
+jdk8 OpenJDK 8 без графики
+python-telebot библиотека Telegram-ботов
+micropython MicroPython
+sqlite SQLite
+jq обработка JSON
+htop монитор процессов
+bash командная оболочка
+nano текстовый редактор
+micro текстовый редактор с мышью
+vim текстовый редактор
+helix модальный редактор (hx)
+lua5.4 Lua 5.4
+tcc компилятор C
+make сборка по Makefile
+tmux мультиплексор терминала
+fzf нечёткий поиск
+ruby Ruby 3.4
+php83 PHP 8.3
+perl Perl 5
+janet Janet
+nodejs Node.js 22
+cmatrix эффект «Матрицы»
+sl анимация паровоза
+figlet крупный текст
+neofetch сведения о системе
+cbonsai дерево бонсай в терминале
+nyancat Nyan Cat в терминале
+unixporn neofetch, htop и анимации в панелях tmux
+examples все примеры
+examples-python примеры на Python
+examples-c пример на C
+examples-lua пример на Lua

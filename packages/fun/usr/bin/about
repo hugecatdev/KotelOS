@@ -1,0 +1,37 @@
+#!/bin/sh
+G='\033[32m'
+C='\033[36m'
+Y='\033[33m'
+M='\033[35m'
+RD='\033[31m'
+BL='\033[34m'
+D='\033[90m'
+B='\033[1m'
+R='\033[0m'
+
+ok() {
+  usleep 150000
+  printf "  [ ${G}OK${R} ] ${D}%s${R}\n" "$1"
+}
+
+echo ""
+ok "Запуск ядра"
+ok "Загрузка штук"
+ok "Загрузка sleep"
+ok "Инициализация всего подряд"
+ok "Прогрев пикселей"
+usleep 300000
+
+printf "  "
+i=0
+while [ $i -lt 24 ]; do
+  n=$(( (RANDOM % 7) + 41 ))
+  printf "\033[${n}m \033[0m"
+  i=$((i+1))
+done
+printf "\n"
+
+echo ""
+printf "  ${B}${C}котёл OS${R} ${Y}(=^..^=)${R}\n"
+printf "  ${D}by${R} ${M}Dmitry${R} ${RD}<3${R}\n"
+echo ""

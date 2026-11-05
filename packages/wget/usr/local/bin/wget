@@ -1,0 +1,104 @@
+#!/bin/sh
+warn() {
+  echo "wget: $1 - нет в kt-версии, игнорирую" >&2
+}
+
+q= out= url= hdrs= data= dfile= ua= tmo= srv= dir=
+
+takes() {
+  case $1 in
+    -O|--output-document|--header|--post-data|--post-file|-U|--user-agent|-T|--timeout|-P|--directory-prefix|-Y|--proxy|-o|--output-file|--user|--password|--method|--body-data) return 0 ;;
+  esac
+  return 1
+}
+
+opt() {
+  case $1 in
+    -q|--quiet) q=1 ;;
+    -O|--output-document) out=$2 ;;
+    --header) hdrs="$hdrs$2
+" ;;
+    --post-data|--body-data) data=$2 ;;
+    --post-file) dfile=$2 ;;
+    --method) method=$2 ;;
+    -U|--user-agent) ua=$2 ;;
+    -T|--timeout) tmo=$2 ;;
+    -S|--server-response) srv=1 ;;
+    -P|--directory-prefix) dir=$2 ;;
+    --user) user=$2 ;;
+    --password) pass=$2 ;;
+    -c|--continue|-nv|--no-verbose|--no-check-certificate|-4|--inet4-only) ;;
+    -h|--help) echo "usage: wget [-qS] [-O file] [-P dir] [--header h] [--post-data d] [-U agent] [-T sec] <url>"; exit 0 ;;
+    -V|--version) echo "wget-kt (fetch браузера через curl)"; exit 0 ;;
+    *) warn "$1" ;;
+  esac
+}
+
+while [ $# -gt 0 ]; do
+  a=$1
+  shift
+  case $a in
+    --*=*) opt "${a%%=*}" "${a#*=}" ;;
+    --*)
+      if takes "$a"; then opt "$a" "$1"; shift; else opt "$a"; fi ;;
+    -?*)
+      rest=${a#-}
+      while [ -n "$rest" ]; do
+        c=${rest%"${rest#?}"}
+        rest=${rest#?}
+        case $c in
+          n) [ "$rest" = v ] && rest= ;;
+        esac
+        if takes "-$c"; then
+          if [ -n "$rest" ]; then opt "-$c" "$rest"; else opt "-$c" "$1"; shift; fi
+          rest=
+        else
+          opt "-$c"
+        fi
+      done ;;
+    *)
+      [ -z "$url" ] && url=$a || warn "второй url $a" ;;
+  esac
+done
+
+[ -n "$url" ] || { echo "wget: нет url" >&2; exit 1; }
+
+if [ -z "$out" ]; then
+  out=${url%%[?#]*}
+  case $out in
+    *://*/*) out=${out##*/} ;;
+    *) out= ;;
+  esac
+  [ -n "$out" ] || out=index.html
+  [ -n "$dir" ] && out=$dir/$out
+  if [ -e "$out" ]; then
+    n=1
+    while [ -e "$out.$n" ]; do n=$((n + 1)); done
+    out=$out.$n
+  fi
+fi
+
+set -- -fsS
+[ -n "$srv" ] && set -- "$@" -v
+[ -n "$tmo" ] && set -- "$@" -m "$tmo"
+[ -n "$ua" ] && set -- "$@" -A "$ua"
+[ -n "$method" ] && set -- "$@" -X "$method"
+[ -n "$user" ] && set -- "$@" -u "$user:$pass"
+[ -n "$data" ] && set -- "$@" --data-raw "$data"
+[ -n "$dfile" ] && set -- "$@" --data-binary "@$dfile"
+IFS='
+'
+for h in $hdrs; do set -- "$@" -H "$h"; done
+unset IFS
+[ "$out" = - ] || set -- "$@" -o "$out"
+
+[ -n "$q" ] || echo "--> $url" >&2
+curl "$@" "$url"
+rc=$?
+case $rc in
+  0)
+    [ -n "$q" ] || [ "$out" = - ] || echo "'$out' сохранён ($(wc -c < "$out") байт)" >&2
+    exit 0 ;;
+  22) exit 8 ;;
+  *) exit 4 ;;
+esac

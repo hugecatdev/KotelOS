@@ -1,0 +1,12 @@
+#!/bin/sh
+mountpoint -q /proc || mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts /dev/shm
+ln -sf /proc/self/fd /dev/fd
+ln -sf fd/0 /dev/stdin
+ln -sf fd/1 /dev/stdout
+ln -sf fd/2 /dev/stderr
+mount -t devpts -o gid=5,mode=620,ptmxmode=0666 devpts /dev/pts 2>/dev/null
+mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null
+hostname -F /etc/hostname 2>/dev/null

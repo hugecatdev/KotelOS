@@ -1,0 +1,33 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='file...  файлы
+dir      каталог, упаковывается в .tar.gz
+name     имя файла для данных из stdin'
+kt_meta "<file|dir>..." "файл в браузер" "$@"
+
+send() {
+  { printf 'dl %s - %s\n' "$KT_ID" "$(kt_b64 "$1")"; cat; } | kt-net $KT_PAGE > /dev/null || {
+    echo "kt dl: нет связи с браузером" >&2
+    return 1
+  }
+}
+
+if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ ! -e "$1" ] && [ ! -t 0 ]; }; then
+  [ -t 0 ] && kt_usage "<file|dir>..."
+  send "${1:-output.txt}"
+  exit 0
+fi
+
+rc=0
+for f in "$@"; do
+  if [ -d "$f" ]; then
+    n=$(basename "$(realpath "$f")")
+    tar -czf - -C "$(dirname "$(realpath "$f")")" "$n" 2>/dev/null | send "$n.tar.gz"
+  elif [ -f "$f" ]; then
+    send "$(basename "$f")" < "$f"
+  else
+    echo "kt dl: нет файла $f" >&2
+    rc=1
+  fi
+done
+exit $rc

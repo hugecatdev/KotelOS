@@ -1,0 +1,72 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  список архивов
+name path...    упаковка файлов и каталогов в архив name
+rm name         удаление архива
+dl name         скачивание архива в .tar.gz'
+kt_meta "[name path... | rm name | dl name]" "файлы в браузер" "$@"
+H=$(cat /usr/lib/kt-pack.js)
+
+size() {
+  awk -v n="$1" 'BEGIN { if (n < 1048576) printf "%d КБ\n", (n + 1023) / 1024; else printf "%.1f МБ\n", n / 1048576 }'
+}
+
+fail() {
+  echo "kt pack: ${1#Error: }" >&2
+  exit 1
+}
+
+case "$1" in
+  "")
+    r=$(kt js "async () => { $H
+      return (await list()).map((p) => [p.name, new Date(p.created).toLocaleString('ru', { dateStyle: 'short', timeStyle: 'short' }), p.blob.size, p.files, p.origin].join('\t')).join('\n') }" 2>&1) || fail "$r"
+    printf '%s\n' "$r" | while IFS="$(printf '\t')" read -r n d s f o; do
+      [ -n "$n" ] && printf '%-12s %-18s %8s  %s из %s\n' "$n" "$d" "$(size "$s")" "$(kt_files "$f")" "$o"
+    done
+    exit ;;
+  rm)
+    [ -n "$2" ] || kt_usage "rm <name>"
+    r=$(kt js "async (n) => { $H
+      await get(n); await del(n) }" "$2" 2>&1) || fail "$r"
+    echo "$2 удалён"
+    exit ;;
+  dl)
+    [ -n "$2" ] || kt_usage "dl <name>"
+    r=$(kt js "async (n) => { $H
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL((await get(n)).blob);
+      a.download = n + '.tar.gz';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000) }" "$2" 2>&1) || fail "$r"
+    echo "скачиваю $2.tar.gz"
+    exit ;;
+esac
+name=$1
+shift
+[ $# -gt 0 ] || kt_usage "<name> <path>..."
+case $name in
+  *[!A-Za-z0-9._-]*) echo "kt pack: имя - буквы, цифры, . _ -" >&2; exit 1 ;;
+esac
+L=$KT_RUN/pack.$$
+trap 'rm -f "$L" "$L.rel" "$L.tgz"' EXIT
+: > "$L"
+for p in "$@"; do
+  a=$(realpath "$p" 2>/dev/null)
+  [ -n "$a" ] && [ -e "$a" ] || { echo "kt pack: нет $p" >&2; exit 1; }
+  [ "$a" = / ] && { echo "kt pack: / целиком не упаковать" >&2; exit 1; }
+  echo "$a" >> "$L"
+done
+parent=$(awk -F/ '{
+  n = NF - 1
+  if (NR == 1) { m = n; for (i = 1; i <= n; i++) p[i] = $i }
+  else { if (n < m) m = n; for (i = 1; i <= m; i++) if (p[i] != $i) { m = i - 1; break } }
+} END { s = ""; for (i = 2; i <= m; i++) s = s "/" p[i]; print s == "" ? "/" : s }' "$L")
+while IFS= read -r a; do
+  r=${a#"$parent"}
+  echo "${r#/}"
+done < "$L" > "$L.rel"
+tar -czf "$L.tgz" -C "$parent" -T "$L.rel" || exit 1
+n=$(tar -tzf "$L.tgz" | grep -vc '/$')
+r=$(kt js "async (n, p, o, c) => { $H
+  await put(n, { blob: new Blob([await kt.read(p)]), origin: o, files: +c, created: Date.now() }) }" "$name" "$L.tgz" "$parent" "$n" 2>&1) || fail "$r"
+echo "$name: $(kt_files "$n"), $(size "$(wc -c < "$L.tgz")")"

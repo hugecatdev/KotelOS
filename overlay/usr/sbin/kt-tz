@@ -1,0 +1,9 @@
+#!/bin/sh
+[ -n "$1" ] || exit 1
+z='\0\0\0\0'
+h="TZif2$z$z$z\\0\\0\\0$z$z$z"'\0\0\0\1\0\0\0\1\0\0\0\4'
+{
+  printf "$h$z"'\0\0\0\0\0\0\0UTC\0'
+  printf "$h$z$z"'\0\0\0\0\0\0\0UTC\0'
+  printf '\n%s\n' "$1"
+} > /etc/localtime.new && mv /etc/localtime.new /etc/localtime

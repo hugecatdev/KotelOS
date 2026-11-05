@@ -1,0 +1,12 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='text  текст; без аргумента читается stdin
+-s    содержимое экрана'
+kt_meta "<text> | -s" "в буфер обмена" "$@"
+if [ "$1" = -s ]; then
+  kt_call copyscreen
+  exit
+fi
+[ $# -gt 0 ] || [ ! -t 0 ] || kt_usage "<text> | -s"
+kt_send copy "$(kt_b64 "$@")"
+kt_wait

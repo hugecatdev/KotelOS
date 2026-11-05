@@ -1,0 +1,4 @@
+::sysinit:/etc/init.d/rcS
+ttyS0::respawn:/bin/sh -l
+::respawn:/bin/sh -c 'if [ -x /usr/sbin/kt-net ] && [ -x /usr/sbin/kt-agent ]; then exec /usr/sbin/kt-netd 7700 /usr/sbin/kt-agent; fi; sleep 60'
+::shutdown:/bin/umount -a -r

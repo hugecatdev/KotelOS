@@ -1,0 +1,53 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  список ключей и значений
+key             вывод значения
+key value       установка значения
+-r key          сброс ключа к значению по умолчанию
+-r              сброс всех ключей
+имя.ключ        свой ключ, пустое значение удаляет его
+описания ключей в /usr/share/kt/cfg'
+kt_meta "[key [value]] [-r [key]]" "настройки" "$@"
+D=/usr/share/kt/cfg
+case "$1" in
+  "")
+    w=$(stty size 2>/dev/null | cut -d" " -f2)
+    list=$KT_RUN/cfg.$KT_ID
+    kt_send cfg ""
+    kt_status > "$list" || { rm -f "$list"; exit 1; }
+    set -- "$list" $D/kt
+    for f in $D/*; do [ "$f" = $D/kt ] || set -- "$@" "$f"; done
+    awk -v w="${w:-80}" '
+      function cut(x) {
+        if (x == "") return "\"\""
+        if (length(x) <= 20) return x
+        x = substr(x, 1, 18)
+        sub(/[\300-\377][\200-\277]*$/, "", x)
+        return x "…"
+      }
+      function row(k,  line) {
+        line = sprintf("%-12s %-9s", k, cut(k in val ? val[k] : ""))
+        if (w >= 60 && desc[k] != "") printf "%s \033[90m%s\033[0m\n", line, desc[k]
+        else { sub(/ +$/, "", line); print line }
+      }
+      FILENAME == ARGV[1] { i = index($0, "\t"); k = substr($0, 1, i - 1); val[k] = substr($0, i + 1); ord[++n] = k; next }
+      $1 != "" && !($1 in desc) { d = $0; sub(/^[^ ]+ */, "", d); desc[$1] = d; dord[++m] = $1 }
+      END {
+        for (i = 1; i <= m; i++) row(dord[i])
+        for (i = 1; i <= n; i++) if (!(ord[i] in desc)) row(ord[i])
+      }
+    ' "$@"
+    rm -f "$list"
+    exit 0 ;;
+  -r) arg="reset $2" ;;
+  *)
+    if [ $# -ge 2 ]; then
+      k=$1
+      shift
+      arg="set $k $*"
+    else
+      arg="get $1"
+    fi ;;
+esac
+kt_send cfg "$(kt_b64 "$arg")"
+kt_status

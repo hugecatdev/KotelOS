@@ -1,0 +1,4 @@
+# numpy: общий генератор случайных чисел в каждом процессе пересевается
+import numpy
+fork numpy.random.seed
+env NPY_* NUMPY_* OPENBLAS_* OMP_NUM_THREADS

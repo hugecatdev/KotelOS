@@ -1,0 +1,4 @@
+# matplotlib при импорте читает бэкенд из окружения и свои настройки из файлов
+import matplotlib.pyplot
+env MPL* MATPLOTLIBRC XDG_CONFIG_HOME XDG_CACHE_HOME HOME
+file matplotlibrc ~/.config/matplotlib/matplotlibrc ~/.config/matplotlib/stylelib

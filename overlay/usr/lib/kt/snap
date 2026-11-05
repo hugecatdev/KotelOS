@@ -1,0 +1,11 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  список снимков
+rm name         удаление снимка'
+kt_meta "[rm name]" "снимки" "$@"
+case "$1" in
+  "") kt_send snaps "" ;;
+  rm) [ -n "$2" ] || kt_usage "rm <name>"; kt_send snapdel "$(kt_b64 "$2")" ;;
+  *) kt_usage "[rm name]" ;;
+esac
+kt_status

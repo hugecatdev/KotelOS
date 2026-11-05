@@ -1,0 +1,5 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='заменяет текущее сохранение файлом .v86state.gz из kt export'
+kt_meta "" "сохранение из файла" "$@"
+kt_call import "" 36000

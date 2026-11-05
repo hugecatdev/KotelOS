@@ -1,0 +1,126 @@
+#!/bin/sh
+export PATH="/usr/local/bin:/bin:/sbin:/usr/bin:/usr/sbin"
+CON=/dev/ttyS0
+RUN=/run/kt
+
+mkdir -p $RUN
+exec 3<&0 </dev/null >/dev/null 2>&1
+old=$(cat $RUN/agent.pid 2>/dev/null)
+if [ -n "$old" ] && [ "$old" != $$ ] && grep -q kt-agent /proc/$old/cmdline 2>/dev/null; then
+  kill "$old" 2>/dev/null
+fi
+echo $$ > $RUN/agent.pid
+killall -USR1 kt-net 2>/dev/null
+
+say() {
+  flock 8
+  printf '%s\n' "$*" >&3
+} 8>$RUN/tx.lock
+
+take() {
+  [ "$1" -gt 0 ] 2>/dev/null && dd bs="$1" count=1 iflag=fullblock 2>/dev/null <&3
+}
+
+fg_cwd() {
+  for st in /proc/[0-9]*/stat; do
+    read -r pid comm state ppid pgrp sid tty tpgid rest < "$st" 2>/dev/null || continue
+    if [ "$tty" = 1088 ] && [ "$pid" = "$sid" ]; then
+      readlink /proc/$tpgid/cwd 2>/dev/null || readlink /proc/$pid/cwd
+      return
+    fi
+  done
+  echo /root
+}
+
+setenv() {
+  k=${1%%=*}
+  touch $RUN/env
+  grep -v "^$k=" $RUN/env > $RUN/env.new
+  printf '%s\n' "$1" >> $RUN/env.new
+  mv $RUN/env.new $RUN/env
+  [ "$k" != tz ] || /usr/sbin/kt-tz "${1#*=}"
+}
+
+run() {
+  cd /root
+  sh -c 'for f in /etc/profile.d/*.sh; do . "$f"; done > /dev/null 2>&1; eval "$1"' kt "$2" < "$3" > $RUN/out.$1 2> $RUN/err.$1
+  code=$?
+  {
+    flock 8
+    printf 'RESULT %s %s %s %s\n' "$1" "$code" "$(wc -c < $RUN/out.$1)" "$(wc -c < $RUN/err.$1)" >&3
+    cat $RUN/out.$1 $RUN/err.$1 >&3
+  } 8>$RUN/tx.lock
+  rm -f $RUN/out.$1 $RUN/err.$1
+  [ "$3" = /dev/null ] || rm -f "$3"
+}
+
+listened() {
+  for f in $RUN/ev.*; do
+    [ -d "/proc/${f##*.}" ] && return 0
+    rm -f "$f"
+  done
+  return 1
+}
+
+: > $RUN/ready
+say READY
+part= dir= name= got= api=
+while IFS= read -r line <&3; do
+  set -- $line
+  case $1 in
+    SIZE)
+      [ -n "$3" ] && stty -F $CON rows "$2" cols "$3" ;;
+    REDRAW)
+      set -- $(stty -F $CON size)
+      [ -n "$2" ] && stty -F $CON rows $(($1 - 1)) && stty -F $CON rows "$1" ;;
+    TIME)
+      date -s "@$2" >/dev/null 2>&1 ;;
+    ENV)
+      shift; setenv "$*" ;;
+    SEED)
+      echo "$2" | base64 -d | /usr/sbin/kt-seed ;;
+    PUT)
+      api=$3
+      dir=$3
+      [ -n "$dir" ] || dir=$(cat $RUN/upload.dir 2>/dev/null)
+      [ -d "$dir" ] || dir=$(fg_cwd)
+      name=$(basename "$2")
+      part="$dir/.$name.part"
+      : > "$part" 2>/dev/null || { say "ERR нельзя писать в $dir"; part=; } ;;
+    DATA)
+      if [ -n "$part" ]; then
+        take "$2" >> "$part"
+      else
+        take "$2" > /dev/null
+      fi ;;
+    END)
+      if [ -n "$part" ] && mv "$part" "$dir/$name"; then
+        say "DONE $dir/$name"
+        [ -n "$api" ] || got="$got$dir/$name
+"
+      fi
+      part= ;;
+    FIN)
+      printf '%s' "$got" > $RUN/upload.done
+      rm -f $RUN/upload.dir
+      got= ;;
+    REPLY)
+      case $2 in
+        ""|*[!0-9]*) take "$3" > /dev/null ;;
+        *) take "$3" | base64 -d > $RUN/reply.$2.tmp; mv $RUN/reply.$2.tmp $RUN/reply.$2 ;;
+      esac ;;
+    EXEC)
+      in=$RUN/in.$2
+      [ -f "$in" ] || in=/dev/null
+      cmd=$(printf '%s' "$3" | base64 -d)
+      ( run "$2" "$cmd" "$in" & ) ;;
+    EVENT)
+      if listened; then
+        { printf '%s' "$2" | base64 -d; echo; } >> $RUN/events
+      else
+        rm -f $RUN/events
+      fi ;;
+    PING)
+      say PONG ;;
+  esac
+done

@@ -1,0 +1,11 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='text  текст вопроса
+код возврата: 0 при подтверждении, 1 при отмене'
+kt_meta "<text>" "подтверждение" "$@"
+[ $# -gt 0 ] || kt_usage "<text>"
+r=$(kt js "(t) => confirm(t) ? 1 : 0" "$*" 2>&1) || {
+  echo "kt confirm: ${r#Error: }" >&2
+  exit 2
+}
+[ "$r" = 1 ]

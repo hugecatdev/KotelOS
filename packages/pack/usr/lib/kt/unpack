@@ -1,0 +1,21 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='name  имя архива
+dir   каталог назначения, по умолчанию исходные пути
+существующие файлы перезаписываются, остальные не удаляются'
+kt_meta "<name> [dir]" "файлы из браузера" "$@"
+[ -n "$1" ] || kt_usage "<name> [dir]"
+T=$KT_RUN/unpack.$$.tgz
+trap 'rm -f "$T"' EXIT
+origin=$(kt js "async (n, p) => { $(cat /usr/lib/kt-pack.js)
+  const x = await get(n); await kt.write(p, x.blob); return x.origin }" "$1" "$T" 2>&1) || {
+  echo "kt unpack: ${origin#Error: } (kt pack - список)" >&2
+  exit 1
+}
+case "$2" in
+  "") to=$origin ;;
+  /*) to=$2 ;;
+  *) to=$PWD/$2 ;;
+esac
+mkdir -p "$to" && tar -xzf "$T" -C "$to" || exit 1
+echo "$(kt_files "$(tar -tzf "$T" | grep -vc '/$')") -> $to"

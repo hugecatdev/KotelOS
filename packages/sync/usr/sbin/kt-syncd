@@ -1,0 +1,37 @@
+#!/bin/sh
+root=$1
+D=/run/kt/sync
+reg=$D/$$
+st=$D/.$$.stamp
+mkdir -p $D
+printf '%s\n%s\n' "$root" "$2" > $reg
+trap 'rm -f $reg $st $st.n $D/.$$.old $D/.$$.new $D/.$$.w $D/.$$.d' EXIT
+trap 'exit 0' TERM INT
+
+scan() {
+  find "$root" -type f "$@" ! -name '*.swp' ! -name '*.swo' ! -name '*.swx' ! -name '*~' ! -name 4913 ! -name '.#*' 2>/dev/null
+}
+
+rel() {
+  while IFS= read -r f; do printf '%s\n' "${f#"$root"/}"; done
+}
+
+mark() {
+  touch -d @$(($(date +%s) - 1)) "$1"
+}
+
+mark $st
+scan | sort > $D/.$$.old
+while [ -d "$root" ] && [ -f $reg ]; do
+  sleep 2
+  mark $st.n
+  scan -newer $st | rel > $D/.$$.w
+  scan | sort > $D/.$$.new
+  awk 'NR == FNR { n[$0]; next } !($0 in n)' $D/.$$.new $D/.$$.old | rel > $D/.$$.d
+  if [ -s $D/.$$.w ] || [ -s $D/.$$.d ]; then
+    kt js "async (r, w, d) => { $(cat /usr/lib/kt-sync.js)
+      await write(r, w, d) }" "$root" "$(cat $D/.$$.w)" "$(cat $D/.$$.d)" > /dev/null 2>&1
+  fi
+  mv $D/.$$.new $D/.$$.old
+  mv $st.n $st
+done

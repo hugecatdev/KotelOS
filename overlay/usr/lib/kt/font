@@ -1,0 +1,26 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  список шрифтов и текущий размер
+name            имя из списка или имя шрифта Google Fonts
+size            размер, от 8 до 32'
+kt_meta "[name] [size]" "шрифт" "$@"
+name= size=
+for a in "$@"; do
+  case $a in
+    *[!0-9]*) name="${name:+$name }$a" ;;
+    *) size=$a ;;
+  esac
+done
+if [ -z "$name$size" ]; then
+  kt_send font ""
+  kt_status
+  exit
+fi
+if [ -n "$name" ]; then
+  kt_send font "$(kt_b64 "$name")"
+  kt_status || exit 1
+fi
+if [ -n "$size" ]; then
+  kt_send cfg "$(kt_b64 "set term.font $size")"
+  kt_status > /dev/null || exit 1
+fi

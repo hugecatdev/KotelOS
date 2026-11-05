@@ -1,0 +1,57 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='dir     каталог назначения, по умолчанию /mnt/<имя папки>
+-l      список синхронизируемых каталогов
+-u dir  прекращение записи на диск, файлы в машине остаются'
+kt_meta "[dir] | -l | -u dir" "копия папки с диска" "$@"
+REG=$KT_RUN/sync
+mkdir -p $REG
+
+stop() {
+  for f in $REG/*; do
+    [ -f "$f" ] && [ "$(head -n 1 "$f")" = "$1" ] || continue
+    kill "${f##*/}" 2>/dev/null
+    rm -f "$f"
+    echo 1
+  done
+}
+
+case "$1" in
+  -l)
+    for f in $REG/*; do
+      [ -f "$f" ] && kill -0 "${f##*/}" 2>/dev/null && printf '%s <- %s\n' "$(head -n 1 "$f")" "$(tail -n 1 "$f")"
+    done
+    exit 0 ;;
+  -u)
+    [ -n "$2" ] || kt_usage "-u <dir>"
+    d=$(realpath "$2" 2>/dev/null || echo "$2")
+    [ -n "$(stop "$d")" ] || { echo "kt sync: $d не синхронизируется" >&2; exit 1; }
+    kt js "async (r) => { $(cat /usr/lib/kt-sync.js)
+      await del(r) }" "$d" > /dev/null 2>&1
+    echo "$d больше не пишется на диск, файлы остались"
+    exit 0 ;;
+  -*) kt_usage "[dir] | -l | -u dir" ;;
+esac
+
+dir=
+case "$1" in
+  "") ;;
+  /*) dir=$1 ;;
+  *) dir=$PWD/$1 ;;
+esac
+T=$KT_RUN/sync.$$.tar
+trap 'rm -f "$T"' EXIT
+r=$(kt js "async (to, p) => { $(cat /usr/lib/kt-sync.js)
+  return pick(to, p) }" "$dir" "$T" 2>&1) || {
+  echo "kt sync: ${r#Error: }" >&2
+  exit 1
+}
+IFS="$(printf '\t')" read -r dir name files size <<EOF2
+$r
+EOF2
+stop "$dir" > /dev/null
+mkdir -p "$dir"
+tar -xf "$T" -C "$dir" || exit 1
+setsid /usr/sbin/kt-syncd "$dir" "$name" > /dev/null 2>&1 < /dev/null &
+echo "$(kt_files "$files"), $(awk -v n="$size" 'BEGIN { if (n < 1048576) printf "%d КБ", (n + 1023) / 1024; else printf "%.1f МБ", n / 1048576 }')"
+echo "$dir <- $name"

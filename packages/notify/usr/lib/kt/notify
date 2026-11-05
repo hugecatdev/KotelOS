@@ -1,0 +1,9 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='text  текст уведомления, по умолчанию «готово»
+требуется https или localhost'
+kt_meta "[text]" "уведомление" "$@"
+r=$(kt js -f /usr/lib/kt-notify.js "${*:-готово}" 2>&1) || {
+  echo "kt notify: ${r#Error: }" >&2
+  exit 1
+}

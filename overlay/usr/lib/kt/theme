@@ -1,0 +1,12 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  список тем с образцами
+name            выбор темы'
+kt_meta "[name]" "тема" "$@"
+if [ -z "$1" ]; then
+  kt_send theme ""
+  kt_status
+else
+  kt_send cfg "$(kt_b64 "set term.theme $1")"
+  kt_status > /dev/null
+fi

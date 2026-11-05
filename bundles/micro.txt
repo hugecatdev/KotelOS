@@ -1,0 +1,3 @@
+# базовые инструменты, остальное - kt pkg add
+--snap
+fun nano htop tmux curl wget pack notify

@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
+<title>KotelOS</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<style>
+  :root { --line: #333; --text: #bbb; --hi: #eee; --bg: #000; --mono: ui-monospace, Menlo, Consolas, monospace; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  #app { position: relative; display: flex; flex-direction: column; height: 100vh; }
+  #term { flex: 1 1 auto; min-height: 0; margin: 8px 8px 4px; }
+  .xterm .xterm-viewport { background: var(--bg) !important; scrollbar-color: var(--line) var(--bg); scrollbar-width: thin; }
+  #kbd {
+    position: fixed; opacity: 0; height: 1px; width: 1px;
+    border: 0; padding: 0; margin: 0; resize: none; left: -9999px; top: 0;
+  }
+
+  #keys {
+    display: none; flex: 0 0 auto; flex-direction: column;
+    padding: 2px 0; border-top: 1px solid var(--line);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  body.mobile #keys { display: flex; }
+  #keys .row { display: grid; }
+  #base, #more { display: flex; flex-direction: column; }
+  #more { display: none; }
+  #more.open { display: flex; }
+  #keys button {
+    background: none; color: #999; border: 0; border-radius: 0;
+    padding: 11px 0; min-width: 0; font: var(--keys, 16px)/1 var(--mono);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #more button { color: #777; }
+  #keys button.down, #keys button.on, #keys button.lock { color: #fff; }
+  #keys button.lock { text-decoration: underline; text-underline-offset: 4px; }
+
+  .box { font: 14px/1.4 var(--mono); color: var(--text); background: #000; border: 1px solid #777; }
+  .box button { font: inherit; background: #000; color: var(--hi); border: 1px solid #777; padding: 4px 12px; cursor: pointer; }
+  #toast { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 20; padding: 6px 10px; display: none; gap: 10px; align-items: center; }
+  #toast.open { display: flex; }
+  .overlay { display: none; position: fixed; inset: 0; z-index: 30; background: #000c; align-items: center; justify-content: center; }
+  .overlay.open { display: flex; }
+  .overlay .box { padding: 14px 16px; width: 320px; max-width: calc(100vw - 32px); box-sizing: border-box; }
+  .overlay p { margin: 0 0 12px; }
+  .overlay textarea { width: 100%; box-sizing: border-box; background: #000; color: var(--text); border: 1px solid var(--line); font: inherit; margin-bottom: 12px; }
+  .overlay .btns { display: flex; justify-content: flex-end; gap: 8px; }
+  #drop { pointer-events: none; color: var(--hi); font: 16px var(--mono); border: 1px dashed var(--hi); }
+</style>
+</head>
+<body>
+  <div id="app">
+    <div id="term"></div>
+    <div id="keys"><div id="more"></div><div id="base"></div></div>
+    <div id="toast" class="box"><span></span><button>Копировать</button></div>
+  </div>
+  <div id="ask" class="overlay"><div class="box">
+    <p></p>
+    <div class="btns"><button data-m="cancel">Отмена</button><button data-m="ok"></button></div>
+  </div></div>
+  <div id="pastebox" class="overlay"><div class="box">
+    <p>Вставь текст</p>
+    <textarea rows="5"></textarea>
+    <div class="btns"><button data-m="cancel">Отмена</button><button data-m="ok">OK</button></div>
+  </div></div>
+  <div id="drop" class="overlay">Отпусти файл</div>
+  <textarea id="kbd" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="send"></textarea>
+  <input id="file" type="file" multiple hidden>
+  <input id="statefile" type="file" hidden>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
+  <script src="images/libv86.js"></script>
+  <script>
+    "use strict";
+    const $ = (s) => document.querySelector(s);
+    const qs = new URLSearchParams(location.search);
+    const BUNDLE = window.KT_BUNDLE || null;
+    const isTouch = matchMedia("(pointer: coarse)").matches;
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    const store = {
+      get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+      set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+    };
+
+    const FONTS = {
+      system: { css: "ui-monospace, Menlo, Consolas, \"DejaVu Sans Mono\", monospace" },
+      jetbrains: { name: "JetBrains Mono" },
+      fira: { name: "Fira Code" },
+      ibm: { name: "IBM Plex Mono" },
+      ubuntu: { name: "Ubuntu Mono" },
+      source: { name: "Source Code Pro" },
+      vt323: { name: "VT323" },
+    };
+
+    function mono(c) {
+      const shade = (k) => "#" + [1, 3, 5].map((i) => Math.round(parseInt(c.slice(i, i + 2), 16) * k).toString(16).padStart(2, "0")).join("");
+      const t = { background: "#000000", foreground: shade(0.85), cursor: shade(1), selectionBackground: shade(0.35), black: "#000000", brightBlack: shade(0.45) };
+      for (const k of ["red", "green", "yellow", "blue", "magenta", "cyan", "white"]) {
+        t[k] = shade(0.7);
+        t["bright" + k[0].toUpperCase() + k.slice(1)] = shade(1);
+      }
+      return t;
+    }
+
+    const THEMES = {
+      dark: { background: "#000000", foreground: "#cccccc" },
+      light: {
+        background: "#f5f5f0", foreground: "#222222", cursor: "#222222", cursorAccent: "#f5f5f0", selectionBackground: "#c8c8c0",
+        black: "#000000", red: "#b3261e", green: "#2e7d32", yellow: "#8a6d00", blue: "#1e4fb3", magenta: "#8e24aa", cyan: "#00796b", white: "#8a8a8a",
+        brightBlack: "#606060", brightRed: "#d32f2f", brightGreen: "#388e3c", brightYellow: "#9a7b00", brightBlue: "#1565c0", brightMagenta: "#9c27b0", brightCyan: "#00897b", brightWhite: "#444444",
+      },
+      amber: mono("#ffb000"),
+      green: mono("#33ff66"),
+      gray: mono("#e0e0e0"),
+    };
+
+    const KEYS_MAIN = [["ESC", "/", "-", "|", "~", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", ">", "$", "LEFT", "DOWN", "RIGHT", "KBD"]];
+    const KEYS_MORE = [["F1", "F2", "F3", "F4", "F5", "F6", "PGUP", "{", "}"], ["F7", "F8", "F9", "F10", "F11", "F12", "PGDN", "[", "]"]];
+    function parseKeys(v) {
+      let rows;
+      try { rows = JSON.parse(v); } catch { try { rows = JSON.parse(v.replace(/'/g, '"')); } catch {} }
+      if (!Array.isArray(rows) || !rows.every((r) => Array.isArray(r) && r.length && r.every((k) => typeof k === "string" && k)))
+        throw new Error("нужно [['ESC','UP'],['TAB','CTRL']]");
+      return rows;
+    }
+
+    const SETTINGS = {
+      "save.auto": { def: "on", values: ["on", "off"] },
+      "save.timer": { def: "0", range: [0, 240] },
+      "term.font": { def: isTouch ? "12" : "13", range: [8, 32], apply: (v) => setFont(+v) },
+      "term.family": { def: "system", check: fontCheck, apply: (v) => setFamily(v) },
+      "term.theme": { def: "dark", values: Object.keys(THEMES), apply: (v) => setTheme(v) },
+      "term.render": { def: "dom", values: ["dom", "canvas"], apply: (v) => { setRender(v); layout(); } },
+      "term.cursor": { def: "block", values: ["block", "bar", "underline"], apply: (v) => { term.options.cursorStyle = v; } },
+      "term.blink": { def: "off", values: ["on", "off"], apply: (v) => { term.options.cursorBlink = v === "on"; } },
+      "term.scroll": { def: "5000", range: [0, 100000], apply: (v) => { term.options.scrollback = +v; } },
+      "term.mobile": { def: isTouch ? "on" : "off", values: ["on", "off"], apply: (v) => setMobile(v === "on") },
+      "keys.main": { def: JSON.stringify(KEYS_MAIN), check: parseKeys, apply: () => buildKeys() },
+      "keys.more": { def: JSON.stringify(KEYS_MORE), check: parseKeys, apply: () => buildKeys() },
+      "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
+      "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
+      "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
+      "boot.log": { def: "off", values: ["on", "off"] },
+      "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
+      "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
+    };
+    const SPACES = new Set(Object.keys(SETTINGS).map((k) => k.split(".")[0]));
+    const cfg = {
+      data: (() => { try { return JSON.parse(store.get("kt.cfg") || "{}"); } catch { return {}; } })(),
+      spec(k) {
+        if (Object.hasOwn(SETTINGS, k)) return SETTINGS[k];
+        if (typeof k === "string" && /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/.test(k) && !SPACES.has(k.split(".")[0])) return null;
+        throw new Error("нет ключа " + k + " (kt cfg - список)");
+      },
+      has(k) {
+        try { return this.get(k) !== undefined; } catch { return false; }
+      },
+      get(k) {
+        const s = this.spec(k);
+        return Object.hasOwn(this.data, k) ? this.data[k] : s ? s.def : undefined;
+      },
+      set(k, v) {
+        const s = this.spec(k);
+        if (!s) {
+          v = String(v);
+          if (v.length > 65536) throw new Error(k + ": не больше 64 КБ");
+          if (v === "") delete this.data[k]; else this.data[k] = v;
+          store.set("kt.cfg", JSON.stringify(this.data));
+          return v;
+        }
+        v = typeof v === "boolean" && s.values ? (v ? "on" : "off") : String(v);
+        if (s.values && !s.values.includes(v)) throw new Error(`${k}: ${s.values.join("|")}`);
+        if (s.range && !(/^\d+$/.test(v) && +v >= s.range[0] && +v <= s.range[1])) throw new Error(`${k}: ${s.range[0]}..${s.range[1]}`);
+        if (s.check) s.check(v);
+        if (v === s.def) delete this.data[k]; else this.data[k] = v;
+        store.set("kt.cfg", JSON.stringify(this.data));
+        if (s.apply) s.apply(v);
+        return v;
+      },
+      reset(k) { const s = this.spec(k); return this.set(k, s ? s.def : ""); },
+      resetAll() {
+        const keys = Object.keys(this.data);
+        for (const k of keys) if (Object.hasOwn(SETTINGS, k)) this.reset(k);
+        this.data = {};
+        store.set("kt.cfg", "{}");
+        return keys.length ? "сброшено: " + keys.join(" ") : "всё и так по умолчанию";
+      },
+      typed(k) {
+        const s = this.spec(k), v = this.get(k);
+        if (!s) return v;
+        return s.range ? +v : s.values && s.values.includes("on") ? v === "on" : v;
+      },
+      custom() {
+        return Object.keys(this.data).filter((k) => { try { return this.spec(k) === null; } catch { return false; } }).sort();
+      },
+      keys() { return [...Object.keys(SETTINGS), ...this.custom()]; },
+      all() { return Object.fromEntries(this.keys().map((k) => [k, this.typed(k)])); },
+      list() { return this.keys().map((k) => k + "\t" + this.get(k).replace(/[\t\n]/g, " ")).join("\n"); },
+    };
+
+    if (qs.has("reset")) {
+      cfg.data = {};
+      store.set("kt.cfg", "{}");
+      const rest = location.search.slice(1).split("&").filter((p) => p && p.split("=")[0] !== "reset").join("&");
+      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    }
+
+    let mobile = cfg.get("term.mobile") === "on";
+
+    const NAME = (BUNDLE && BUNDLE.name) || "kotelos";
+    const SLOT = "state:" + NAME;
+    const HOME = location.pathname;
+    const hasKernel = !!(BUNDLE && BUNDLE.files.bzimage);
+    const coldBoot = qs.has("boot") && hasKernel;
+    if (qs.has("boot")) {
+      const rest = location.search.slice(1).split("&").filter((p) => p && p.split("=")[0] !== "boot").join("&");
+      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+    }
+
+    function detectBrowser() {
+      const ua = navigator.userAgent;
+      let m;
+      if ((m = ua.match(/Firefox\/(\d+)/))) return "firefox_" + m[1];
+      if ((m = ua.match(/Edg\/(\d+)/))) return "edge_" + m[1];
+      if ((m = ua.match(/OPR\/(\d+)/))) return "opera_" + m[1];
+      if ((m = ua.match(/Chrome\/(\d+)/))) return "chrome_" + m[1];
+      if ((m = ua.match(/Version\/(\d+).*Safari/))) return "safari_" + m[1];
+      return "unknown";
+    }
+
+    function posixTZ() {
+      const off = (t) => -new Date(t).getTimezoneOffset();
+      const two = (n) => String(n).padStart(2, "0");
+      const zone = (o) => {
+        const a = Math.abs(o), h = Math.floor(a / 60), m = a % 60;
+        return { name: `<${o < 0 ? "-" : "+"}${two(h)}${m ? two(m) : ""}>`, val: `${o > 0 ? "-" : ""}${h}${m ? ":" + two(m) : ""}` };
+      };
+      const y = new Date().getFullYear(), day = 86400000, y0 = Date.UTC(y, 0, 1);
+      const trans = [];
+      for (let d = 1, prev = off(y0); d <= 366; d++) {
+        const o = off(y0 + d * day);
+        if (o === prev) continue;
+        let lo = y0 + (d - 1) * day, hi = y0 + d * day;
+        while (hi - lo > 60000) {
+          const mid = Math.floor((lo + hi) / 120000) * 60000;
+          if (off(mid) === prev) lo = mid; else hi = mid;
+        }
+        trans.push({ at: hi, from: prev, to: o });
+        prev = o;
+      }
+      const now = zone(off(Date.now()));
+      if (trans.length !== 2) return now.name + now.val;
+      const std = Math.min(trans[0].from, trans[0].to), dst = Math.max(trans[0].from, trans[0].to);
+      const rule = (tr) => {
+        const l = new Date(tr.at + tr.from * 60000);
+        const m = l.getUTCMonth(), d = l.getUTCDate(), dim = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+        const mins = l.getUTCHours() * 60 + l.getUTCMinutes();
+        return `M${m + 1}.${d + 7 > dim ? 5 : Math.ceil(d / 7)}.${l.getUTCDay()}` +
+          (mins === 120 ? "" : "/" + Math.floor(mins / 60) + (mins % 60 ? ":" + two(mins % 60) : ""));
+      };
+      const s = zone(std), w = zone(dst);
+      const start = trans.find((t) => t.to === dst), end = trans.find((t) => t.to === std);
+      return s.name + s.val + w.name + (dst - std === 60 ? "" : w.val) + "," + rule(start) + "," + rule(end);
+    }
+
+    const browserEnv = () => ({
+      browser: detectBrowser(),
+      screen: screen.width + "x" + screen.height,
+      touch: mobile ? "1" : "0",
+      tz: posixTZ(),
+      zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+    });
+
+    const term = new Terminal({
+      fontFamily: FONTS.system.css,
+      fontSize: +cfg.get("term.font"),
+      cursorBlink: cfg.get("term.blink") === "on",
+      cursorStyle: cfg.get("term.cursor"),
+      scrollback: +cfg.get("term.scroll"),
+    });
+    const fit = new FitAddon.FitAddon();
+    const serializer = new SerializeAddon.SerializeAddon();
+    term.loadAddon(fit);
+    term.loadAddon(serializer);
+    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    term.open($("#term"));
+    let canvas = null;
+    function setRender(v) {
+      if (canvas) canvas.dispose();
+      canvas = null;
+      if (v !== "canvas") return;
+      try { term.loadAddon(canvas = new CanvasAddon.CanvasAddon()); } catch (e) { console.warn("canvas", e); canvas = null; }
+    }
+    setRender(cfg.get("term.render"));
+    setTheme(cfg.get("term.theme"));
+    if (cfg.get("term.family") !== "system") setFamily(cfg.get("term.family"));
+
+    let asking = Promise.resolve();
+    function ask(text, okLabel, onOk) {
+      const run = (fn) => {
+        let value;
+        try { value = fn(); } catch (e) { value = Promise.reject(e); }
+        return { value };
+      };
+      if (onOk && navigator.userActivation && navigator.userActivation.isActive) return Promise.resolve(run(onOk));
+      const shown = asking.then(() => new Promise((resolve) => {
+        $("#ask p").textContent = text;
+        $('#ask [data-m="ok"]').textContent = okLabel;
+        $("#ask").classList.add("open");
+        $("#ask").onclick = (e) => {
+          const m = e.target.dataset.m;
+          if (!m) return;
+          $("#ask").classList.remove("open");
+          resolve(m !== "ok" ? false : onOk ? run(onOk) : true);
+        };
+      }));
+      asking = shown;
+      return shown;
+    }
+
+    let db;
+    function idb(mode, fn) {
+      db ||= new Promise((res, rej) => {
+        const r = indexedDB.open("kotelos", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("kv");
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      return db.then((d) => new Promise((res, rej) => {
+        const tx = d.transaction("kv", mode);
+        const req = fn(tx.objectStore("kv"));
+        tx.oncomplete = () => res(req.result);
+        tx.onerror = () => rej(tx.error);
+      }));
+    }
+    const kv = {
+      get: (k) => idb("readonly", (s) => s.get(k)),
+      set: (k, v) => idb("readwrite", (s) => s.put(v, k)),
+      del: (k) => idb("readwrite", (s) => s.delete(k)),
+      keys: () => idb("readonly", (s) => s.getAllKeys()),
+    };
+    function chunks(buf, size = 1048576) {
+      let o = 0;
+      return new ReadableStream({
+        pull(c) {
+          if (o >= buf.byteLength) return c.close();
+          c.enqueue(new Uint8Array(buf, o, Math.min(size, buf.byteLength - o)));
+          o += size;
+        },
+      });
+    }
+    const gzip = (buf) => new Response(chunks(buf).pipeThrough(new CompressionStream("gzip"))).blob();
+    const gunzip = (blob) => new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+    const mb = (n) => (n / 1048576).toFixed(1) + " МБ";
+    const human = (n) => n < 1048576 ? Math.ceil(n / 1024) + " КБ" : mb(n);
+    const when = (t) => new Date(t).toLocaleString("ru", { dateStyle: "short", timeStyle: "short" });
+
+    function layout() {
+      const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      $("#app").style.height = h + "px";
+      window.scrollTo(0, 0);
+      fit.fit();
+      term.scrollToBottom();
+      $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
+    }
+    if (window.visualViewport) {
+      visualViewport.addEventListener("resize", layout);
+      visualViewport.addEventListener("scroll", layout);
+    }
+    window.addEventListener("resize", () => setTimeout(layout, 100));
+
+    function setFont(size) {
+      size = Math.max(8, Math.min(32, Math.round(size)));
+      if (size === term.options.fontSize) return;
+      term.options.fontSize = size;
+      layout();
+    }
+
+    function fontCheck(v) {
+      if (!Object.hasOwn(FONTS, v) && !/^[\p{L}\p{N} ]{2,40}$/u.test(v)) throw new Error("term.family: " + Object.keys(FONTS).join("|") + " или имя шрифта с Google Fonts");
+    }
+    async function loadFont(key) {
+      const f = FONTS[key] || { name: key };
+      if (!f.name) return f;
+      let l = document.querySelector(`link[data-font="${CSS.escape(key)}"]`);
+      if (!l) {
+        l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.dataset.font = key;
+        l.href = "https://fonts.googleapis.com/css2?family=" + f.name.replace(/ /g, "+") + ":wght@400;700&display=swap";
+        l.loaded = new Promise((ok) => { l.onload = () => ok(true); l.onerror = () => ok(false); });
+        document.head.append(l);
+      }
+      if (!(await l.loaded)) {
+        l.remove();
+        return null;
+      }
+      await Promise.all([400, 700].map((w) => document.fonts.load(`${w} 16px "${f.name}"`).catch(() => {})));
+      return f;
+    }
+    async function setFamily(key) {
+      const f = (await loadFont(key)) || FONTS.system;
+      if (cfg.get("term.family") !== key) return;
+      term.options.fontFamily = f.css || `"${f.name}", monospace`;
+      layout();
+    }
+
+    function setTheme(key) {
+      const t = THEMES[key] || THEMES.dark;
+      term.options.theme = { cursorAccent: t.background, ...t };
+      document.documentElement.style.setProperty("--bg", t.background);
+    }
+
+    let emulator = null;
+    const build = BUNDLE ? BUNDLE.build : null;
+    let memSize = +cfg.get("boot.mem") * 1048576;
+    let agentReady = false;
+    let markReady;
+    let ready = new Promise((r) => { markReady = r; });
+
+    const send = (s) => emulator && emulator.serial_send_bytes(0, enc.encode(s));
+    const AGENT_PORT = 7700, PAGE_PORT = 7771, PAGE_IP = "192.168.86.1";
+    let link = null, linkGen = 0, onReady = null;
+    const send1 = (s) => { if (link) link.write(typeof s === "string" ? enc.encode(s) : s); };
+    const ctl = (line) => send1(line + "\n");
+
+    function resend(c) {
+      const pump = c.pump;
+      let timer = 0, ackn, wait = 200;
+      const check = () => {
+        timer = 0;
+        if (c.state === "closed") return;
+        const stuck = c.pending && c.last_received_ackn === ackn;
+        wait = stuck ? Math.min(wait * 2, 1600) : 200;
+        if (stuck) c.pending = false;
+        c.pump();
+      };
+      c.pump = () => {
+        pump.call(c);
+        if (c.pending && !timer) { ackn = c.last_received_ackn; timer = setTimeout(check, wait); }
+      };
+    }
+
+    function reader(onLine) {
+      const chunks = [];
+      let len = 0, want = 0, raw = null;
+      const take = (n) => {
+        const out = new Uint8Array(n);
+        for (let o = 0; o < n;) {
+          const c = chunks[0], k = Math.min(c.length, n - o);
+          out.set(c.subarray(0, k), o);
+          o += k;
+          if (k === c.length) chunks.shift(); else chunks[0] = c.subarray(k);
+        }
+        len -= n;
+        return out;
+      };
+      return (data) => {
+        chunks.push(new Uint8Array(data));
+        len += data.length;
+        for (;;) {
+          if (raw) {
+            if (len < want) return;
+            const cb = raw;
+            raw = null;
+            cb(take(want));
+            continue;
+          }
+          let i = -1, off = 0;
+          for (const c of chunks) {
+            const j = c.indexOf(10);
+            if (j >= 0) { i = off + j; break; }
+            off += c.length;
+          }
+          if (i < 0) return;
+          const r = onLine(dec.decode(take(i + 1)).replace(/\r?\n$/, ""));
+          if (r) { want = r.n; raw = r.cb; }
+        }
+      };
+    }
+
+    function linkDown() {
+      if (agentReady) {
+        agentReady = false;
+        ready = new Promise((r) => { markReady = r; });
+      }
+      for (const [id, w] of execs) { execs.delete(id); w({ code: -1, out: "", err: "связь с машиной потеряна", bytes: new Uint8Array(0) }); }
+    }
+
+    function connectAgent() {
+      const net = emulator && emulator.network_adapter;
+      if (!net) return;
+      const gen = ++linkGen;
+      let c, gone = false;
+      try { c = net.connect(AGENT_PORT); } catch { setTimeout(() => gen === linkGen && connectAgent(), 1000); return; }
+      resend(c);
+      const lost = () => {
+        if (gone) return;
+        gone = true;
+        clearTimeout(timer);
+        if (link === c) { link = null; linkDown(); }
+        if (gen === linkGen) setTimeout(connectAgent, 500);
+      };
+      const timer = setTimeout(() => { if (link !== c) { c.release(); lost(); } }, 1500);
+      c.on("connect", () => { clearTimeout(timer); link = c; });
+      c.on("data", reader(agentLine));
+      c.on("shutdown", () => { c.close(); lost(); });
+      c.on("close", lost);
+    }
+
+    function agentLine(line) {
+      if (line.startsWith("RESULT ")) {
+        const [, id, code, olen, elen] = line.split(" ");
+        return {
+          n: +olen + +elen,
+          cb: (bytes) => {
+            const w = execs.get(id);
+            if (!w) return;
+            execs.delete(id);
+            const out = bytes.subarray(0, +olen);
+            w({ code: +code, out: dec.decode(out), err: dec.decode(bytes.subarray(+olen)), bytes: out });
+          },
+        };
+      }
+      onCtl(line);
+    }
+
+    const pending = new Map();
+    function serveRequest(c) {
+      const parts = [];
+      let got = 0, head = null, size = -1, start = 0, done = false;
+      const all = () => {
+        const d = new Uint8Array(got);
+        let o = 0;
+        for (const b of parts) { d.set(b, o); o += b.length; }
+        return d;
+      };
+      const run = () => {
+        if (done) return;
+        done = true;
+        const data = all().subarray(start, size >= 0 ? start + size : undefined);
+        const [verb, id, , ...rest] = head.split(" ");
+        const fn = Object.hasOwn(commands, verb) && commands[verb];
+        if (id && id !== "-") pending.set(id, c);
+        Promise.resolve()
+          .then(() => fn ? fn(rest.join(" "), id, data) : say(id, "нет команды " + verb))
+          .catch((e) => say(id, "ошибка: " + e.message))
+          .finally(() => { if (pending.get(id) === c) pending.delete(id); c.close(); });
+      };
+      c.on("data", (d) => {
+        parts.push(new Uint8Array(d));
+        got += d.length;
+        if (head === null) {
+          const buf = all(), i = buf.indexOf(10);
+          if (i < 0) return;
+          head = dec.decode(buf.subarray(0, i));
+          start = i + 1;
+          parts.length = 0;
+          parts.push(buf);
+          const n = head.split(" ")[2];
+          size = n === "-" ? -1 : +n;
+        }
+        if (size >= 0 && got - start >= size) run();
+      });
+      c.on("shutdown", () => { if (head !== null) run(); else c.close(); });
+      resend(c);
+      c.accept();
+    }
+
+    function toB64(bytes) {
+      let s = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(s);
+    }
+    const fromB64 = Uint8Array.fromBase64 ? (b64) => Uint8Array.fromBase64(b64 || "") : (b64) => {
+      const s = atob(b64 || ""), out = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+      return out;
+    };
+    const b64text = (b64) => dec.decode(fromB64(b64));
+    const sq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+    function reply(id, text) {
+      if (!id || id === "-") return;
+      const c = pending.get(id);
+      if (c) {
+        pending.delete(id);
+        c.write(enc.encode(text));
+        c.close();
+        return;
+      }
+      const b64 = toB64(enc.encode(text));
+      send1(`REPLY ${id} ${b64.length}\n${b64}`);
+    }
+    const say = (id, text) => reply(id, text ? text + "\n" : "");
+    const status = (id, ok, text) => reply(id, (ok ? "0" : "1") + (text ? text.replace(/\n?$/, "\n") : ""));
+
+    let sizeTimer = 0;
+    term.onResize(() => {
+      clearTimeout(sizeTimer);
+      sizeTimer = setTimeout(() => ctl(`SIZE ${term.rows} ${term.cols}`), 80);
+    });
+
+    function hello() {
+      ctl(`SIZE ${term.rows} ${term.cols}`);
+      ctl(`TIME ${Math.floor(Date.now() / 1000)}`);
+      ctl(`SEED ${toB64(crypto.getRandomValues(new Uint8Array(32)))}`);
+      for (const [k, v] of Object.entries(browserEnv())) ctl(`ENV ${k}=${v}`);
+    }
+
+    const waiters = [];
+    function waitCtl(re, ms = 60000) {
+      return new Promise((resolve, reject) => {
+        const w = { re, resolve };
+        w.timer = setTimeout(() => {
+          waiters.splice(waiters.indexOf(w), 1);
+          reject(new Error("гость не отвечает"));
+        }, ms);
+        waiters.push(w);
+      });
+    }
+
+    let startCmd = qs.get("cmd") || cfg.get("boot.cmd") || null;
+    let lastOutput = 0;
+    function typeWhenIdle(cmd) {
+      const t = setInterval(() => {
+        if (Date.now() - lastOutput < 800) return;
+        clearInterval(t);
+        send(cmd + "\r");
+      }, 200);
+    }
+
+    const execs = new Map();
+    function onCtl(line) {
+      const w = waiters.find((w) => w.re.test(line));
+      if (w) {
+        waiters.splice(waiters.indexOf(w), 1);
+        clearTimeout(w.timer);
+        w.resolve(line);
+        return;
+      }
+      if (line === "READY") {
+        agentReady = true;
+        markReady();
+        hello();
+        if (onReady) { const f = onReady; onReady = null; f(); }
+        if (startCmd) typeWhenIdle(startCmd);
+        startCmd = null;
+      }
+    }
+
+    const safeName = (n) => n.normalize("NFC").replace(/[^\p{L}\p{N}._\-+=@,()]+/gu, "_").replace(/^\.+/, "_") || "file";
+    const toBlob = (d) => d instanceof Blob ? d : new Blob([d]);
+
+    let queue = Promise.resolve();
+    function transfer(name, dir, blob) {
+      const job = queue.then(async () => {
+        const CH = 1048576;
+        ctl(`PUT ${safeName(name)}${dir ? " " + dir : ""}`);
+        for (let o = 0; o < blob.size; o += CH) {
+          const part = new Uint8Array(await blob.slice(o, o + CH).arrayBuffer());
+          while (link && link.send_buffer.length > 4 * CH) await new Promise((r) => setTimeout(r, 20));
+          send1(`DATA ${part.length}\n`);
+          send1(part);
+        }
+        ctl("END");
+        const r = await waitCtl(/^(DONE|ERR)/);
+        if (r.startsWith("ERR")) throw new Error(r.slice(4));
+        return r.slice(5);
+      });
+      queue = job.catch(() => {});
+      return job;
+    }
+    async function uploadFiles(files) {
+      await ready;
+      for (const f of files) await transfer(f.name, "", f).catch((e) => console.warn("upload", e));
+      ctl("FIN");
+    }
+
+    async function exec(cmd, opts = {}) {
+      await ready;
+      const id = String(1e9 + Math.floor(Math.random() * 1e9));
+      if (opts.stdin != null) await transfer("in." + id, "/run/kt", toBlob(opts.stdin));
+      return new Promise((resolve) => {
+        execs.set(id, resolve);
+        ctl(`EXEC ${id} ${toB64(enc.encode(cmd))}`);
+      });
+    }
+    async function readFile(path) {
+      const r = await exec("cat -- " + sq(path));
+      if (r.code) throw new Error(r.err.trim() || "не прочитать " + path);
+      return r.bytes;
+    }
+    async function writeFile(path, data) {
+      const r = await exec(`mkdir -p "$(dirname -- ${sq(path)})" && cat > ${sq(path)}`, { stdin: data });
+      if (r.code) throw new Error(r.err.trim() || "не записать " + path);
+    }
+    function emit(name, data) {
+      ctl("EVENT " + toB64(enc.encode(JSON.stringify({ name, data: data === undefined ? null : data, t: Date.now() }))));
+    }
+
+    function pickFile(input) {
+      return new Promise((resolve) => {
+        input.onchange = () => { const f = [...input.files]; input.value = ""; resolve(f); };
+        input.oncancel = () => resolve([]);
+        input.click();
+      });
+    }
+
+    let dragDepth = 0;
+    document.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; $("#drop").classList.add("open"); } });
+    document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("open"); } });
+    document.addEventListener("dragover", (e) => e.preventDefault());
+    document.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dragDepth = 0;
+      $("#drop").classList.remove("open");
+      if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files]);
+    });
+
+    function fallbackCopy(text) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.append(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      ta.remove();
+    }
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        const t = $("#toast");
+        t.querySelector("span").textContent = "Браузер просит подтвердить";
+        t.classList.add("open");
+        t.querySelector("button").onclick = () => {
+          t.classList.remove("open");
+          (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => fallbackCopy(text));
+        };
+        setTimeout(() => t.classList.remove("open"), 20000);
+        return false;
+      }
+    }
+    function screenText() {
+      const buf = term.buffer.active, lines = [];
+      for (let i = buf.viewportY; i < buf.viewportY + term.rows; i++) {
+        const line = buf.getLine(i);
+        if (line) lines.push(line.translateToString(true));
+      }
+      return lines.join("\n").replace(/\s+$/, "") + "\n";
+    }
+
+    async function readClipboard() {
+      try {
+        return await navigator.clipboard.readText();
+      } catch {
+        const box = $("#pastebox"), ta = $("#pastebox textarea");
+        ta.value = "";
+        box.classList.add("open");
+        ta.focus();
+        return new Promise((resolve) => {
+          box.onclick = (e) => {
+            const m = e.target.dataset.m;
+            if (!m) return;
+            box.classList.remove("open");
+            focusInput();
+            resolve(m === "ok" ? ta.value : null);
+          };
+        });
+      }
+    }
+
+    function saveBlob(blob, name) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    const AsyncFunction = (async () => {}).constructor;
+    async function evalJS(code) {
+      let fn;
+      try { fn = new AsyncFunction("kt", "term", "return (" + code + "\n)"); }
+      catch { fn = new AsyncFunction("kt", "term", code); }
+      const r = await fn(api, term);
+      return typeof r === "function" ? r() : r;
+    }
+    function asText(v) {
+      if (v === undefined) return "";
+      if (typeof v === "string") return v;
+      if (v instanceof Node) return v.outerHTML ?? v.textContent;
+      try { return JSON.stringify(v, null, 2) ?? String(v); } catch { return String(v); }
+    }
+    function asJSON(v) {
+      if (v === undefined) return "null";
+      if (v instanceof Node) return JSON.stringify(v.outerHTML ?? v.textContent);
+      try { return JSON.stringify(v) ?? "null"; } catch { return JSON.stringify(String(v)); }
+    }
+
+    const SNAP = "snap:";
+    const snapName = (n) => {
+      if (!/^[\w.-]{1,32}$/.test(n)) throw new Error("имя: буквы, цифры, . _ -");
+      return n;
+    };
+
+    let saving = false, lastSave = Date.now();
+    async function saveState(id, name) {
+      if (!emulator) return;
+      if (saving) return say(id, "уже сохраняю");
+      saving = true;
+      try {
+        if (name) snapName(name);
+        const raw = await emulator.save_state();
+        const screenDump = serializer.serialize({ scrollback: 300 });
+        const blob = await gzip(raw);
+        await kv.set(name ? SNAP + name : SLOT, {
+          blob, screen: screenDump, memory_size: memSize, replyId: id || null,
+          created: Date.now(), build: build && build.build, bundle: NAME,
+        });
+        lastSave = Date.now();
+        say(id, name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`);
+        return blob.size;
+      } catch (e) {
+        say(id, "не вышло: " + e.message);
+      } finally {
+        saving = false;
+      }
+    }
+
+    async function alive() {
+      ctl("PING");
+      return waitCtl(/^PONG/, 3000).then(() => true, () => false);
+    }
+    let leaving = false, restoredAt = 0;
+    function leave(query = "") {
+      leaving = true;
+      setTimeout(() => { location.href = HOME + query; }, 800);
+    }
+    let wipeTap = 0;
+    async function wipe() {
+      const now = Date.now();
+      if (now - wipeTap > 3000) { wipeTap = now; return; }
+      wipeTap = 0;
+      leaving = true;
+      for (let i = 0; saving && i < 50; i++) await new Promise((r) => setTimeout(r, 100));
+      await kv.del(SLOT).catch(() => {});
+      cfg.data = {};
+      store.set("kt.cfg", "{}");
+      location.href = HOME;
+    }
+    document.addEventListener("visibilitychange", async () => {
+      if (document.hidden && !leaving && cfg.get("save.auto") === "on" && agentReady && await alive() && !leaving) saveState();
+    });
+    setInterval(async () => {
+      const m = +cfg.get("save.timer");
+      if (m && !leaving && !saving && agentReady && Date.now() - lastSave >= m * 60000 && await alive()) saveState();
+    }, 20000);
+
+    async function snaps() {
+      const keys = (await kv.keys().catch(() => [])).filter((k) => String(k).startsWith(SNAP));
+      const list = [];
+      for (const k of keys) {
+        const s = await kv.get(k).catch(() => null);
+        if (s) list.push({ name: k.slice(SNAP.length), ...s });
+      }
+      return list.sort((a, b) => a.created - b.created);
+    }
+
+    async function sessionInfo() {
+      const s = await kv.get(SLOT).catch(() => null);
+      const off = -new Date().getTimezoneOffset(), a = Math.abs(off);
+      const utc = `UTC${off < 0 ? "-" : "+"}${Math.floor(a / 60)}${a % 60 ? ":" + String(a % 60).padStart(2, "0") : ""}`;
+      const lines = [
+        `browser: ${detectBrowser().replace("_", " ")}`,
+        `screen: ${screen.width}x${screen.height}`,
+        `terminal: ${term.cols}x${term.rows}`,
+        `mobile: ${mobile ? "on" : "off"}`,
+        `tz: ${Intl.DateTimeFormat().resolvedOptions().timeZone || "?"}, ${utc}`,
+        `bundle: ${NAME}${BUNDLE && BUNDLE.state ? ", снимок" : ""}${hasKernel ? ", ядро" : ""}`,
+        ...(BUNDLE && BUNDLE.version ? [`version: ${BUNDLE.version}`] : []),
+        `image: ${build ? build.build : "?"}`,
+        `memory: ${mb(memSize)}`,
+        s ? `save: ${when(s.created)}, ${mb(s.blob.size)}` : "save: нет",
+      ];
+      if (s && build && s.build && s.build !== build.build) lines.push("save-image: старый, kt reset - загрузиться на новом");
+      return lines.join("\n");
+    }
+
+    const commands = {
+      async upload() {
+        const r = await ask("Гость ждёт файлы", "Выбрать", () => pickFile($("#file")));
+        if (r) {
+          const files = await r.value;
+          if (files.length) return uploadFiles(files);
+        }
+        ctl("FIN");
+      },
+      async paste() {
+        const text = await readClipboard();
+        if (text) await transfer("clip.txt", "", new Blob([text])).catch(() => {});
+        ctl("FIN");
+      },
+      async fetch(arg, id) {
+        const stop = new AbortController();
+        let timer;
+        const idle = () => { clearTimeout(timer); timer = setTimeout(() => stop.abort(), 30000); };
+        try {
+          const url = new URL(b64text(arg), location.href);
+          idle();
+          const r = await fetch(url, { signal: stop.signal });
+          if (!r.ok) throw new Error(`${r.status} ${r.statusText}`.trim());
+          const parts = [], rd = r.body.getReader();
+          for (;;) {
+            idle();
+            const { done, value } = await rd.read();
+            if (done) break;
+            parts.push(value);
+          }
+          clearTimeout(timer);
+          const name = decodeURIComponent(url.pathname.split("/").pop()) || "index.html";
+          await transfer(name, "", new Blob(parts));
+        } catch (e) {
+          clearTimeout(timer);
+          status(id, false, "fetch: " + (stop.signal.aborted ? "сервер молчит 30 с" : e.message));
+        }
+        ctl("FIN");
+      },
+      async js(arg, id) {
+        const [code, ...args] = arg.split(" ").map(b64text);
+        try { status(id, true, asText(await evalJS(args.length ? `(${code})(${args.map((a) => JSON.stringify(a)).join(", ")})` : code))); }
+        catch (e) { status(id, false, String(e)); }
+      },
+      async jsjson(arg, id) {
+        try { reply(id, "0" + asJSON(await evalJS(b64text(arg)))); }
+        catch (e) { reply(id, "1" + String(e)); }
+      },
+      save: (arg, id) => saveState(id, b64text(arg)),
+      info: async (arg, id) => say(id, await sessionInfo()),
+      async new(arg, id) {
+        const cold = b64text(arg) === "boot";
+        if (cold && !hasKernel) return status(id, false, "kt reset: в этом файле нет ядра, только снимок");
+        await kv.del(SLOT).catch(() => {});
+        status(id, true, cold ? "сохранение удалено, загружаюсь с ядра..." : "сохранение удалено, перезагружаю...");
+        leave(cold ? "?boot" : "");
+      },
+      async load(arg, id) {
+        try {
+          if (Date.now() - restoredAt < 5000) throw new Error("машина только что загружена, повтор пропускаю");
+          const name = b64text(arg);
+          if (name) {
+            const s = await kv.get(SNAP + snapName(name)).catch(() => null);
+            if (!s) throw new Error(`нет снимка ${name}`);
+            await kv.set(SLOT, s);
+            status(id, true, `загружаю снимок ${name}...`);
+          } else {
+            const s = await kv.get(SLOT).catch(() => null);
+            if (!s) throw new Error("сохранения нет");
+            status(id, true, `загружаю сохранение от ${when(s.created)}...`);
+          }
+          leave();
+        } catch (e) {
+          status(id, false, "kt load: " + e.message);
+        }
+      },
+      async snaps(arg, id) {
+        const list = await snaps();
+        status(id, true, list.map((s) => `${s.name.padEnd(12)} ${when(s.created).padEnd(18)} ${mb(s.blob.size).padStart(8)}  ${s.bundle || ""}`.trimEnd()).join("\n"));
+      },
+      async snapdel(arg, id) {
+        const name = b64text(arg);
+        if (!(await kv.get(SNAP + name).catch(() => null))) return status(id, false, `kt snap: нет снимка ${name}`);
+        await kv.del(SNAP + name);
+        status(id, true, `снимок ${name} удалён`);
+      },
+      async font(arg, id) {
+        const name = b64text(arg).trim();
+        if (name) {
+          try {
+            fontCheck(name);
+            if (!(await loadFont(name))) throw new Error(`нет шрифта ${name} на Google Fonts`);
+            cfg.set("term.family", name);
+            status(id, true, "");
+          } catch (e) {
+            status(id, false, "kt font: " + e.message.replace(/^term\.family: /, ""));
+          }
+          return;
+        }
+        const cur = cfg.get("term.family");
+        const rows = Object.entries(FONTS).map(([k, f]) => `${k === cur ? "*" : " "} ${k.padEnd(10)} \x1b[90m${f.name || "ui-monospace"}\x1b[0m`);
+        if (!Object.hasOwn(FONTS, cur)) rows.push(`* ${cur}`);
+        status(id, true, rows.join("\n") + `\n\nразмер ${cfg.get("term.font")}\n\x1b[90mс использованием Google Fonts\x1b[0m`);
+      },
+      theme(arg, id) {
+        const cur = cfg.get("term.theme");
+        const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).join(";");
+        status(id, true, Object.entries(THEMES).map(([k, t]) =>
+          `${k === cur ? "*" : " "} ${k.padEnd(7)} \x1b[48;2;${rgb(t.background)}m\x1b[38;2;${rgb(t.foreground)}m ~ ❯ ls \x1b[0m`).join("\n"));
+      },
+      async export(arg, id) {
+        const snap = b64text(arg);
+        const s = await kv.get(snap ? SNAP + snap : SLOT).catch(() => null);
+        if (!s) return say(id, snap ? `нет снимка ${snap}` : "сохранения нет, сначала kt save");
+        const name = `kotelos-${snap ? snap + "-" : ""}${new Date(s.created).toISOString().slice(0, 16).replace(/[-:T]/g, "")}.v86state.gz`;
+        saveBlob(s.blob, name);
+        say(id, `скачиваю ${name}, ${mb(s.blob.size)}`);
+      },
+      async import(arg, id) {
+        const r = await ask("Выбери файл .v86state.gz - текущее сохранение заменится", "Выбрать", () => pickFile($("#statefile")));
+        if (!r) return say(id, "отменено");
+        const [f] = await r.value;
+        if (!f) return say(id, "отменено");
+        await kv.set(SLOT, { blob: f, memory_size: memSize, created: f.lastModified || Date.now(), build: null });
+        say(id, `импортировано ${f.name}, перезагружаю...`);
+        leave();
+      },
+      cfg(arg, id) {
+        const [op, key, ...rest] = b64text(arg).split(" ");
+        try {
+          if (!op) status(id, true, cfg.list());
+          else if (op === "get") { const v = cfg.get(key); status(id, v !== undefined, v); }
+          else if (op === "set") {
+            const v = cfg.set(key, rest.join(" "));
+            status(id, true, v);
+          }
+          else if (op === "reset") status(id, true, key ? cfg.reset(key) : cfg.resetAll());
+          else throw new Error("не понял " + op);
+        } catch (e) {
+          status(id, false, "kt cfg: " + e.message);
+        }
+      },
+      async copy(arg, id) {
+        const text = b64text(arg);
+        say(id, await copyText(text) ? "" : "нажми «Копировать» внизу экрана");
+      },
+      dl(arg, id, body) {
+        saveBlob(new Blob([body]), b64text(arg) || "file.bin");
+        status(id, true, "");
+      },
+      async copyscreen(arg, id) {
+        say(id, await copyText(screenText()) ? "" : "нажми «Копировать» внизу экрана");
+      },
+    };
+
+    term.parser.registerOscHandler(52, (data) => {
+      const b64 = data.slice(data.indexOf(";") + 1);
+      if (b64 !== "?") { try { copyText(b64text(b64)); } catch {} }
+      return true;
+    });
+
+    term.onBell(() => { if (navigator.vibrate) navigator.vibrate(40); });
+
+    const api = {
+      ready: () => ready,
+      exec,
+      read: readFile,
+      write: writeFile,
+      type: (text) => { send(String(text)); },
+      emit,
+      save: () => saveState(),
+      fit: () => layout(),
+      cfg: new Proxy((k, v) => k === undefined ? cfg.all() : (v === undefined || cfg.set(k, v), cfg.typed(k)), {
+        get: (f, k) => typeof k === "string" && k.includes(".") ? cfg.typed(k) : f[k],
+        set: (f, k, v) => (cfg.set(k, v), true),
+        deleteProperty: (f, k) => (cfg.reset(k), true),
+        has: (f, k) => cfg.has(k),
+      }),
+      bundle: NAME,
+      async gesture(text, label, fn) {
+        const r = await ask(String(text), String(label || "OK"), fn);
+        focusInput();
+        if (!r) throw new Error("отменено");
+        return r.value;
+      },
+      get term() { return term; },
+      get emulator() { return emulator; },
+    };
+    window.kt = api;
+
+    const REMOTE = ["exec", "read", "write", "type", "emit", "save", "cfg"];
+    window.addEventListener("message", async (e) => {
+      const m = e.data;
+      if (!m || typeof m !== "object" || m.kt === undefined || !m.method || !e.source) return;
+      const answer = (msg) => e.source.postMessage({ kt: m.kt, ...msg }, "*");
+      try {
+        if (!REMOTE.includes(m.method)) throw new Error("нет метода " + m.method);
+        answer({ result: await api[m.method](...(m.args || [])) });
+      } catch (err) {
+        answer({ error: String((err && err.message) || err) });
+      }
+    });
+    ready.then(() => { if (window.parent !== window) window.parent.postMessage({ kt: "ready" }, "*"); });
+
+    const mods = { ctrl: 0, alt: 0 };
+    const modBtn = {};
+    function setMod(name, v) {
+      mods[name] = v;
+      const b = modBtn[name];
+      if (b) {
+        b.classList.toggle("on", v === 1);
+        b.classList.toggle("lock", v === 2);
+      }
+    }
+    function releaseMods() {
+      if (mods.ctrl === 1) setMod("ctrl", 0);
+      if (mods.alt === 1) setMod("alt", 0);
+    }
+
+    const RU = "йцукенгшщзхъфывапролджэячсмитьбю";
+    const EN = "qwertyuiop[]asdfghjkl;'zxcvbnm,.";
+    function ctrlOf(c) {
+      const ru = RU.indexOf(c.toLowerCase());
+      if (ru >= 0) c = EN[ru];
+      if (c === " ") return "\x00";
+      if (c === "?") return "\x7f";
+      const code = c.toUpperCase().charCodeAt(0);
+      if (code >= 64 && code <= 95) return String.fromCharCode(code - 64);
+      return c;
+    }
+    function withMods(s) {
+      if (!s || (!mods.ctrl && !mods.alt)) return s;
+      const chars = Array.from(s);
+      let first = chars.shift();
+      if (mods.ctrl) first = ctrlOf(first);
+      if (mods.alt) first = "\x1b" + first;
+      releaseMods();
+      return first + chars.join("");
+    }
+
+    function special(name) {
+      const app = term.modes.applicationCursorKeysMode;
+      const m = (mods.ctrl ? 4 : 0) + (mods.alt ? 2 : 0);
+      const arrow = { up: "A", down: "B", right: "C", left: "D", home: "H", end: "F" }[name];
+      let seq;
+      if (arrow) seq = m ? `\x1b[1;${m + 1}${arrow}` : (app ? "\x1bO" : "\x1b[") + arrow;
+      else seq = { pgup: "\x1b[5~", pgdn: "\x1b[6~", del: "\x1b[3~", ins: "\x1b[2~" }[name];
+      releaseMods();
+      return seq;
+    }
+
+    term.onData((d) => send(withMods(d)));
+
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
+        copyText(term.getSelection());
+        return false;
+      }
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyV") return false;
+      return true;
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key !== "End" || !e.ctrlKey || !e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) wipe();
+    }, true);
+
+    const kbd = $("#kbd");
+    let composing = false, sent = "";
+    function flushKbd() {
+      const a = Array.from(sent), b = Array.from(kbd.value);
+      let i = 0;
+      while (i < a.length && i < b.length && a[i] === b[i]) i++;
+      const out = "\x7f".repeat(a.length - i) + b.slice(i).join("");
+      sent = kbd.value;
+      if (out) send(withMods(out).replace(/\n/g, "\r"));
+    }
+    function resetKbd() { kbd.value = ""; sent = ""; }
+    kbd.addEventListener("compositionstart", () => { composing = true; });
+    kbd.addEventListener("compositionend", () => { composing = false; flushKbd(); resetKbd(); });
+    kbd.addEventListener("input", () => { flushKbd(); if (!composing) resetKbd(); });
+    kbd.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      let s = null;
+      const named = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
+        Home: "home", End: "end", PageUp: "pgup", PageDown: "pgdn", Delete: "del", Insert: "ins" }[e.key];
+      if (named) s = special(named);
+      else if (e.key === "Enter") s = "\r";
+      else if (e.key === "Tab") s = "\t";
+      else if (e.key === "Escape") s = "\x1b";
+      else if (e.key === "Backspace" && kbd.value === "") s = "\x7f";
+      else if ((e.ctrlKey || e.altKey) && e.key.length === 1) {
+        s = (e.altKey ? "\x1b" : "") + (e.ctrlKey ? ctrlOf(e.key) : e.key);
+      }
+      if (s !== null) { send(s); e.preventDefault(); }
+    });
+
+    function focusInput() {
+      if (mobile) kbd.focus({ preventScroll: true });
+      else term.focus();
+    }
+    $("#term").addEventListener("click", () => {
+      if (!term.hasSelection()) focusInput();
+    });
+
+    const NAMED = {
+      ESC: ["ESC", "\x1b"], TAB: ["TAB", "\t"], ENTER: ["⏎", "\r"], BKSP: ["⌫", "\x7f", 1], SPACE: ["␣", " "],
+      CTRL: ["CTRL", "@ctrl"], ALT: ["ALT", "@alt"], KBD: ["⌨", "@kbd"], MORE: ["⋯", "@more"],
+      UP: ["↑", "@up", 1], DOWN: ["↓", "@down", 1], LEFT: ["←", "@left", 1], RIGHT: ["→", "@right", 1],
+      HOME: ["HOME", "@home"], END: ["END", "@end"], PGUP: ["PG↑", "@pgup", 1], PGDN: ["PG↓", "@pgdn", 1],
+      DEL: ["DEL", "@del", 1], INS: ["INS", "@ins"],
+    };
+    const FKEYS = ["OP", "OQ", "OR", "OS", "[15~", "[17~", "[18~", "[19~", "[20~", "[21~", "[23~", "[24~"];
+    function keyDef(k) {
+      if (Object.hasOwn(NAMED, k)) return NAMED[k];
+      const f = k.match(/^F([1-9]|1[0-2])$/);
+      if (f) return [k, "\x1b" + FKEYS[f[1] - 1]];
+      if (/^\^.$/.test(k)) return [k, ctrlOf(k[1])];
+      return [k, k];
+    }
+
+    let moreBtn = null;
+    function setMore(open) {
+      $("#more").classList.toggle("open", open);
+      if (moreBtn) moreBtn.classList.toggle("on", open);
+      layout();
+    }
+
+    const lastTap = { ctrl: 0, alt: 0 };
+    function pressKey(v) {
+      if (v === "@more") { cfg.set("keys.open", $("#more").classList.contains("open") ? "off" : "on"); return; }
+      if (v === "@kbd") {
+        if (document.activeElement === kbd) kbd.blur(); else kbd.focus({ preventScroll: true });
+        return;
+      }
+      if (v === "@ctrl" || v === "@alt") {
+        const name = v.slice(1), now = Date.now(), cur = mods[name];
+        setMod(name, cur === 0 ? 1 : cur === 1 && now - lastTap[name] < 350 ? 2 : 0);
+        lastTap[name] = now;
+        return;
+      }
+      if (v === "@end" && mods.ctrl && mods.alt) { releaseMods(); wipe(); return; }
+      if (v[0] === "@") { send(special(v.slice(1))); return; }
+      send(v.length === 1 ? withMods(v) : (releaseMods(), v));
+    }
+
+    function makeRow(parent, keys) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.gridTemplateColumns = `repeat(${keys.length}, 1fr)`;
+      for (const [label, value, repeat] of keys.map(keyDef)) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.tabIndex = -1;
+        if (keys.length > 9) b.style.fontSize = `calc(var(--keys, 16px) * ${(9 / keys.length).toFixed(3)})`;
+        if (value === "@ctrl" || value === "@alt") modBtn[value.slice(1)] = b;
+        if (value === "@more") moreBtn = b;
+        let timer = 0;
+        const stop = () => { clearTimeout(timer); clearInterval(timer); b.classList.remove("down"); };
+        b.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          b.classList.add("down");
+          pressKey(value);
+          if (repeat) timer = setTimeout(() => { timer = setInterval(() => pressKey(value), 60); }, 380);
+        });
+        b.addEventListener("pointerup", stop);
+        b.addEventListener("pointercancel", stop);
+        b.addEventListener("pointerleave", stop);
+        b.addEventListener("contextmenu", (e) => e.preventDefault());
+        row.append(b);
+      }
+      parent.append(row);
+    }
+    function buildKeys() {
+      for (const k in modBtn) delete modBtn[k];
+      moreBtn = null;
+      $("#base").replaceChildren();
+      $("#more").replaceChildren();
+      for (const r of parseKeys(cfg.get("keys.main"))) makeRow($("#base"), r);
+      for (const r of parseKeys(cfg.get("keys.more"))) makeRow($("#more"), r);
+      setMod("ctrl", mods.ctrl);
+      setMod("alt", mods.alt);
+      setMore(mobile && cfg.get("keys.open") === "on");
+    }
+    function setKeySize(v) {
+      document.documentElement.style.setProperty("--keys", v + "px");
+      layout();
+    }
+    document.documentElement.style.setProperty("--keys", cfg.get("keys.size") + "px");
+    buildKeys();
+    $("#keys").addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+    $("#keys").addEventListener("mousedown", (e) => e.preventDefault());
+    function setMobile(on) {
+      mobile = on;
+      document.body.classList.toggle("mobile", on);
+      if (on) term.textarea.setAttribute("inputmode", "none");
+      else term.textarea.removeAttribute("inputmode");
+      setMore(on && cfg.get("keys.open") === "on");
+      focusInput();
+    }
+    setMobile(mobile);
+
+    let pinch = null;
+    $("#term").addEventListener("touchstart", (e) => {
+      if (e.touches.length === 2) {
+        const [a, b] = e.touches;
+        pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), size: term.options.fontSize };
+      }
+    }, { passive: true });
+    $("#term").addEventListener("touchmove", (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const [a, b] = e.touches;
+      setFont(pinch.size * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch.d);
+    }, { passive: false });
+    $("#term").addEventListener("touchend", () => {
+      if (pinch) cfg.set("term.font", String(term.options.fontSize));
+      pinch = null;
+    });
+
+    const PARTS = 'script[type="application/base64"]';
+    function take(name) {
+      const el = document.getElementById("kt-" + name);
+      const bytes = fromB64(el.textContent);
+      el.remove();
+      return bytes;
+    }
+    async function bundleFile(name) {
+      const bytes = take(name);
+      if (!BUNDLE.files[name].gz) return bytes.buffer;
+      return new Response(chunks(bytes.buffer).pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+    }
+    function release(buf) {
+      if (typeof structuredClone === "function") structuredClone(buf, { transfer: [buf] });
+    }
+    function lazyZero(ex) {
+      if (!ex.zero_memory || !ex.is_memory_zeroed) return ex;
+      const PAGE = 4096;
+      return {
+        ...ex,
+        zero_memory(addr, len) {
+          if (addr % PAGE || len % PAGE) return ex.zero_memory(addr, len);
+          for (const end = addr + len; addr < end; addr += PAGE) if (!ex.is_memory_zeroed(addr, PAGE)) ex.zero_memory(addr, PAGE);
+        },
+      };
+    }
+
+    let bootLines = 0, bootLive = "";
+    function bootlog(text, live = "") {
+      if (bootLines < 0) return;
+      if (bootLive) term.write(live === bootLive ? "\r\x1b[2K" : "\r\n");
+      term.write(`\x1b[90m${text}\x1b[0m`);
+      if (!live) term.write("\r\n");
+      bootLive = live;
+      bootLines++;
+    }
+    function bootEnd() {
+      if (bootLines < 0) return;
+      if (bootLines) term.write("\x1b[2J\x1b[3J\x1b[H");
+      bootLines = -1;
+    }
+    const FILES = { bzImage: "ядро", rootfs: "rootfs", initrd: "rootfs", "v86.wasm": "v86", seabios: "bios", vgabios: "vga bios" };
+
+    async function main() {
+      layout();
+      if (!BUNDLE) {
+        term.write("\x1b[90mэто шаблон, файл для браузера собирает ./bundle.py\x1b[0m\r\n");
+        return;
+      }
+      bootlog(`KotelOS ${build.build}${NAME !== "kotelos" ? ", " + NAME : ""}`);
+
+      let saved = null, image = null;
+      if (!qs.has("fresh") && !coldBoot) saved = await kv.get(SLOT).catch(() => null);
+
+      const opts = {
+        memory_size: memSize,
+        vga_memory_size: 262144,
+        autostart: true,
+        disable_mouse: true,
+        disable_keyboard: true,
+        disable_speaker: true,
+        net_device: { type: "ne2k", relay_url: "fetch" },
+        preserve_mac_from_state_image: true,
+      };
+
+      bootlog("распаковываю v86 и bios");
+      let wasm = await bundleFile("wasm"), state = null, initrd = null;
+      opts.wasm_fn = async (env) => {
+        const { instance } = await WebAssembly.instantiate(wasm, env);
+        wasm = null;
+        return lazyZero(instance.exports);
+      };
+      opts.bios = { buffer: await bundleFile("bios") };
+      opts.vga_bios = { buffer: await bundleFile("vgabios") };
+
+      if (saved) {
+        try {
+          bootlog(`сохранение от ${when(saved.created)}, ${mb(saved.blob.size)}`);
+          state = await gunzip(saved.blob);
+          memSize = saved.memory_size || memSize;
+          bootEnd();
+          if (saved.screen) term.write(saved.screen);
+        } catch (e) {
+          console.warn("сохранение битое", e);
+          saved = null;
+        }
+      }
+
+      if (!saved && BUNDLE.state && !coldBoot) {
+        image = BUNDLE.state;
+        memSize = image.mem;
+        state = take("state").buffer;
+        bootEnd();
+        if (image.screen) term.write(image.screen);
+      }
+
+      if (state) {
+        opts.memory_size = memSize;
+        opts.initial_state = { buffer: state };
+      } else {
+        if (!hasKernel) {
+          bootlog("в файле нет ни ядра, ни снимка");
+          return;
+        }
+        opts.bzimage = { buffer: await bundleFile("bzimage") };
+        initrd = URL.createObjectURL(new Blob([take("initrd")]));
+        opts.initrd = { url: initrd + "#initrd.zst", size: BUNDLE.files.initrd.size };
+        opts.cmdline = [
+          "tsc=reliable mitigations=off random.trust_cpu=on init_on_free=1",
+          "console=ttyS0 root=/dev/ram0 rw init=/sbin/init",
+          cfg.get("boot.log") === "on" || qs.has("log") ? "" : "quiet loglevel=1",
+          `tsize=${term.cols}x${term.rows}`,
+          ...Object.entries(browserEnv()).map(([k, v]) => `${k}=${v}`),
+        ].join(" ");
+      }
+      for (const el of document.querySelectorAll(PARTS)) el.remove();
+
+      emulator = new V86(opts);
+      const outDec = new TextDecoder();
+      let out = [];
+      emulator.add_listener("serial0-output-byte", (b) => {
+        lastOutput = Date.now();
+        if (bootLines >= 0) bootEnd();
+        if (out.push(b) === 1) queueMicrotask(() => {
+          term.write(outDec.decode(new Uint8Array(out), { stream: true }));
+          out = [];
+        });
+      });
+      emulator.add_listener("tcp-connection", (c) => {
+        if (c.sport === PAGE_PORT && c.psrc.join(".") === PAGE_IP) serveRequest(c);
+      });
+      emulator.add_listener("download-progress", (e) => {
+        if (!e.lengthComputable || saved || image) return;
+        const f = e.file_name.split("/").pop();
+        const name = FILES[Object.keys(FILES).find((k) => f.includes(k))] || f;
+        bootlog(`${name} ${human(e.total)} ${Math.round(e.loaded / e.total * 100)}%`, name);
+      });
+      emulator.add_listener("emulator-loaded", () => {
+        const vga = emulator.v86 && emulator.v86.cpu.devices.vga;
+        if (vga && vga.svga_memory && !saved && !image) vga.svga_memory.fill(0);
+        if (state) release(state);
+        if (initrd) URL.revokeObjectURL(initrd);
+        connectAgent();
+        if (!saved && !image) { bootlog("загружается Linux"); return; }
+        restoredAt = Date.now();
+        if (saved) startCmd = null;
+        onReady = () => {
+          ctl("REDRAW");
+          emit("restore");
+          if (saved) say(saved.replyId, `восстановлено сохранение от ${when(saved.created)}`);
+        };
+      });
+
+      focusInput();
+    }
+    main();
+  </script>
+</body>
+</html>

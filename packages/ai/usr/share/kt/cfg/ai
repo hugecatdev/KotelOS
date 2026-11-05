@@ -1,0 +1,7 @@
+ai.url адрес API, совместимого с OpenAI
+ai.key ключ API
+ai.model модель
+ai.effort уровень рассуждения
+ai.auto off - подтверждать команды
+ai.api протокол: chat или responses
+ai.ctx предел контекста, тыс. токенов

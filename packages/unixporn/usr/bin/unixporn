@@ -1,0 +1,145 @@
+#!/bin/sh
+S=unixporn
+BG=colour234
+FG=colour250
+DIM=colour240
+HI=colour81
+
+tm() {
+  tmux -u -L $S "$@"
+}
+
+loop() {
+  while :; do "$@"; sleep 1; done
+}
+
+slow() {
+  while :; do
+    nice "$@" < /dev/tty &
+    c=$!
+    while kill -STOP $c 2> /dev/null; do
+      usleep ${ms}000
+      kill -CONT $c
+      usleep 70000
+    done
+    sleep 1
+  done
+}
+
+clock() {
+  e=$(printf '\033')
+  while :; do
+    set -- $(stty size)
+    f=standard
+    t=%T
+    [ "$2" -ge 42 ] || t=%H:%M
+    [ "$2" -ge 27 ] || f=small
+    d=$(date '+%a %d %b %Y')
+    printf '\033[H'
+    if [ "$1" -lt 7 ] || [ "$2" -lt 22 ]; then
+      d=$(date +%T)
+      printf '\033[1;36m%*s\033[J' $(( ($2 + ${#d}) / 2 )) "$d"
+    else
+      i=$(( ($1 - 7) / 2 ))
+      while [ $i -gt 0 ]; do printf '\033[K\n'; i=$((i - 1)); done
+      printf '\033[1;36m'
+      date +$t | figlet -k -f $f -c -w "$2" | sed "s/\$/$e[K/"
+      printf '\033[0;90m\033[K%*s\033[J' $(( ($2 + ${#d}) / 2 )) "$d"
+    fi
+    sleep 1
+  done
+}
+
+if [ "$1" = -p ]; then
+  printf '\033]2;%s\033\\\033[?25l' "$2"
+  stty -echo
+  set -- $2 $(stty size)
+  ms=$(($2 * $3 / 7))
+  [ $ms -ge 230 ] || ms=230
+  [ $ms -le 600 ] || ms=600
+  case "$1" in
+    neofetch)
+      a=
+      [ "$3" -ge 66 ] || a="--ascii_distro kotelos_small"
+      clear
+      neofetch $a
+      printf '\033[?25l'
+      while :; do sleep 3600; done ;;
+    htop) loop htop -d 30 ;;
+    cmatrix) slow cmatrix -b -u 10 ;;
+    cbonsai) loop nice cbonsai -l -i -w 8 ;;
+    nyancat) slow nyancat -n -s ;;
+    figlet) clock ;;
+  esac
+  exit
+fi
+
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  echo "unixporn: нужен терминал" >&2
+  exit 1
+fi
+set -- $(stty size)
+H=${1:-24}
+W=${2:-80}
+p="$0 -p"
+grid=
+hint="Tab дальше · q выход"
+if [ "$W" -ge 140 ] && [ "$H" -ge 30 ]; then
+  grid=1
+  hint="Tab панель · q выход"
+fi
+[ "$W" -ge 70 ] || hint="q выход"
+unset TMUX
+tm kill-server 2> /dev/null
+set -- -f /dev/null \
+  set -g default-terminal tmux-256color \; \
+  set -g status-style "bg=$BG,fg=$FG" \; \
+  set -g status-left "#[bg=$HI,fg=$BG,bold] unixporn #[default] " \; \
+  set -g status-left-length 12 \; \
+  set -g status-right " #[fg=$DIM]$hint #[fg=$FG]%H:%M " \; \
+  set -g status-right-length 40 \; \
+  set -g window-status-format "#[fg=$DIM] #W " \; \
+  set -g window-status-current-format "#[fg=$HI,bold] #W " \; \
+  set -g window-status-separator "" \; \
+  set -g pane-border-style "fg=$DIM" \; \
+  set -g pane-active-border-style "fg=$HI" \; \
+  bind -n q kill-server \; \
+  bind -n C-c kill-server \;
+if [ -n "$grid" ]; then
+  a=$((W * 36 / 100))
+  [ $a -ge 68 ] || a=68
+  [ "$W" -ge 150 ] || a=58
+  h=$((H - 2))
+  t=$((h * 56 / 100))
+  [ $t -ge 17 ] || t=17
+  tm "$@" \
+    set -g pane-border-status top \; \
+    set -g pane-border-format "#{?pane_active,#[fg=$HI#,bold],#[fg=$FG]} #{pane_title} " \; \
+    set -g window-status-current-format "" \; \
+    bind -n Tab select-pane -t :.+ \; \
+    new-session -s $S "$p figlet" \; \
+    split-window -hb -t 0 -l $a "$p neofetch" \; \
+    split-window -h -t 1 -l $((W * 24 / 100)) "$p cmatrix" \; \
+    split-window -v -t 0 -l $((h - t - 1)) "$p nyancat" \; \
+    split-window -vb -t 2 -l 60% "$p htop" \; \
+    split-window -v -t 4 -l 50% "$p cbonsai" \; \
+    select-pane -t 2 > /dev/null
+else
+  set -- "$@" \
+    bind -n Tab set -g @stop 1 '\;' next-window \; \
+    new-session -s $S -n neofetch "$p neofetch"
+  for n in htop cmatrix cbonsai nyancat figlet; do
+    set -- "$@" \; new-window -d -n $n "$p $n"
+  done
+  (
+    sleep 8
+    while sleep 10; do
+      [ -z "$(tm show -gqv @stop 2> /dev/null)" ] || break
+      tm next-window 2> /dev/null || break
+    done
+  ) &
+  r=$!
+  tm "$@" > /dev/null
+  kill $r 2> /dev/null
+fi
+tm kill-server 2> /dev/null

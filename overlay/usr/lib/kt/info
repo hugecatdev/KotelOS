@@ -1,0 +1,4 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+kt_meta "" "браузер и машина" "$@"
+kt_call info

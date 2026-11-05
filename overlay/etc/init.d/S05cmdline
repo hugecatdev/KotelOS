@@ -1,0 +1,12 @@
+#!/bin/sh
+[ "$1" = start ] || exit 0
+mkdir -p /run/kt
+for w in $(cat /proc/cmdline); do
+  case $w in
+    tsize=*x*)
+      s=${w#tsize=}
+      stty -F /dev/ttyS0 cols "${s%x*}" rows "${s#*x}" 2>/dev/null ;;
+    tz=?*)
+      /usr/sbin/kt-tz "${w#tz=}" ;;
+  esac
+done

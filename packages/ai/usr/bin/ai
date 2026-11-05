@@ -1,0 +1,5 @@
+#!/bin/sh
+if command -v micropython > /dev/null; then
+  exec micropython -X heapsize=16M /usr/lib/ai/ai.py "$@"
+fi
+exec python3 -u -c 'import sys; sys.path.insert(0, "/usr/lib/ai"); import ai' "$@"

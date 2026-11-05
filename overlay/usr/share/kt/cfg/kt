@@ -1,0 +1,17 @@
+save.auto сохранять при сворачивании
+save.timer сохранять каждые N минут
+term.font размер шрифта
+term.family шрифт
+term.theme тема
+term.cursor курсор
+term.blink мигание курсора
+term.scroll прокрутка, строк
+term.mobile интерфейс телефона
+keys.main раскладка
+keys.more раскладка под ⋯
+keys.open открыть ⋯
+keys.size размер кнопок
+boot.mem память, МБ
+boot.log лог загрузки
+boot.cmd команда при загрузке
+pkg.repo репозиторий

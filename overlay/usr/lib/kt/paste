@@ -1,0 +1,8 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+kt_meta "" "из буфера обмена" "$@"
+kt_receive paste ""
+[ -n "$KT_FILE" ] && cat "$KT_FILE"
+rc=$?
+rm -rf "$KT_DIR"
+exit $rc
