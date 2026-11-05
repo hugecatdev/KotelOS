@@ -739,13 +739,13 @@ def _handle(ev):
     name = ev.get("name")
     d = ev.get("data")
     if name == "restore":
+        del _screen[:]  # машину могли восстановить в другом браузере: размер экрана - заново
         if _live[0]:
             _take()
             _dirty.clear()
             _tdirty.clear()
             _live[0] = False
             _send(_state())
-        return
     if name != "tk":
         # остальные события страницы - обработчикам kt.on, пока идёт mainloop
         for fn in list(getattr(_kt, "_handlers", {}).get(name, ())):

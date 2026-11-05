@@ -12,7 +12,7 @@ from .view import IconView, SEL_BG, SEL_FG
 
 BG, FG = "#20384a", "#e9e9e4"
 SEEN = CONFIG + "/seen"
-HINT = CONFIG + "/hint"
+BACK = "Обратно в Терминал"
 
 
 def seed():
@@ -54,9 +54,11 @@ class Desktop:
         self.start = tk.Button(p, text="Пуск", image=app.image("start-here", 24), compound="left",
                                command=self.menu_open, relief="flat", padx=6)
         self.start.pack(side="left", padx=2, pady=2)
-        self.term = tk.Button(p, image=app.image("utilities-terminal", 24), command=self.to_terminal,
-                              relief="flat", padx=4)
-        self.term.pack(side="left", padx=2, pady=2)
+        self.narrow = w.winfo_screenwidth() <= 520
+        # выход из рабочего стола; на узком экране - одна иконка, подпись не влезет рядом с окнами
+        self.exit = tk.Button(p, text="" if self.narrow else BACK, image=app.image("system-log-out", 24),
+                              compound="left", command=self.quit, relief="flat", padx=4)
+        self.exit.pack(side="left", padx=2, pady=2)
         self.clock = tk.Label(p, text="", padx=8)
         self.clock.pack(side="right")
         self.clock.bind("<Button-1>", lambda e: self.date())
@@ -65,14 +67,19 @@ class Desktop:
         self.btns, self.wins, self.active, self.pending = {}, [], None, []
         self.menu = tk.Menu(p, tearoff=0)
         self.wmenu = tk.Menu(p, tearoff=0)
-        self.narrow = w.winfo_screenwidth() <= 520
         kt.on("tkwm", self.on_wins)
         kt.on("desktop", self.on_cmd)
         try:
             write(PIDFILE, "%d\n" % getpid())
         except OSError as e:
             print("ktdesktop: %s: %s" % (PIDFILE, e))
+        self._tick = None
         self.tick_clock()
+
+    def on_restore(self):
+        self.narrow = self.w.winfo_screenwidth() <= 520
+        self.exit.configure(text="" if self.narrow else BACK)
+        self.redraw()
 
     # --- показать и спрятать (уйти в терминал)
 
@@ -81,19 +88,15 @@ class Desktop:
         self.p.withdraw()
 
     def show(self):
+        hidden = not self.visible()
         self.w.deiconify()
         self.p.deiconify()
         self.refresh()
+        if hidden:
+            self.tick_clock()
 
     def visible(self):
         return self.w.state() == "normal"
-
-    def to_terminal(self):
-        if not exists(HINT):
-            write(HINT, "1\n")
-            messagebox.showinfo("Терминал", "Рабочий стол уйдёт в фон, окна останутся.\n"
-                                            "Вернуться к нему - команда desktop")
-        self.hide()
 
     def refresh(self):
         """Раз в несколько секунд: новые программы и перемены в ~/Desktop."""
@@ -116,10 +119,10 @@ class Desktop:
         elif c == "hide":
             self.hide()
         elif c == "quit":
-            self.quit(ask=False)
+            self.quit()
         elif c == "open" and f:
             self.app.open_path(f)
-        elif c in ("files", "notepad", "imgview"):
+        elif c in ("files", "notepad", "imgview", "cfgedit"):
             getattr(self.app, c)(f)
 
     # --- панель: кнопки окон всех программ (список даёт страница, как _NET_CLIENT_LIST в X11)
@@ -192,10 +195,17 @@ class Desktop:
     # --- часы
 
     def tick_clock(self):
-        t = time.localtime()
-        self.clock.configure(text="%02d:%02d" % (t[3], t[4]))
-        self.clock.after((60 - t[5]) * 1000 + 50, self.tick_clock)
-        if self.pending:
+        """Часы с секундами, пока рабочий стол на экране: спрятанный не будит питон зря."""
+        if self._tick:
+            self.clock.after_cancel(self._tick)
+            self._tick = None
+        if not self.visible():
+            return
+        now = time.time()
+        t = time.localtime(int(now))
+        self.clock.configure(text="%02d:%02d:%02d" % (t[3], t[4], t[5]))
+        self._tick = self.clock.after(max(50, int((1 - now % 1) * 1000) + 20), self.tick_clock)
+        if self.pending and t[5] % 5 == 0:
             self.redraw()
 
     def date(self):
@@ -228,11 +238,9 @@ class Desktop:
         m.add_command(label="Корзина", image=a.image("user-trash", 24), compound="left",
                       command=lambda: a.files(TRASH + "/files"))
         m.add_command(label="Выполнить…", command=self.run_dialog)
-        m.add_command(label="Терминал", image=a.image("utilities-terminal", 24), compound="left",
-                      command=self.to_terminal)
-        m.add_separator()
         m.add_command(label="О системе", command=self.about)
-        m.add_command(label="Выйти из рабочего стола", command=self.quit)
+        m.add_separator()
+        m.add_command(label=BACK, image=a.image("system-log-out", 24), compound="left", command=self.quit)
         m.tk_popup(self.start.winfo_rootx(), self.start.winfo_rooty())
 
     def run_dialog(self):
@@ -249,9 +257,17 @@ class Desktop:
             rel.get("PRETTY_NAME", "KotelOS").strip('"'), (read("/proc/sys/kernel/osrelease") or "?").strip(),
             tot - av, tot, up // 3600, up // 60 % 60))
 
-    def quit(self, ask=True):
-        if ask and not messagebox.askyesno("Выход", "Закрыть рабочий стол?\nЗапущенные программы останутся."):
-            return
+    def quit(self):
+        """Обратно в Терминал: рабочий стол закрывается. Свои окна (файлы, блокнот) закрываются с ним -
+        блокнот спросит про несохранённое; свёрнутые окна других программ разворачиваются,
+        иначе без панели их не достать."""
+        for w in list(self.app.wins):
+            w.close()
+            if w in self.app.wins:
+                return  # блокнот: «Отмена»
+        for wid, _, iconic in self.wins:
+            if iconic:
+                self._wm(wid, "normal")
         try:
             if read(PIDFILE).strip() == str(getpid()):
                 os.remove(PIDFILE)

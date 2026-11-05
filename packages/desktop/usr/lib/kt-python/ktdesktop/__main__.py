@@ -1,18 +1,13 @@
-# python -m ktdesktop desktop|files|notepad|imgview|open [путь]
+# python -m ktdesktop desktop|files|notepad|imgview|cfgedit|open [путь]; второй ли это стол, решает /usr/libexec/ktdesktop
 import sys
-
-from . import running
 
 
 def main(argv):
     cmd = argv[0] if argv else "desktop"
     arg = argv[1] if len(argv) > 1 else None
-    if cmd not in ("desktop", "files", "notepad", "imgview", "open"):
-        print("ktdesktop: desktop | files [папка] | notepad [файл] | imgview файл | open путь")
+    if cmd not in ("desktop", "files", "notepad", "imgview", "cfgedit", "open"):
+        print("ktdesktop: desktop | files [папка] | notepad [файл] | imgview файл | cfgedit | open путь")
         return 2
-    if cmd == "desktop" and running():
-        print("рабочий стол уже запущен")
-        return 0
     from .app import App
     app = App()
     if cmd == "desktop":

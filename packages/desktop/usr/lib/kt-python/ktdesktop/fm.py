@@ -19,7 +19,7 @@ class FileManager:
         w.minsize(0, 280)
         mb = tk.Menu(w)
         f = tk.Menu(mb, tearoff=0)
-        f.add_command(label="Новое окно", command=lambda: app.files(self.view.folder))
+        f.add_command(label="Новое окно", command=lambda: app.files(self.view.folder, new=True))
         f.add_command(label="Создать папку…", command=lambda: self.view.new_folder())
         f.add_command(label="Создать файл…", command=lambda: self.view.new_file())
         f.add_separator()
@@ -51,6 +51,7 @@ class FileManager:
         mb.add_command(label="↑", command=self.up)
         w.config(menu=mb)
         self.view = IconView(w, app, w, path, on_change=self.title)
+        self.view.on_dir = self.go
         self.view.pack(fill="both", expand=1)
         for seq, fn in (("<BackSpace>", self.up), ("<Alt-Up>", self.up), ("<Alt-Left>", self.back),
                         ("<F5>", lambda: self.view.load(keep=True)), ("<Delete>", self._delete),

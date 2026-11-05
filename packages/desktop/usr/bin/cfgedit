@@ -1,0 +1,3 @@
+#!/bin/sh
+# cfgedit: реестр - настройки kt cfg в окне
+exec /usr/libexec/ktdesktop cfgedit "$@"

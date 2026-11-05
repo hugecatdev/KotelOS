@@ -28,7 +28,9 @@ else
 fi
 if [ "$cmd" = desktop ]; then
   setsid "$@" -m ktdesktop desktop >> "$HOME/.xsession-errors" 2>&1 < /dev/null &
-  echo "рабочий стол запускается; в терминал - кнопка >_ на панели, обратно - desktop"
+  # pid сразу: второй desktop следом (post-install и profile.d при первом входе) не поднимет второй стол;
+  # питон потом запишет свой (с pyzygote он другой, а этот - клиент, живёт столько же)
+  echo $! > /run/ktdesktop.pid
   exit 0
 fi
 exec "$@" -m ktdesktop "$cmd" ${f:+"$f"}

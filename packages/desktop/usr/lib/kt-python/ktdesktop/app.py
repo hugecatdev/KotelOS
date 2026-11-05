@@ -9,7 +9,7 @@ from . import HOME, TRASH, basename, exists, mkdirs, q, spawn, stat
 from . import entry
 
 # свои программы этого пакета: при запущенном рабочем столе окно открывается в его же процессе
-INTERNAL = ("files", "notepad", "imgview")
+INTERNAL = ("files", "notepad", "imgview", "cfgedit")
 
 
 class App:
@@ -20,13 +20,25 @@ class App:
         self.wins = []
         self.clip = None  # (перенести?, [пути])
         self._img = {}
+        self.touch = self.is_touch()
+        kt.on("restore", self.on_restore)
+
+    @staticmethod
+    def is_touch():
+        """Палец или мышь: касание открывает значок сразу, мышью - двойной щелчок."""
         t = os.getenv("KTDESKTOP_TOUCH")
         if t is None:
             try:
                 t = kt.js("() => matchMedia('(pointer: coarse)').matches")
             except Exception:
                 t = False
-        self.touch = bool(int(t)) if isinstance(t, str) else bool(t)
+        return bool(int(t)) if isinstance(t, str) else bool(t)
+
+    def on_restore(self, d=None):
+        # сохранение или снимок бандла открыли в другом браузере: телефон вместо ПК или наоборот
+        self.touch = self.is_touch()
+        if self.desk:
+            self.desk.on_restore()
 
     # --- иконки: картинка нужного размера (Tk-шные subsample/zoom), кэш по пути и размеру
 
@@ -132,11 +144,21 @@ class App:
 
     # --- свои программы
 
-    def files(self, path=None):
+    def files(self, path=None, new=False):
+        """Папка в окне файлов: уже открытое окно переходит в неё и поднимается, новое - только если
+        окна ещё нет или просили (new)."""
         from .fm import FileManager
+        path = path or HOME
         if path == TRASH + "/files":
             mkdirs(path)
-        FileManager(self, path or HOME)
+        fms = [w for w in self.wins if isinstance(w, FileManager)]
+        if fms and not new:
+            fm = fms[-1]
+            fm.go(path)
+            fm.w.deiconify()
+            fm.w.lift()
+            return
+        FileManager(self, path)
 
     def tick(self):
         """Раз в 3 с: перечитать открытые папки, если они поменялись (stat каталога)."""
@@ -151,6 +173,15 @@ class App:
     def notepad(self, path=None):
         from .notepad import Notepad
         Notepad(self, path)
+
+    def cfgedit(self, path=None):
+        from .registry import Registry
+        for w in self.wins:
+            if isinstance(w, Registry):
+                w.w.deiconify()
+                w.w.lift()
+                return
+        Registry(self)
 
     def imgview(self, path=None):
         from .viewer import Viewer

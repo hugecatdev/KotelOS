@@ -102,15 +102,6 @@ def getpid():
             return int(f.read().split()[0])
 
 
-def running():
-    """pid запущенного рабочего стола или 0."""
-    try:
-        pid = int(read(PIDFILE).strip() or 0)
-    except ValueError:
-        return 0
-    return pid if pid and pid != getpid() and exists("/proc/%d" % pid) else 0
-
-
 def size_str(n):
     for u in ("Б", "КБ", "МБ", "ГБ"):
         if n < 1024 or u == "ГБ":

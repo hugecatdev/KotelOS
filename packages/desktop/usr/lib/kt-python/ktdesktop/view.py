@@ -52,6 +52,7 @@ class IconView(tk.Frame):
         self.folder, self.items, self.labels = folder, [], []
         self.sel, self.cols, self.hidden, self.stamp = set(), 0, False, None
         self.press = None
+        self.on_dir = None  # папка: окно файлов открывает её у себя, рабочий стол - в окне файлов
         self.menu = tk.Menu(self, tearoff=0)
         top.bind("<Configure>", self._conf, add="+")
         self.bind("<Button-1>", lambda e: self.select(set()))
@@ -184,10 +185,9 @@ class IconView(tk.Frame):
     def open_item(self, k):
         if 0 <= k < len(self.items):
             it = self.items[k]
-            if self.app.touch:
-                self.select(set())  # на телефоне выделения после открытия нет, как на домашнем экране
+            self.select(set())  # открытый значок не остаётся выделенным
             if it.kind == "dir":
-                self.app.files(it.path)
+                (self.on_dir or self.app.files)(it.path)
             else:
                 self.app.open_path(it.path)
 
@@ -208,6 +208,8 @@ class IconView(tk.Frame):
         trash = ops.in_trash(self.folder)
         if one and not trash:
             m.add_command(label="Открыть", command=lambda: self.open_item(k))
+            if one.kind == "dir" and self.on_dir:
+                m.add_command(label="Открыть в новом окне", command=lambda p=one.path: self.app.files(p, new=True))
             if one.kind == "file":
                 hs = entry.handlers(entry.mime(one.path, one.st))
                 if hs:
