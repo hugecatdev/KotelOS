@@ -161,7 +161,7 @@
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
       "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
-      "boot.vga": { def: BUNDLE && BUNDLE.vga ? "on" : "off", values: ["on", "off"] },
+      "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] },
       "boot.log": { def: "off", values: ["on", "off"] },
       "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
       "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
@@ -444,8 +444,11 @@
     // видеопамять и есть выключатель экрана: драйвер bochs в ядре берёт карту только с 4 МБ,
     // с 256 КБ (минимум v86) /dev/fb0 нет. Размер зашит в снимок, поэтому, как boot.mem,
     // boot.vga действует при загрузке с ядра, а сохранение помнит свой
-    const VGA_OFF = 256 << 10, VGA_ON = 4 << 20;
-    let vgaSize = cfg.get("boot.vga") === "on" ? VGA_ON : VGA_OFF;
+    // объём: on - 8 МБ; драйвер берёт режим, если влезают два кадра: 4 МБ - до ~800x600,
+    // 8 - до 1280x800, 16 - до 1920x1080
+    const VGA_OFF = 256 << 10, VGA_MIN = 4 << 20;
+    const vgaBytes = (v) => v === "off" ? VGA_OFF : (v === "on" ? 8 : +v) << 20;
+    let vgaSize = vgaBytes(cfg.get("boot.vga"));
     let screenOn = false;
     let agentReady = false;
     let markReady;
@@ -1094,7 +1097,7 @@
         ...(BUNDLE && BUNDLE.version ? [`version: ${BUNDLE.version}`] : []),
         `image: ${build ? build.build : "?"}`,
         `memory: ${mb(memSize)}`,
-        `vga: ${vgaSize >= VGA_ON ? `${mb(vgaSize)}, ${screenOn ? "на виду" : "спрятан"}` : "нет"}`,
+        `vga: ${vgaSize >= VGA_MIN ? `${mb(vgaSize)}, ${screenOn ? "на виду" : "спрятан"}` : "нет"}`,
         s ? `save: ${when(s.created)}, ${mb(s.blob.size)}` : "save: нет",
       ];
       if (s && build && s.build && s.build !== build.build) lines.push("save-image: старый, kt reset - загрузиться на новом");
@@ -1314,9 +1317,14 @@
         },
         get active() { return active.id; },
       },
-      // экран VGA: kt screen on/off; без аргумента - показан ли
+      // экран VGA: kt screen on/off; без аргумента - показан ли; size - место под экран в точках CSS,
+      // плотность пикселей и видеопамять, по ним startx выбирает размер
       screen(on) {
         if (on === undefined || on === "") return screenOn ? "on" : "off";
+        if (on === "size") {
+          const h = $("#app").clientHeight - $("#keys").offsetHeight;
+          return `${$("#app").clientWidth} ${h} ${window.devicePixelRatio || 1} ${vgaSize}`;
+        }
         if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("kt screen: on или off");
         setScreen(on === true || on === "on");
         return "";
@@ -1521,7 +1529,7 @@
     // (адаптер v86) и мышь идут в машину, а ряд клавиш - keys.screen
     function setScreen(on) {
       on = !!on;
-      if (on && vgaSize < VGA_ON) throw new Error("экрана нет: boot.vga off");
+      if (on && vgaSize < VGA_MIN) throw new Error("экрана нет: boot.vga off");
       if (on === screenOn) return;
       screenOn = on;
       $("#screen").classList.toggle("on", on);
@@ -1531,10 +1539,12 @@
       else if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
       layout();
     }
-    // пиксели крупнее точек экрана - без размытия, иначе (телефон) - сглаживание
+    // без размытия - при целом масштабе (пиксели ровные) и от 2 точек на пиксель; дробный масштаб
+    // меньше 2 без сглаживания даёт пиксели разной ширины и рябь на штриховке
     function fitScreen() {
       const cv = $("#screen canvas"), r = cv.getBoundingClientRect();
-      cv.classList.toggle("px", cv.width > 0 && Math.min(r.width / cv.width, r.height / cv.height) * (window.devicePixelRatio || 1) >= 1);
+      const s = cv.width > 0 ? Math.min(r.width / cv.width, r.height / cv.height) * (window.devicePixelRatio || 1) : 0;
+      cv.classList.toggle("px", s >= 2 || (s >= 1 && Math.abs(s - Math.round(s)) < 0.02));
     }
     {
       const cv = $("#screen canvas");
@@ -1840,7 +1850,7 @@
       for (const el of document.querySelectorAll(PARTS)) el.remove();
 
       opts.vga_memory_size = vgaSize;
-      if (vgaSize >= VGA_ON) {
+      if (vgaSize >= VGA_MIN) {
         opts.screen_container = $("#screen");
         opts.disable_keyboard = false;
       }
@@ -1874,7 +1884,7 @@
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
         if (saved) startCmd = null;
-        if (saved && saved.screen_on && vgaSize >= VGA_ON) setScreen(true);
+        if (saved && saved.screen_on && vgaSize >= VGA_MIN) setScreen(true);
         onReady = () => {
           ctl("REDRAW");
           emit("restore");

@@ -16,6 +16,7 @@ python-turtledemo примеры turtle (команда turtledemo)
 python-matplotlib-tk окна matplotlib через tkinter
 python-matplotlib-demo примеры matplotlib (команда mpldemo)
 kt-ttyd виртуальные консоли (Alt+1..9, kt tty)
+kt-screen экран поверх терминала (kt screen) для doom и startx
 tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
 doom Doom на экране

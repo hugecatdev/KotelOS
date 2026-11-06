@@ -963,9 +963,10 @@ def main():
 
     def no_screen():
         assert s.sh("test -e /dev/fb0")[0] != 0, "/dev/fb0 есть без boot.vga"
-        assert s.ok("kt screen").strip() == "off"
-        code, out, err = s.sh("kt screen on")
-        assert code == 1 and "boot.vga" in err, (code, out, err)
+        assert s.sh("kt screen")[0] != 0, "kt screen есть без пакета kt-screen"
+        err = s.ev("(() => { try { kt.screen('on'); return ''; } catch (e) { return e.message; } })()")
+        assert "boot.vga" in err, err
+        assert s.ev("kt.screen()") == "off"
         assert "vga: нет" in s.ok("kt info")
 
     def keys_in(cmd):
@@ -981,7 +982,7 @@ def main():
     def screen_doom():
         t = s.open(base + "vga.html")
         s.ok("test -c /dev/fb0 && test -c /dev/dri/card0")
-        assert "vga: 4.0 МБ, спрятан" in s.ok("kt info")
+        assert "vga: 8.0 МБ, спрятан" in s.ok("kt info")
         s.ok("kt screen on")
         assert s.ev("document.querySelector('#screen').classList.contains('on')"), "экран не показан"
         assert s.ev("emulator.keyboard_adapter.emu_enabled"), "клавиатура не ушла в машину"
@@ -1040,7 +1041,10 @@ def main():
             assert time.time() - t0 < 60, "окно xterm не появилось: %s" % s.sh("tail -5 /var/log/Xorg.0.log")[1]
             time.sleep(0.5)
         ready = time.time() - t0
-        assert s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]") == [800, 600]
+        # размер - место под экран, точка в точку (окно теста мало, видеопамяти хватает)
+        w, h, d, _ = map(float, s.ok("kt screen size").split())
+        size = s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]")
+        assert size == [int(w * d) // 8 * 8, int(h * d)], (size, w, h, d)
         bad = s.sh("grep '(EE)' /var/log/Xorg.0.log")[1]
         assert "keymap" not in bad, "раскладка не загрузилась: %s" % bad
         typing("touch /tmp/x-ok\r")

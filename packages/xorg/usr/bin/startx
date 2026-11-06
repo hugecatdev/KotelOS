@@ -1,12 +1,30 @@
 #!/bin/sh
 # X на экране: Xorg без OpenGL (KMS /dev/dri/card0), клавиатура и мышь - evdev; сессия -
 # ~/.xinitrc, без него twm и xterm. Выход из сессии - обратно в терминал.
-# Размер экрана: startx 1024x768 (по умолчанию 800x600)
-size=${1:-800x600}
-case $size in
-  *[!0-9x]*|x*|*x) echo "startx: размер как 800x600" >&2; exit 1 ;;
-esac
+# Размер: startx 1024x768; без него - место под экран на странице, точка X на точку экрана, если
+# в видеопамять влезают два кадра (так требует драйвер bochs), иначе точка X крупнее - во сколько
+# нужно, а больше двух - в целое число раз, чтобы пиксели были ровные
 [ -e /tmp/.X0-lock ] && { echo "startx: X уже запущен (/tmp/.X0-lock)" >&2; exit 1; }
+area=$(kt screen size) || exit 1
+set -- "$1" $area
+vram=$5
+[ "$vram" -ge 4194304 ] || { kt screen on; exit 1; }  # экрана нет - kt screen скажет почему
+if [ -n "$1" ]; then
+  size=$1
+  case $size in
+    *[!0-9x]*|x*|*x|*x*x*) echo "startx: размер как 800x600" >&2; exit 1 ;;
+  esac
+  [ $((${size%x*} * ${size#*x} * 8)) -le $vram ] || {
+    echo "startx: $size не влезает в видеопамять ($((vram >> 20)) МБ, нужно два кадра)" >&2; exit 1; }
+else
+  size=$(awk -v w="$2" -v h="$3" -v d="$4" -v m="$vram" 'BEGIN {
+    W = w * d; H = h * d; s = 1
+    while (W / s * H / s * 8 > m) s += 0.25
+    if (s > 2) s = int(s + 0.99)
+    printf "%dx%d", int(W / s / 8) * 8, int(H / s)
+  }')
+fi
+w=${size%x*} h=${size#*x}
 mkdir -p /tmp/.X11-unix /var/lib/xkb /var/log
 rm -f /tmp/.X11-unix/X0  # от прошлого сервера: по нему ждём готовности нового
 
@@ -37,14 +55,24 @@ Section "ServerFlags"
   Option "SuspendTime" "0"
   Option "OffTime" "0"
 EndSection
+Section "Monitor"
+  Identifier "monitor"
+  HorizSync 1-1000
+  VertRefresh 1-1000
+  # видеокарта виртуальная: годится любой размер, частоты - для порядка
+  Modeline "$size" $(((w + 160) * (h + 30) * 60 / 1000000 + 1)) $w $((w + 16)) $((w + 64)) $((w + 160)) $h $((h + 3)) $((h + 6)) $((h + 30))
+  Option "PreferredMode" "$size"
+EndSection
 Section "Device"
   Identifier "card"
   Driver "modesetting"
   Option "kmsdev" "/dev/dri/card0"
+  Option "Monitor-Virtual-1" "monitor"
 EndSection
 Section "Screen"
   Identifier "screen"
   Device "card"
+  Monitor "monitor"
   DefaultDepth 24
   SubSection "Display"
     Modes "$size"

@@ -340,12 +340,18 @@ def options(argv=None):
     ap.add_argument("--timeout", type=int, default=300, help="сколько ждать каждую --run, с")
     ap.add_argument("--bare", action="store_true", help="без пакетов: только busybox и kt")
     ap.add_argument("--mem", type=int, help="память машины по умолчанию, МБ (иначе 128)")
-    ap.add_argument("--vga", action="store_true", help="экран (boot.vga on): видеопамять 4 МБ, /dev/fb0")
+    ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
+                    help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/)")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
     ap.add_argument("--v86", default=V86, metavar="ПАПКА", help="libv86.js, v86.wasm и BIOS (по умолчанию %s)" % V86)
+    # --vga [МБ]: число - только если оно следом, иначе (--vga doom) 8; argparse с nargs="?" съел бы пакет
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for i, x in enumerate(argv):
+        if x == "--vga":
+            argv[i] = "--vga=" + (argv.pop(i + 1) if i + 1 < len(argv) and argv[i + 1].isdigit() else "8")
     a = ap.parse_args(argv)
     if a.bare:
         a.packages = []
@@ -378,7 +384,7 @@ def main():
     if a.mem:
         bundle["mem"] = a.mem
     if a.vga:
-        bundle["vga"] = True
+        bundle["vga"] = a.vga
     if a.cmd:
         bundle["cmd"] = a.cmd
     if a.version:
