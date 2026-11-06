@@ -1041,6 +1041,8 @@ def main():
             time.sleep(0.5)
         ready = time.time() - t0
         assert s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]") == [800, 600]
+        bad = s.sh("grep '(EE)' /var/log/Xorg.0.log")[1]
+        assert "keymap" not in bad, "раскладка не загрузилась: %s" % bad
         typing("touch /tmp/x-ok\r")
         t1 = time.time()
         while s.sh("test -e /tmp/x-ok")[0]:

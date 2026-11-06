@@ -85,13 +85,15 @@ rm -f $OUT/usr/lib/xorg/modules/*.la $OUT/usr/lib/xorg/modules/*/*.la
 cp -P $SR/usr/lib/libpciaccess.so.0 $SR/usr/lib/libpciaccess.so.0.* $SR/usr/lib/libdrm.so.2 $SR/usr/lib/libdrm.so.2.* $OUT/usr/lib/
 # раскладки: из xkeyboard-config (3.3 МБ) только us и ru с переключением Alt+Shift - 0.8 МБ;
 # symbols - всё, что берёт xkbcomp для pc105, us,ru и grp:alt_shift_toggle по правилам evdev
-# (клавиатура) и base (виртуальная клавиатура сервера)
+# (клавиатура) и base (виртуальная клавиатура сервера). Проверять с пустым путём поиска
+# (xkbcomp -I -I<каталог>): иначе недостающее молча берётся из xkeyboard-config хоста
+# (так потерялся kpdl из ru, и раскладка us,ru не загружалась)
 X=$SR/usr/share/X11/xkb
 K=$OUT/usr/share/X11/xkb
 mkdir -p $K/rules $K/geometry $K/symbols
 cp -r $X/types $X/compat $X/keycodes $K/
 cp $X/rules/evdev $X/rules/base $K/rules/
 cp $X/geometry/pc $K/geometry/
-for f in altwin capslock ctrl group inet keypad level3 level5 pc ru shift srvr_ctrl us; do cp $X/symbols/$f $K/symbols/; done
+for f in altwin capslock ctrl group inet keypad kpdl level3 level5 pc ru shift srvr_ctrl us; do cp $X/symbols/$f $K/symbols/; done
 echo "Xorg -> $OUT ($(du -sh $OUT/usr | cut -f1))"
 find $OUT/usr -type f | sed "s|$OUT/||" | sort
