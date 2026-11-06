@@ -16,10 +16,12 @@
   /* #if vga */
   /* экран VGA поверх терминала и окон, ряд клавиш под ним остаётся; размер и сглаживание
      холста - свои: адаптер v86 ставит их в style под пиксели устройства */
-  #screen { display: none; position: absolute; left: 0; right: 0; top: 0; z-index: 16; background: #000; touch-action: none; }
+  #screen { display: none; position: absolute; left: 0; right: 0; top: 0; z-index: 16; background: #000; touch-action: none; overflow: hidden; }
   #screen.on { display: block; }
   #screen > div { display: none !important; }
   #screen canvas { width: 100% !important; height: 100% !important; object-fit: contain; image-rendering: auto !important; }
+  /* клавиатура телефона открыта: холст той же высоты, что без неё, низ - под рядом клавиш (layoutScreen) */
+  #screen.kb canvas { height: var(--sh) !important; transform: translateY(var(--sy)); }
   #screen canvas.px { image-rendering: pixelated !important; }
   /* #endif */
   #kbd {
@@ -410,7 +412,7 @@
       active.term.scrollToBottom();
       $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
       /* #if vga */
-      $("#screen").style.bottom = $("#keys").offsetHeight + "px";
+      layoutScreen(h);
       if (screenOn) fitScreen();
       screenResized();
       /* #endif */
@@ -476,6 +478,9 @@
     /* #if vga */
     const vgaBytes = (v) => v === "off" ? VGA_OFF : (v === "on" ? 8 : +v) << 20;
     vgaSize = vgaBytes(cfg.get("boot.vga"));
+    // высота страницы без экранной клавиатуры телефона (наибольшая при этой ширине) и где касались
+    // экрана (точки CSS от верха холста) - см. layoutScreen
+    let fullW = 0, fullH = 0, tapY = 0;
     /* #endif */
     let screenOn = false;
     let screenSent = "";  // размер X, о котором знает гость (kt screen size, событие screen-size); помнят сохранения
@@ -1504,6 +1509,7 @@
     });
 
     function focusInput() {
+      /* #if vga */ if (screenOn) return; /* #endif */ // экран: клавиатура - в машину, на телефоне - кнопкой ⌨
       if (mobile) kbd.focus({ preventScroll: true });
       else active.term.focus();
     }
@@ -1654,7 +1660,7 @@
       if (emulator) emulator.keyboard_set_enabled(on);
       buildKeys();
       if (!on) focusInput();
-      else if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
+      else if (document.activeElement) document.activeElement.blur(); // и клавиатура телефона закрывается: открыть - ⌨
       layout();
     }
     // размер X под место на странице: screen.scale - точек CSS на точку X (auto: на ПК точка в точку
@@ -1662,7 +1668,8 @@
     // кадра (так требует драйвер bochs), иначе точка крупнее; больше двух точек экрана на точку X - в
     // целое число раз, чтобы пиксели были ровные
     function screenSize() {
-      const W = $("#app").clientWidth, H = $("#app").clientHeight - $("#keys").offsetHeight;
+      // на телефоне - высота без экранной клавиатуры: startx, набранный с ней, иначе взял бы половину
+      const W = $("#app").clientWidth, H = (mobile ? fullH : $("#app").clientHeight) - $("#keys").offsetHeight;
       const d = window.devicePixelRatio || 1, v = cfg.get("screen.scale");
       let s = (v === "auto" ? (mobile ? 1 : 1 / d) : +v) * d;
       while ((W * d / s) * (H * d / s) * 8 > vgaSize) s += 0.25;
@@ -1685,6 +1692,20 @@
     }
     // без размытия - при целом масштабе (пиксели ровные) и от 2 точек на пиксель; дробный масштаб
     // меньше 2 без сглаживания даёт пиксели разной ширины и рябь на штриховке
+    // клавиатура телефона открыта: экран не сжимается под оставшееся место, а остаётся той же ширины и
+    // на месте, низ уходит под ряд клавиш; если касались ниже того, что видно над клавиатурой, - экран
+    // съезжает вверх, пока место касания не станет видно
+    function layoutScreen(h) {
+      const sc = $("#screen"), keys = $("#keys").offsetHeight, w = window.innerWidth;
+      if (w !== fullW || h > fullH) [fullW, fullH] = [w, h];
+      sc.style.bottom = keys + "px";
+      const open = mobile && h < fullH - 80;
+      sc.classList.toggle("kb", open);
+      if (!open) return;
+      const box = fullH - keys, seen = h - keys;
+      sc.style.setProperty("--sh", box + "px");
+      sc.style.setProperty("--sy", -Math.max(0, Math.min(tapY + 48 - seen, box - seen)) + "px");
+    }
     function fitScreen() {
       const cv = $("#screen canvas"), r = cv.getBoundingClientRect();
       const s = cv.width > 0 ? Math.min(r.width / cv.width, r.height / cv.height) * (window.devicePixelRatio || 1) : 0;
@@ -1713,6 +1734,7 @@
         e.preventDefault();
         cv.setPointerCapture(e.pointerId);
         if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
+        tapY = e.clientY - cv.getBoundingClientRect().top;
         move(e);
         smodBefore();
         click(e);
