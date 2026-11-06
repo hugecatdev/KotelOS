@@ -1041,10 +1041,9 @@ def main():
             assert time.time() - t0 < 60, "окно xterm не появилось: %s" % s.sh("tail -5 /var/log/Xorg.0.log")[1]
             time.sleep(0.5)
         ready = time.time() - t0
-        # размер - место под экран, точка в точку (окно теста мало, видеопамяти хватает)
-        w, h, d, _ = map(float, s.ok("kt screen size").split())
-        size = s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]")
-        assert size == [int(w * d) // 8 * 8, int(h * d)], (size, w, h, d)
+        # размер - тот, что считает страница (screenSize: место, видеопамять, screen.scale)
+        canvas = "document.querySelector('#screen canvas').width + 'x' + document.querySelector('#screen canvas').height"
+        assert s.ev(canvas) == s.ev("screenSize()"), (s.ev(canvas), s.ev("screenSize()"))
         bad = s.sh("grep '(EE)' /var/log/Xorg.0.log")[1]
         assert "keymap" not in bad, "раскладка не загрузилась: %s" % bad
         typing("touch /tmp/x-ok\r")
@@ -1052,13 +1051,22 @@ def main():
         while s.sh("test -e /tmp/x-ok")[0]:
             assert time.time() - t1 < 10, "набранное в xterm не выполнилось"
             time.sleep(0.5)
+        # окно браузера стало меньше - X идёт за ним (событие screen-size -> xrandr)
+        s.c.call("Emulation.setDeviceMetricsOverride", width=640, height=480, deviceScaleFactor=1, mobile=False)
+        t1 = time.time()
+        while s.ev(canvas) != s.ev("screenSize()"):
+            assert time.time() - t1 < 20, "X не пошёл за размером страницы: %s, а надо %s" % (s.ev(canvas), s.ev("screenSize()"))
+            time.sleep(0.5)
+        resized = s.ev(canvas)
+        s.c.call("Emulation.clearDeviceMetricsOverride")
         typing("exit\r")
         t1 = time.time()
         while s.ev("document.querySelector('#screen').classList.contains('on')"):
             assert time.time() - t1 < 15, "экран не спрятался после выхода из сессии"
             time.sleep(0.3)
         assert s.sh("pgrep Xorg")[0] != 0, "Xorg остался"
-        return "окно xterm через %.1f с" % ready
+        assert s.sh("pgrep tail")[0] != 0, "слушатель размера остался"
+        return "окно xterm через %.1f с, потом %s" % (ready, resized)
 
     def snap_bundle():
         t = s.open(base + "snap.html")

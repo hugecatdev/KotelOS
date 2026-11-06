@@ -16,7 +16,7 @@
 | `kt pack имя путь...`, `kt unpack имя [куда]` (пакет `pack`) | - | - | файлы в браузер и обратно, в любую машину |
 | `kt info` | `kt.info()` | - | что знает страница: браузер, экран, пояс, бандл, образ, память, сохранение |
 | `kt tty`, `kt tty new [команда]`, `kt tty N`, `kt tty kill N` (пакет `kt-ttyd`) | - | `kt.tty.list()`, `open(cmd, host, keys)`, `go(id)`, `kill(id)`, `input(id, s)`, `font(id, d)`, `attach(id, host, keys)` | виртуальные консоли: список, новая, перейти, закрыть; на клавиатуре Alt+1..9 |
-| `kt screen [on\|off\|size]` (пакет `kt-screen`) | - | `kt.screen(on)` | экран поверх терминала: клавиатура и мышь - в машину; `size` - место под него (нужен `boot.vga`, см. [screen.md](screen.md)) |
+| `kt screen [on\|off\|size]` (пакет `kt-screen`) | - | `kt.screen(on)` | экран поверх терминала: клавиатура и мышь - в машину; `size` - размер для X (нужен `boot.vga`, см. [screen.md](screen.md)) |
 | `kt export [имя]`, `kt import` | - | - | сохранение в файл / из файла |
 | `kt font [имя] [размер]`, `kt theme [имя]` | - | - | шрифт и тема |
 | `kt notify [text]` (пакет `notify`, код - `/usr/lib/kt-notify.js`) | `kt.notify(s)` | - | системное уведомление (первый раз спросит разрешение; нужен https или localhost, через file:// браузер их не даёт - только мигает заголовок вкладки) |
@@ -110,6 +110,7 @@ vm.contentWindow.postMessage({ kt: 1, method: "exec", args: ["uname -a"] }, "*")
 | `keys.main` | см. ниже | кнопки под терминалом |
 | `keys.more` | см. ниже | кнопки под ⋯ |
 | `keys.screen` | см. [screen.md](screen.md) | кнопки под экраном (`kt screen on`) |
+| `screen.scale` | auto | экран X: точек страницы (CSS) на его точку; auto - на ПК точка в точку экрана, на телефоне - как обычный текст (`startx` и смена размера, см. [screen.md](screen.md)) |
 | `keys.open` | off | показать кнопки под ⋯ |
 | `keys.size` | 16 | размер подписей кнопок |
 | `boot.mem` | 128 | память при загрузке с ядра, МБ |

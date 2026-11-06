@@ -1,30 +1,23 @@
 #!/bin/sh
 # X на экране: Xorg без OpenGL (KMS /dev/dri/card0), клавиатура и мышь - evdev; сессия -
 # ~/.xinitrc, без него twm и xterm. Выход из сессии - обратно в терминал.
-# Размер: startx 1024x768; без него - место под экран на странице, точка X на точку экрана, если
-# в видеопамять влезают два кадра (так требует драйвер bochs), иначе точка X крупнее - во сколько
-# нужно, а больше двух - в целое число раз, чтобы пиксели были ровные
+# Размер: startx 1024x768 - свой, постоянный; без него - тот, что даёт страница (kt screen size: место
+# под экран, видеопамять, kt cfg screen.scale), и он идёт за страницей: окно браузера поменяло размер
+# или телефон повернули - страница шлёт событие screen-size, и режим меняет xrandr
 [ -e /tmp/.X0-lock ] && { echo "startx: X уже запущен (/tmp/.X0-lock)" >&2; exit 1; }
-area=$(kt screen size) || exit 1
-set -- "$1" $area
-vram=$5
-[ "$vram" -ge 4194304 ] || { kt screen on; exit 1; }  # экрана нет - kt screen скажет почему
+follow=
 if [ -n "$1" ]; then
   size=$1
-  case $size in
-    *[!0-9x]*|x*|*x|*x*x*) echo "startx: размер как 800x600" >&2; exit 1 ;;
-  esac
-  [ $((${size%x*} * ${size#*x} * 8)) -le $vram ] || {
-    echo "startx: $size не влезает в видеопамять ($((vram >> 20)) МБ, нужно два кадра)" >&2; exit 1; }
 else
-  size=$(awk -v w="$2" -v h="$3" -v d="$4" -v m="$vram" 'BEGIN {
-    W = w * d; H = h * d; s = 1
-    while (W / s * H / s * 8 > m) s += 0.25
-    if (s > 2) s = int(s + 0.99)
-    printf "%dx%d", int(W / s / 8) * 8, int(H / s)
-  }')
+  size=$(kt screen size) || exit 1
+  follow=1
 fi
+case $size in
+  *[!0-9x]*|x*|*x|*x*x*) echo "startx: размер как 800x600" >&2; exit 1 ;;
+esac
 w=${size%x*} h=${size#*x}
+# видеокарта виртуальная: годится любой размер, частоты - для порядка
+modeline() { echo "$((($1 + 160) * ($2 + 30) * 60 / 1000000 + 1)) $1 $(($1 + 16)) $(($1 + 64)) $(($1 + 160)) $2 $(($2 + 3)) $(($2 + 6)) $(($2 + 30))"; }
 mkdir -p /tmp/.X11-unix /var/lib/xkb /var/log
 rm -f /tmp/.X11-unix/X0  # от прошлого сервера: по нему ждём готовности нового
 
@@ -60,7 +53,7 @@ Section "Monitor"
   HorizSync 1-1000
   VertRefresh 1-1000
   # видеокарта виртуальная: годится любой размер, частоты - для порядка
-  Modeline "$size" $(((w + 160) * (h + 30) * 60 / 1000000 + 1)) $w $((w + 16)) $((w + 64)) $((w + 160)) $h $((h + 3)) $((h + 6)) $((h + 30))
+  Modeline "$size" $(modeline $w $h)
   Option "PreferredMode" "$size"
 EndSection
 Section "Device"
@@ -101,7 +94,8 @@ EOF
 kt screen on || exit 1
 Xorg :0 -config $conf -nolisten tcp -noreset > /dev/null 2>&1 &
 xpid=$!
-trap 'kill $xpid 2>/dev/null; wait $xpid 2>/dev/null; kt screen off' EXIT
+rpid=
+trap 'kill $xpid 2>/dev/null; wait $xpid 2>/dev/null; [ -z "$rpid" ] || { pkill -P $rpid; kill $rpid; } 2>/dev/null; kt screen off' EXIT
 trap 'exit 130' INT TERM HUP
 i=0
 until [ -S /tmp/.X11-unix/X0 ]; do
@@ -111,9 +105,31 @@ until [ -S /tmp/.X11-unix/X0 ]; do
   usleep 100000
 done
 export DISPLAY=:0
+# размер за страницей: событие screen-size (агент пишет события в /run/kt/events, пока есть
+# слушатель - отметка /run/kt/ev.<pid>) -> новый режим через xrandr
+if [ -n "$follow" ]; then
+  (
+    read -r me _ < /proc/self/stat
+    : > /run/kt/ev.$me
+    : >> /run/kt/events
+    tail -n 0 -f /run/kt/events | while IFS= read -r line; do
+      case $line in *'"name":"screen-size"'*) ;; *) continue ;; esac
+      s=${line#*\"data\":\"}
+      s=${s%%\"*}
+      xrandr --newmode "$s" $(modeline ${s%x*} ${s#*x}) 2>/dev/null
+      xrandr --addmode Virtual-1 "$s" 2>/dev/null
+      xrandr --output Virtual-1 --mode "$s"
+    done
+  ) &
+  rpid=$!
+fi
 if [ -f "$HOME/.xinitrc" ]; then
   sh "$HOME/.xinitrc"
 else
   if [ -f "$HOME/.twmrc" ]; then twm & else twm -f /etc/X11/twmrc & fi
-  xterm -geometry 80x24+20+20
+  # xterm - на ширину экрана, не больше 80x24 (шрифт 6x13)
+  cols=$(((w - 40) / 6)) rows=$(((h - 60) / 13))
+  [ $cols -le 80 ] || cols=80
+  [ $rows -le 24 ] || rows=24
+  xterm -geometry ${cols}x${rows}+10+20
 fi

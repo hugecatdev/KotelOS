@@ -136,6 +136,9 @@
     const KEYS_MAIN = [["ESC", "/", "-", "|", "~", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", ">", "$", "LEFT", "DOWN", "RIGHT", "KBD"]];
     const KEYS_MORE = [["F1", "F2", "F3", "F4", "F5", "F6", "PGUP", "{", "}"], ["F7", "F8", "F9", "F10", "F11", "F12", "PGDN", "[", "]"]];
     const KEYS_SCREEN = [["ESC", "1", "2", "3", "4", "SPACE", "UP", "ENTER", "MORE"], ["TAB", "CTRL", "ALT", "Y", "N", "LEFT", "DOWN", "RIGHT", "KBD"]];
+    function scaleCheck(v) {
+      if (v !== "auto" && !(+v >= 0.25 && +v <= 4)) throw new Error("screen.scale: auto или 0.25..4 (точек страницы на точку экрана)");
+    }
     function parseKeys(v) {
       let rows;
       try { rows = JSON.parse(v); } catch { try { rows = JSON.parse(v.replace(/'/g, '"')); } catch {} }
@@ -158,6 +161,7 @@
       "keys.main": { def: JSON.stringify(KEYS_MAIN), check: parseKeys, apply: () => buildKeys() },
       "keys.more": { def: JSON.stringify(KEYS_MORE), check: parseKeys, apply: () => buildKeys() },
       "keys.screen": { def: JSON.stringify(KEYS_SCREEN), check: parseKeys, apply: () => buildKeys() },
+      "screen.scale": { def: "auto", check: scaleCheck, apply: () => screenResized(true) },
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
       "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
@@ -389,6 +393,7 @@
       $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
       $("#screen").style.bottom = $("#keys").offsetHeight + "px";
       if (screenOn) fitScreen();
+      screenResized();
     }
     if (window.visualViewport) {
       visualViewport.addEventListener("resize", layout);
@@ -1317,13 +1322,13 @@
         },
         get active() { return active.id; },
       },
-      // экран VGA: kt screen on/off; без аргумента - показан ли; size - место под экран в точках CSS,
-      // плотность пикселей и видеопамять, по ним startx выбирает размер
+      // экран VGA: kt screen on/off; без аргумента - показан ли; size - размер для X (startx), дальше
+      // перемены страница шлёт событием screen-size
       screen(on) {
         if (on === undefined || on === "") return screenOn ? "on" : "off";
         if (on === "size") {
-          const h = $("#app").clientHeight - $("#keys").offsetHeight;
-          return `${$("#app").clientWidth} ${h} ${window.devicePixelRatio || 1} ${vgaSize}`;
+          screenW = $("#app").clientWidth;
+          return (screenSent = screenSize());
         }
         if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("kt screen: on или off");
         setScreen(on === true || on === "on");
@@ -1538,6 +1543,32 @@
       if (!on) focusInput();
       else if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
       layout();
+    }
+    // размер X под место на странице: screen.scale - точек CSS на точку X (auto: на ПК точка в точку
+    // экрана, на телефоне - точка CSS, как обычный текст телефона). В видеопамять должны влезть два
+    // кадра (так требует драйвер bochs), иначе точка крупнее; больше двух точек экрана на точку X - в
+    // целое число раз, чтобы пиксели были ровные
+    function screenSize() {
+      const W = $("#app").clientWidth, H = $("#app").clientHeight - $("#keys").offsetHeight;
+      const d = window.devicePixelRatio || 1, v = cfg.get("screen.scale");
+      let s = (v === "auto" ? (mobile ? 1 : 1 / d) : +v) * d;
+      while ((W * d / s) * (H * d / s) * 8 > vgaSize) s += 0.25;
+      if (s > 2) s = Math.ceil(s - 0.01);
+      return `${Math.floor(W * d / s / 8) * 8}x${Math.floor(H * d / s)}`;
+    }
+    // перемена размера - событием screen-size (его слушает startx и меняет режим X); на телефоне высоту
+    // меняет и экранная клавиатура - её не слушаем, только поворот и смену ширины
+    let screenSent = "", screenW = 0, screenTimer = 0;
+    function screenResized(force) {
+      clearTimeout(screenTimer);
+      screenTimer = setTimeout(() => {
+        if (vgaSize < VGA_MIN || !screenSent) return;
+        const w = $("#app").clientWidth;
+        if (!force && mobile && w === screenW) return;
+        screenW = w;
+        const s = screenSize();
+        if (s !== screenSent) emit("screen-size", (screenSent = s));
+      }, 400);
     }
     // без размытия - при целом масштабе (пиксели ровные) и от 2 точек на пиксель; дробный масштаб
     // меньше 2 без сглаживания даёт пиксели разной ширины и рябь на штриховке

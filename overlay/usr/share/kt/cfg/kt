@@ -10,6 +10,7 @@ term.mobile интерфейс телефона
 keys.main раскладка
 keys.more раскладка под ⋯
 keys.screen раскладка на экране
+screen.scale точек страницы на точку экрана (auto)
 keys.open открыть ⋯
 keys.size размер кнопок
 boot.mem память, МБ

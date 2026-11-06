@@ -85,7 +85,7 @@ post-install (приветствие `fun`) выполняется при пер
 `micro` (базовые инструменты: nano, htop, tmux, curl, wget, pack, notify),
 `python` (полный CPython с pip и numpy, tkinter, IDLE, turtle и matplotlib с
 примерами, рабочий стол и терминал; 384 МБ памяти, файл 43 МБ, открывается за ~2 с) и
-`vga` (экран с видеопамятью 8 МБ и X без OpenGL, xeyes и xcalc, см. [Экран](screen.md)).
+`vga` (экран с видеопамятью 8 МБ, 256 МБ памяти, X без OpenGL, xeyes и xcalc, см. [Экран](screen.md)).
 Что в каком - в `bundles/ИМЯ.txt`: аргументы `bundle.py`, как в командной
 строке, `#` - комментарий. Новый файл там - новый бандл.
 

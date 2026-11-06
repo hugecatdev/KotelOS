@@ -1,4 +1,4 @@
 # экран: видеопамять 8 МБ, /dev/fb0 и kt screen; X без OpenGL (startx: twm и xterm, xeyes, xcalc);
 # Doom - kt pkg add doom
---snap --vga 8
+--snap --vga 8 --mem 256
 fun nano htop curl wget pack notify kt-ttyd xorg xeyes xcalc
