@@ -6,6 +6,8 @@ notify уведомления и диалоги браузера
 ai ИИ-ассистент в терминале
 curl curl через браузер
 wget wget через браузер
+chawan браузер в терминале (сайты с CORS)
+chawan-fetch http и https для chawan через fetch браузера
 python-requests requests через браузер
 python-tkinter tkinter в окнах браузера
 python-idle IDLE в окнах браузера

@@ -52,6 +52,15 @@ ln -sf php83 build/packages/php83/usr/bin/php
 rm -f build/packages/libevent/usr/lib/libevent_openssl*
 echo "musl" > build/packages/libevent/.deps
 
+# chawan есть только с v3.24. Его http/https/gemini/sftp - cgi-bin/ssl на openssl
+# и сырых сокетах, а наружу из v86 ходит только fetch браузера: ssl и его библиотеки
+# (~6 МБ в памяти) не берём, http и https даёт пакет chawan-fetch
+C=usr/libexec/chawan/cgi-bin
+python3 alpine.py chawan --branch v3.24 \
+  --skip so:libssl.so.3 --skip so:libcrypto.so.3 --skip so:libssh2.so.1 --skip so:libbrotlidec.so.1 \
+  --drop $C/ssl --drop $C/http --drop $C/https --drop $C/gemini --drop $C/sftp
+echo "musl chawan-fetch" > build/packages/chawan/.deps
+
 python3 alpine.py $(python3 scripts/pyset.py --skip py3-requests --skip py3-pip) py3-numpy py3-pandas py3-scipy py3-matplotlib \
   --keep-existing --alias py3-requests=python-requests --alias py3-pip=pip --rename py3-:python-
 sed -i 's/\bpython3\b/minipython/' build/packages/python-numpy/.deps

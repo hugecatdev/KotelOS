@@ -1,0 +1,87 @@
+#!/bin/sh
+# http и https для chawan через curl (local CGI, см. man cha-cgi): каким curl
+# ходит, такой и сетевой стек. Наш curl - это fetch браузера.
+#
+# fetch сам идёт по редиректам, а chawan должен знать конечный адрес, иначе
+# относительные ссылки посчитаются от первого. Поэтому после редиректа chawan
+# получает 303 на конечный адрес, а сам ответ ждёт его здесь, в $CHA_TMP_DIR:
+# второй раз в сеть никто не ходит.
+cr=$(printf '\r')
+u=$MAPPED_URI_SCHEME://$MAPPED_URI_HOST${MAPPED_URI_PORT:+:$MAPPED_URI_PORT}${MAPPED_URI_PATH:-/}${MAPPED_URI_QUERY:+?$MAPPED_URI_QUERY}
+d=${CHA_TMP_DIR:-/tmp}
+mkdir -p "$d"
+saved() {
+  echo "$d/curl-redir.$(printf '%s' "$1" | md5sum | cut -c1-32)"
+}
+
+k=$(saved "$u")
+if [ "$REQUEST_METHOD" = GET ] && [ -n "$(find "$k" -mmin -1 2>/dev/null)" ]; then
+  cat "$k"
+  rm -f "$k"
+  exit 0
+fi
+
+o=$d/curl.$$
+trap 'rm -f "$o.h" "$o.b" "$o.e"' EXIT
+set -- -sS --compressed -D "$o.h" -o "$o.b" -w '%{num_redirects} %{url_effective}'
+case $REQUEST_METHOD in
+  GET) ;;
+  HEAD) set -- "$@" -I ;;
+  POST) set -- "$@" --data-binary @- ;;
+  *) set -- "$@" -X "$REQUEST_METHOD" ;;
+esac
+[ -z "$CONTENT_TYPE" ] || set -- "$@" -H "Content-Type: $CONTENT_TYPE"
+if [ -n "$MAPPED_URI_USERNAME" ]; then
+  set -- "$@" -u "$(printf '%s:%s' "$MAPPED_URI_USERNAME" "$MAPPED_URI_PASSWORD" | "$CHA_LIBEXEC_DIR/urldec")"
+fi
+[ -z "$ALL_PROXY" ] || set -- "$@" -x "$ALL_PROXY"
+[ "$CHA_INSECURE_SSL_NO_VERIFY" != 1 ] || set -- "$@" -k
+# сжатие - дело curl (--compressed); User-Agent у fetch всегда браузерный:
+# Chrome свой не отдаст, а Firefox ради него шлёт preflight, и сайт отказывает
+while IFS= read -r h; do
+  h=${h%"$cr"}
+  case $h in
+    '' | [Aa]ccept-[Ee]ncoding:* | [Uu]ser-[Aa]gent:* | [Cc]ontent-[Tt]ype:*) ;;
+    *) set -- "$@" -H "$h" ;;
+  esac
+done <<EOF
+$REQUEST_HEADERS
+EOF
+
+r=$(curl "$@" "$u" 2> "$o.e")
+n=$?
+if [ $n -ne 0 ]; then
+  case $n in
+    5) e=8 ;;
+    6) e=7 ;;
+    7) e=5 ;;
+    *) e=1 ;;
+  esac
+  msg=$(sed -n 's/^curl: ([0-9]*) //p' "$o.e" | tail -n 1)
+  printf 'Cha-Control: ConnectionError %s %s\r\n' $e "${msg:-curl: ошибка $n}"
+  exit 0
+fi
+
+# заголовки последнего ответа: настоящий curl кладёт в -D и промежуточные (100 Continue)
+response() {
+  tr -d '\r' < "$o.h" | awk '
+    /^HTTP\// { s = $2; h = ""; next }
+    $0 == "" { next }
+    {
+      n = tolower($0)
+      sub(/:.*/, "", n)
+      if (n != "content-encoding" && n != "content-length" && n != "transfer-encoding" && n != "connection" && n != "keep-alive")
+        h = h $0 "\r\n"
+    }
+    END { printf "Status: %s\r\nCha-Control: ControlDone\r\n%s\r\n", s, h }'
+  [ "$REQUEST_METHOD" = HEAD ] || cat "$o.b"
+}
+
+to=${r#* }
+if [ "${r%% *}" != 0 ] && [ "$REQUEST_METHOD" != HEAD ] && [ "$to" != "$u" ]; then
+  find "$d" -maxdepth 1 -name 'curl-redir.*' -mmin +1 -exec rm -f {} \;
+  response > "$(saved "$to")"
+  printf 'Status: 303\r\nCha-Control: ControlDone\r\nLocation: %s\r\n\r\n' "$to"
+else
+  response
+fi

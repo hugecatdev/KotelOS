@@ -1,0 +1,4 @@
+# chawan: http и https через curl, то есть через fetch браузера (пакет chawan-fetch).
+# Свои правила - в ~/.urimethodmap, они главнее этого файла
+http:	cgi-bin:curl
+https:	cgi-bin:curl

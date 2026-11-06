@@ -10,11 +10,11 @@ warn() {
 }
 
 usage() {
-  echo "usage: curl [-sSfiIvLGO] [-X method] [-H header] [-d data] [--json data] [-o file] [-u user:pass] [-T file] [-w fmt] [-m sec] <url>"
+  echo "usage: curl [-sSfiIvLGO] [-X method] [-H header] [-d data] [--json data] [-o file] [-D file] [-u user:pass] [-T file] [-w fmt] [-m sec] <url>"
   exit 0
 }
 
-url= method= hdrs= hasdata= upload= out= remote= silent= showerr= fail= inc= head= verbose= wout= get= json= auth= maxt=60
+url= method= hdrs= hasdata= upload= out= dump= remote= silent= showerr= fail= inc= head= verbose= wout= get= json= auth= cache= maxt=60
 
 adddata() {
   [ -n "$hasdata" ] && [ "$2" != bin ] && printf '&' >> "$B"
@@ -35,7 +35,7 @@ adddata() {
 
 takes() {
   case $1 in
-    -X|--request|-H|--header|-d|--data|--data-ascii|--data-raw|--data-binary|--data-urlencode|--json|-o|--output) return 0 ;;
+    -X|--request|-H|--header|-d|--data|--data-ascii|--data-raw|--data-binary|--data-urlencode|--json|-o|--output|-D|--dump-header) return 0 ;;
     -u|--user|-A|--user-agent|-e|--referer|-m|--max-time|-w|--write-out|-b|--cookie|-c|--cookie-jar) return 0 ;;
     -x|--proxy|-T|--upload-file|-F|--form|--connect-timeout|--retry) return 0 ;;
   esac
@@ -52,6 +52,7 @@ opt() {
     --data-binary) adddata "$2" bin ;;
     --json) adddata "$2" bin; json=1 ;;
     -o|--output) out=$2 ;;
+    -D|--dump-header) dump=$2 ;;
     -O|--remote-name) remote=1 ;;
     -u|--user) auth=$2 ;;
     -A|--user-agent) hdrs="${hdrs}User-Agent: $2
@@ -66,7 +67,9 @@ opt() {
     -I|--head) head=1 ;;
     -v|--verbose) verbose=1 ;;
     -G|--get) get=1 ;;
-    -L|--location|--compressed|-#|--progress-bar|--no-progress-meter) ;;
+    -x|--proxy)
+      [ -z "$2" ] || { echo "curl: (5) прокси $2 - нет в kt-версии, fetch идёт из браузера напрямую" >&2; exit 5; } ;;
+    -L|--location|--compressed|-k|--insecure|-#|--progress-bar|--no-progress-meter) ;;
     -h|--help) usage ;;
     -V|--version) echo "curl 8-kt (fetch браузера)"; exit 0 ;;
     *) warn "$1" ;;
@@ -149,6 +152,16 @@ case $method in
   *[!A-Z]*) echo "curl: странный метод $method" >&2; exit 2 ;;
 esac
 
+# no-cache и no-store - это режим кэша fetch: браузер сам пошлёт Cache-Control и Pragma,
+# а заголовками они делают запрос «непростым», с preflight, и сайты без него отказывают
+nocache='^(cache-control|pragma):[[:space:]]*no-(cache|store)[[:space:]]*$'
+if printf '%s' "$hdrs" | grep -qiE "$nocache"; then
+  cache=reload
+  printf '%s' "$hdrs" | grep -qiE '^cache-control:[[:space:]]*no-store' && cache=no-store
+  hdrs=$(printf '%s' "$hdrs" | grep -viE "$nocache")
+  [ -z "$hdrs" ] || hdrs="$hdrs
+"
+fi
 if has User-Agent && grep -qE 'browser=(chrome|edge|opera)' /proc/cmdline $KT_RUN/env 2>/dev/null; then
   echo "curl: User-Agent - Chrome его не отправляет, уйдёт браузерный" >&2
 fi
@@ -167,6 +180,7 @@ const t = (x) => new TextDecoder().decode(d(x));
 const h = {};
 for (const l of t("%s").split("\\n")) { const i = l.indexOf(":"); if (i > 0) h[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
 const o = { method: "%s", headers: h };
+if ("%s") o.cache = "%s";
 if ("%s") o.body = d("%s");
 let u = t("%s");
 if (location.protocol === "https:" && u.startsWith("http:")) u = "https:" + u.slice(5);
@@ -174,8 +188,8 @@ const r = await fetch(u, o);
 const b = new Uint8Array(await r.arrayBuffer());
 let s = "";
 for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
-return (r.status + " " + r.statusText).trim() + "\\n" + [...r.headers].map(([k, v]) => k + ": " + v).join("\\n") + "\\n\\n" + btoa(s);
-})()' "$(printf '%s' "$hdrs" | kt_b64)" "$method" "$bb" "$bb" "$(kt_b64 "$url")")
+return (r.redirected ? 1 : 0) + " " + r.url + "\\n" + (r.status + " " + r.statusText).trim() + "\\n" + [...r.headers].map(([k, v]) => k + ": " + v).join("\\n") + "\\n\\n" + btoa(s);
+})()' "$(printf '%s' "$hdrs" | kt_b64)" "$method" "$cache" "$cache" "$bb" "$bb" "$(kt_b64 "$url")")
 
 kt_send js "$(printf '%s' "$code" | kt_b64)"
 if ! kt_status $((maxt * 10)) > "$R" 2> "$R.err"; then
@@ -185,14 +199,28 @@ if ! kt_status $((maxt * 10)) > "$R" 2> "$R.err"; then
   exit $n
 fi
 
-st=$(head -n 1 "$R")
+fin=$(head -n 1 "$R")
+nred=${fin%% *}
+furl=${fin#* }
+st=$(sed -n "2{p;q}" "$R")
 status=${st%% *}
-headers=$(awk 'NR > 1 && $0 == "" { exit } NR > 1' "$R")
+headers=$(awk 'NR > 2 && $0 == "" { exit } NR > 2' "$R")
+ctype=$(printf '%s\n' "$headers" | sed -n 's/^content-type: //Ip' | head -n 1)
 if [ -n "$verbose" ]; then
   {
     echo "< HTTP/1.1 $st"
     printf '%s\n' "$headers" | sed 's/^/< /'
   } >&2
+fi
+dumph() {
+  printf 'HTTP/1.1 %s\r\n' "$st"
+  [ -z "$headers" ] || printf '%s\n' "$headers" | sed 's/$/\r/'
+  printf '\r\n'
+}
+if [ "$dump" = - ]; then
+  dumph
+elif [ -n "$dump" ]; then
+  dumph > "$dump" || exit 23
 fi
 if [ -n "$fail" ] && [ "$status" -ge 400 ]; then
   [ -z "$silent" ] || [ -n "$showerr" ] && echo "curl: (22) The requested URL returned error: $status" >&2
@@ -203,7 +231,7 @@ body() {
   if [ -n "$inc" ] || [ -n "$head" ]; then
     printf 'HTTP/1.1 %s\n%s\n\n' "$st" "$headers"
   fi
-  [ -n "$head" ] || tail -n 1 "$R" | base64 -d
+  [ -n "$head" ] || sed -n '$p' "$R" | base64 -d
 }
 
 if [ -n "$remote" ] && [ -z "$out" ]; then
@@ -216,5 +244,23 @@ if [ -n "$out" ]; then
 else
   body
 fi
-[ -n "$wout" ] && printf '%b' "$(printf '%s' "$wout" | sed "s/%{http_code}/$status/g; s/%{response_code}/$status/g; s|%{url_effective}|$url|g")"
+# -w: \n и прочее в тексте - как у printf, а значения - как есть
+w=$wout
+while [ -n "$w" ]; do
+  case $w in
+    *'%{'*'}'*)
+      printf '%b' "${w%%'%{'*}"
+      w=${w#*'%{'}
+      var=${w%%'}'*}
+      w=${w#*'}'}
+      case $var in
+        http_code|response_code) printf '%s' "$status" ;;
+        url_effective) printf '%s' "$furl" ;;
+        num_redirects) printf '%s' "$nred" ;;
+        content_type) printf '%s' "$ctype" ;;
+        *) printf '%%{%s}' "$var" ;;
+      esac ;;
+    *) printf '%b' "$w"; w= ;;
+  esac
+done
 exit 0

@@ -35,6 +35,8 @@ python3 tests/mem.py site/standard/index.html  # память вкладки с 
 - `config/busybox.fragment` / `config/kernel.fragment` - что включено и выключено поверх
   конфигов Buildroot: без железа, модулей, блочных устройств, крипто и т.п.
   В busybox добавлены `timeout`, `pgrep` и `pkill` (последние два - пара КБ).
+  В ядре включён `CONFIG_SECCOMP` (с ним `SECCOMP_FILTER`, +4 КБ к bzImage): без
+  него chawan не запускает процессы страниц.
 - `overlay/` - всё своё: `kt`, модули, агент, init-скрипты, `kt.py`.
 - `images/` - собранные bzImage, rootfs.cpio, build.json; `vendor/v86/` -
   libv86.js, v86.wasm и BIOS из проекта v86. Из них и собирается бандл.

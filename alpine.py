@@ -9,7 +9,8 @@ import tarfile
 import time
 import urllib.request
 
-MIRROR = "https://dl-cdn.alpinelinux.org/alpine/v3.22"
+BRANCH = "v3.22"
+MIRROR = "https://dl-cdn.alpinelinux.org/alpine/" + BRANCH
 KT_MIRRORS = ["https://mirrors.sdu.edu.cn/alpine/v3.22", "https://mirror.xtom.com.hk/alpine/v3.22"]
 REPOS = ["main", "community"]
 CACHE = ".cache/alpine"
@@ -170,6 +171,7 @@ def main():
     ap.add_argument("--alias", action="append", default=[], help="ALPINE=OURS: не импортировать, в зависимостях писать OURS")
     ap.add_argument("--rename", default="", help="OLD-:NEW-: приставка имён")
     ap.add_argument("--keep-existing", action="store_true", help="уже существующие packages/<имя> не трогать")
+    ap.add_argument("--branch", default=BRANCH, help="ветка Alpine, если пакета нет в нашей (v3.24, edge); уже собранные пакеты (musl...) она не перезаписывает")
     a = ap.parse_args()
 
     alias = dict(x.split("=", 1) for x in a.alias)
@@ -180,7 +182,8 @@ def main():
         return
     if not a.packages:
         ap.error("нужны пакеты")
-    pkgs, provides = index()
+    mirror = MIRROR.replace(BRANCH, a.branch)
+    pkgs, provides = index(mirror, "" if a.branch == BRANCH else a.branch + "-")
     skip = set(a.skip)
 
     def ours(n):
@@ -188,7 +191,9 @@ def main():
             return alias[n]
         return new + n[len(old):] if old and n.startswith(old) else n
 
-    have = local_packages() if a.keep_existing else set()
+    have = local_packages() if a.keep_existing or a.branch != BRANCH else set()
+    if not a.keep_existing:
+        have -= {ours(n) for n in a.packages}
     existing = {n for n in pkgs if ours(n) in have}
     for n in resolve(a.packages, pkgs, provides, skip, set(alias) | existing):
         if n in alias or n in existing:
@@ -198,7 +203,7 @@ def main():
         shutil.rmtree(dest, ignore_errors=True)
         os.makedirs(dest)
         fname = f"{n}-{p['ver']}.apk"
-        extract(fetch(f"{MIRROR}/{p['repo']}/x86/{fname}", f"{CACHE}/apk/{fname}"), dest, DROP + a.drop, a.keep)
+        extract(fetch(f"{mirror}/{p['repo']}/x86/{fname}", f"{CACHE}/apk/{fname}"), dest, DROP + a.drop, a.keep)
         deps = [ours(d) for d in p_direct(p, pkgs, provides, skip | {n})]
         with open(os.path.join(dest, ".deps"), "w") as f:
             f.write(" ".join(deps) + "\n")

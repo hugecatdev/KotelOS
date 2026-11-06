@@ -65,7 +65,7 @@ iostream - за 40 с. Для gcc в нашем `musl-dev` оставлены з
 | что это | пакеты |
 |---|---|
 | своё, часть системы | `fun` (приветствие), `pack` (`kt pack`), `sync` (`kt sync`), `notify` (`kt notify`, `alert`, `confirm`, `prompt`), `ai` (ИИ-ассистент), `unixporn` (`neofetch`, `htop` и анимации в панелях `tmux`, см. ниже), `kt-ttyd` (виртуальные консоли: Alt+1..9, `kt tty`, см. [Как устроено](internals.md)), `tk-desktop` (рабочий стол, файлы, блокнот, `xdg-open` на tkinter), `tk-term` (терминал в окне, см. [Окна](gui.md)) |
-| своя версия известной программы | `curl`, `wget`, `python-requests`, `python-tkinter` (окна рисует страница), `python-idle` (IDLE поверх него), `pip` (через fetch браузера), `jdk8` (openjdk8 из Alpine без графики, `ct.sym`, `cldrdata`/`nashorn`/`localedata` и serviceability agent; 66 МБ в памяти вместо ~120, ссылки `jar`/`javap`... сразу в `/usr/bin`, а `java` и `javac` - обёртки с `-XX:TieredStopAtLevel=1 -Xshare:auto`: без тяжёлого JIT C2 и с готовым архивом классов CDS (`classes.jsa`, 15 МБ) `javac Hello.java` идёт 15 с вместо 25, `java Hello` - 1.5 с вместо 2.4; собирает `scripts/jdk8.py`, архив - `scripts/jdk8.py --cds`), `python-mpy` (ссылка `python` -> micropython; если поставить `minipython`, ссылка перейдёт на него), `minipython`, `python3` и модули `python3-*` (свой CPython, см. выше), `neofetch` (7.1.0 с GitHub: в Alpine его больше нет; добавлены логотип KotelOS - кот в котле, маленький `--ascii_distro kotelos_small` - и счёт пакетов `kt`) |
+| своя версия известной программы | `curl`, `wget`, `chawan` (браузер в терминале, сеть - fetch браузера через `chawan-fetch`, см. ниже), `python-requests`, `python-tkinter` (окна рисует страница), `python-idle` (IDLE поверх него), `pip` (через fetch браузера), `jdk8` (openjdk8 из Alpine без графики, `ct.sym`, `cldrdata`/`nashorn`/`localedata` и serviceability agent; 66 МБ в памяти вместо ~120, ссылки `jar`/`javap`... сразу в `/usr/bin`, а `java` и `javac` - обёртки с `-XX:TieredStopAtLevel=1 -Xshare:auto`: без тяжёлого JIT C2 и с готовым архивом классов CDS (`classes.jsa`, 15 МБ) `javac Hello.java` идёт 15 с вместо 25, `java Hello` - 1.5 с вместо 2.4; собирает `scripts/jdk8.py`, архив - `scripts/jdk8.py --cds`), `python-mpy` (ссылка `python` -> micropython; если поставить `minipython`, ссылка перейдёт на него), `minipython`, `python3` и модули `python3-*` (свой CPython, см. выше), `neofetch` (7.1.0 с GitHub: в Alpine его больше нет; добавлены логотип KotelOS - кот в котле, маленький `--ascii_distro kotelos_small` - и счёт пакетов `kt`) |
 | оригинал из Alpine как есть | python-telebot, micropython, sqlite, jq, tcc, bash, htop, nano, micro, vim, helix, lua5.4, nodejs, ruby, php83, perl, janet, tmux, fzf, make, cmatrix, sl, figlet, cbonsai, nyancat |
 | примеры кода | `examples`, `examples-python`, `examples-c`, `examples-lua` |
 
@@ -82,6 +82,28 @@ tmux, который разбирает и перерисовывает его �
 панель, тем реже). Сетка - 40-50% процессора вместо ~90%, одно окно - 20-25%. `pipes.sh` и
 `sl` не взяты: первый на каждый символ запускает `tput` (30 мс в v86), второй один занимает
 треть процессора.
+
+`chawan` - браузер в терминале, оригинальный из Alpine v3.24 (в v3.22 его нет,
+`alpine.py --branch v3.24`). Протоколы у chawan - внешние программы (local CGI) в
+`/usr/libexec/chawan/cgi-bin`, и http, https, gemini, sftp у него делает бинарник `ssl`
+на openssl и сырых сокетах. Из v86 наружу ходит только fetch браузера, поэтому `ssl` и
+его библиотеки (libcrypto3, libssl3, libssh2, brotli - ~6 МБ в памяти) не взяты, а
+стек подставляет пакет `chawan-fetch`: `/etc/urimethodmap` отправляет `http:` и
+`https:` в `cgi-bin/curl`, а тот зовёт `curl`, то есть fetch браузера. Другой стек -
+своя строка в `~/.urimethodmap`, она главнее системной. Отсюда и ограничение:
+открываются только сайты с CORS - `wttr.in`, `lite.cnn.com`, `raw.githubusercontent.com`,
+статьи Википедии через REST API (`https://ru.wikipedia.org/api/rest_v1/page/html/Linux`),
+на остальных chawan пишет `Failed to fetch (сайт без CORS или нет сети)`. Cookies нет:
+fetch не шлёт `Cookie` и не показывает `Set-Cookie`.
+По редиректам fetch идёт сам, а chawan должен знать конечный адрес - от него считаются
+относительные ссылки. Поэтому адаптер отвечает chawan `303` на конечный адрес
+(`curl -w '%{num_redirects} %{url_effective}'`), а сам ответ держит до минуты в
+`$CHA_TMP_DIR`, пока chawan за ним не придёт: второй раз в сеть никто не ходит.
+`User-Agent` адаптер не передаёт: у fetch он браузерный, Chrome свой не отдаст, а
+Firefox ради него шлёт preflight, который сайты не пропускают. По той же причине
+`Cache-Control: no-cache` и `Pragma: no-cache` (chawan шлёт их всегда) `curl` делает
+режимом кэша fetch `reload`: те же заголовки браузер пошлёт сам, без preflight.
+Процессы страниц chawan запирает в seccomp, поэтому в ядре включён `CONFIG_SECCOMP`.
 
 Питоновские библиотеки из Alpine лежат в репозитории как `python-<имя>`
 (`py3-numpy` -> `python-numpy`), их ставит pip, когда нет колеса. Отбор - `scripts/pyset.py`: все `py3-*` с C-кодом,

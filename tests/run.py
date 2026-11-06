@@ -93,11 +93,28 @@ class Server(http.server.SimpleHTTPRequestHandler):
                    ("edit", {"path": "/tmp/ai-f/t.txt", "old": "b", "new": "c"}),
                    ("read", {"path": "/tmp/ai-f/t.txt"})],
     }
+    cha_log = []
+    CHA = {
+        "/cha/sub/page.html": ("<html><head><link rel=stylesheet href=s.css></head>"
+                               "<body><h1>Привет, chawan</h1></body></html>", "text/html; charset=utf-8"),
+        "/cha/sub/s.css": ("h1 { color: red }", "text/css"),
+    }
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/cha/"):
+            Server.cha_log.append((self.path, dict(self.headers)))
+            if self.path == "/cha/start":
+                self.send_response(302)
+                self.send_header("Location", "sub/page.html")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if self.path in self.CHA:
+                body, ctype = self.CHA[self.path]
+                return self.answer(body.encode(), ctype)
         if self.path == "/hello":
             return self.answer(b"hi from test server", "text/plain")
         if self.path == "/v1/models":
@@ -298,7 +315,7 @@ def fake_pypi(www, base):
     }
     repo = os.path.join(www, "repo")
     os.makedirs(repo)
-    for f in ("index.txt", "pypi.txt", "python-yaml.tar.xz", "yaml.tar.xz"):
+    for f in ("index.txt", "pypi.txt", "python-yaml.tar.xz", "yaml.tar.xz", "chawan.tar.xz", "chawan-fetch.tar.xz"):
         shutil.copy(os.path.join(ROOT, "site", "repo", f), repo)
     apks = os.path.join(www, "alpine", "main", "x86")
     os.makedirs(apks)
@@ -544,6 +561,12 @@ def main():
         n, ctype = s.ok("python3 /tmp/rq.py", 120).split()
         assert int(n) > 2000 and ctype == "multipart/form-data", (n, ctype)
         assert s.ok("curl -s %shello" % base).strip() == "hi from test server"
+        big = os.urandom(1200000)
+        with open(os.path.join(www, "big.bin"), "wb") as f:
+            f.write(big)
+        assert s.ok("curl -s %sbig.bin | md5sum" % base, 120).split()[0] == md5(big), "curl: большое тело побилось"
+        out = s.ok("curl -s -o /dev/null -D /tmp/h -w '%%{http_code} %%{num_redirects} %%{url_effective}' %scha/start && head -n 1 /tmp/h" % base)
+        assert out == "200 1 %scha/sub/page.html" % base + "HTTP/1.1 200 OK\r\n", out
 
     def dialogs():
         for cmd, accept, text, want in (('kt prompt "Имя?" Вася', True, "Петя", (0, "Петя")),
@@ -788,6 +811,28 @@ def main():
         assert gone("kt pkg rm -cy ktb") == ["ktb", "ktuser", "kttop"]
         assert "/bin/busybox" in s.ok("kt pkg files base"), "каскад задел base"
 
+    def chawan():
+        s.ok("kt pkg add chawan", 180)
+        Server.cha_log.clear()
+        out = s.ok("cha -d %scha/start" % base, 120)
+        assert "Привет, chawan" in out, out
+        paths = [p for p, h in Server.cha_log]
+        assert paths.count("/cha/sub/page.html") == 1, "редирект: страница скачана не один раз: %s" % paths
+        assert "/cha/sub/s.css" in paths, "стиль не от конечного адреса: %s" % paths
+        h = dict(Server.cha_log)["/cha/sub/page.html"]
+        assert "chawan" not in h.get("User-Agent", "") and h.get("Cache-Control") == "no-cache", h
+        post = ("printf %%s 'a=1&b=%%D0%%B1' | REQUEST_METHOD=POST CONTENT_TYPE=application/x-www-form-urlencoded CONTENT_LENGTH=12"
+                " MAPPED_URI_SCHEME=http MAPPED_URI_HOST=127.0.0.1 MAPPED_URI_PORT=%s MAPPED_URI_PATH=/echo"
+                " REQUEST_HEADERS=\"$(printf 'Accept: */*\\r\\nPragma: no-cache\\r\\n')\" /usr/libexec/chawan/cgi-bin/curl"
+                % base.split(":")[2].strip("/"))
+        out = s.ok(post)
+        assert out.startswith("Status: 200\r\nCha-Control: ControlDone\r\n"), out
+        r = json.loads(out.split("\r\n\r\n", 1)[1])
+        assert (r["len"], r["type"], r["md5"]) == (12, "application/x-www-form-urlencoded", md5(b"a=1&b=%D0%B1")), r
+        code, out, err = s.sh("cha -d http://127.0.0.1:1/", 60)
+        assert "Can't load" in err and "CORS" in err, (code, out, err)
+        s.ok("kt pkg rm -dy chawan", 60)
+
     def ai_repl():
         s.ev("term.clear()")
         s.typed("cd /root && ai")
@@ -932,7 +977,7 @@ def main():
         ("alert/confirm/prompt", dialogs), ("kt notify", notify), ("pack/unpack", pack), ("sync", sync),
         ("kt cfg свои ключи", cfg_custom), ("рендер терминала", render), ("ai инструменты", ai_tool), ("ai сжатие контекста", ai_context),
         ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade),
-        ("в /run/kt нет мусора", run_clean),
+        ("chawan", chawan), ("в /run/kt нет мусора", run_clean),
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("kt reset", reset),
