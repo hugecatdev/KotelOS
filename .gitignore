@@ -16,6 +16,7 @@
 /packages/xorg/usr/bin/Xorg
 /packages/xorg/usr/lib/
 /packages/xorg/usr/share/X11/xkb/
+/packages/xorg/usr/share/fonts/
 /packages/pyzygote/usr/local/bin/python3
 
 __pycache__/

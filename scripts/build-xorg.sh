@@ -2,8 +2,8 @@
 # Xorg без OpenGL (без GLX, glamor, DRI): сервер и драйвер экрана modesetting (KMS, /dev/dri/card0)
 # собираются тулчейном musl против заголовков и библиотек Alpine x86. Версия - та же, что в Alpine,
 # поэтому подходят её библиотеки и драйверы (ввод - xf86-input-evdev). Ядро без консолей (VT) -
-# patches/xorg-server-novt.patch. Результат -> packages/xorg (Xorg, модули, libpciaccess и раскладки;
-# в git не идут)
+# patches/xorg-server-novt.patch. Результат -> packages/xorg (Xorg, модули, libpciaccess, раскладки и
+# шрифты; в git не идут)
 set -e
 cd "$(dirname "$0")/.."
 
@@ -34,7 +34,7 @@ import alpine
 pkgs, provides = alpine.index(tag="xorg-", max_age=7 * 86400)
 want = ("xorgproto xtrans pixman-dev libxfont2-dev libxcvt-dev libdrm-dev libpciaccess-dev libmd-dev "
         "libxau-dev libxkbfile-dev xkbcomp-dev").split()
-for n in alpine.resolve(want, pkgs, provides, {"python3", "linux-headers"}) + ["xkeyboard-config"]:
+for n in alpine.resolve(want, pkgs, provides, {"python3", "linux-headers"}) + ["xkeyboard-config", "font-misc-misc"]:
     f = f"{n}-{pkgs[n]['ver']}.apk"
     alpine.extract(alpine.fetch(f"{alpine.MIRROR}/{pkgs[n]['repo']}/x86/{f}", f"{alpine.CACHE}/apk/{f}"), sys.argv[1], [], [])
 EOF
@@ -75,7 +75,7 @@ meson setup $B $SRC --cross-file $B.cross --prefix=/usr --buildtype=release -Dst
 ninja -C $B > $B/build.log 2>&1 || { grep -B2 -A12 'error' $B/build.log | head -60; exit 1; }
 DESTDIR=$B/inst meson install -C $B --no-rebuild > $B/install.log 2>&1
 
-rm -rf $OUT/usr/bin/Xorg $OUT/usr/lib $OUT/usr/share/X11/xkb
+rm -rf $OUT/usr/bin/Xorg $OUT/usr/lib $OUT/usr/share/X11/xkb $OUT/usr/share/fonts
 mkdir -p $OUT/usr/bin $OUT/usr/lib/xorg
 cp $B/inst/usr/bin/Xorg $OUT/usr/bin/Xorg
 cp -r $B/inst/usr/lib/xorg/modules $OUT/usr/lib/xorg/modules
@@ -95,5 +95,48 @@ cp -r $X/types $X/compat $X/keycodes $K/
 cp $X/rules/evdev $X/rules/base $K/rules/
 cp $X/geometry/pc $K/geometry/
 for f in altwin capslock ctrl group inet keypad kpdl level3 level5 pc ru shift srvr_ctrl us; do cp $X/symbols/$f $K/symbols/; done
+# шрифты: встроенный в сервер fixed - только латиница; из font-misc-misc (4.2 МБ) - fixed (6x13) и
+# 9x15 в Юникоде, с кириллицей, обычные и жирные - 0.2 МБ, и 6x13 в ISO8859-1 и ISO8859-5.
+# fonts.alias, как везде: fixed - ISO8859-1. Набор шрифтов (fontset: заголовки и меню twm)
+# в UTF-8 берёт только кодировку того, на что указывает fixed, и с fixed на Юникоде рисовал
+# латиницу квадратами; xterm в UTF-8 сам находит Юникод-версию того же шрифта.
+# fonts.dir - по свойству FONT из самих файлов
+F=$OUT/usr/share/fonts/misc
+mkdir -p $F
+for f in 6x13 6x13B 9x15 9x15B 6x13-ISO8859-1 6x13B-ISO8859-1 6x13-ISO8859-5 6x13B-ISO8859-5; do
+  cp $SR/usr/share/fonts/misc/$f.pcf.gz $F/
+done
+python3 - $F <<'EOF'
+import gzip
+import os
+import struct
+import sys
+
+d = sys.argv[1]
+
+
+def xlfd(path):
+    b = gzip.open(path).read()
+    n = struct.unpack_from("<i", b, 4)[0]
+    for i in range(n):
+        typ, fmt, size, off = struct.unpack_from("<4i", b, 8 + 16 * i)
+        if typ != 1:  # PCF_PROPERTIES
+            continue
+        e = ">" if struct.unpack_from("<i", b, off)[0] & 4 else "<"
+        nprops = struct.unpack_from(e + "i", b, off + 4)[0]
+        props = [struct.unpack_from(e + "ibi", b, off + 8 + 9 * j) for j in range(nprops)]
+        strings = off + 8 + 9 * nprops + (4 - nprops % 4) % 4 + 4
+        name = lambda o: b[strings + o:b.index(b"\0", strings + o)].decode()
+        return next(name(v) for k, isstr, v in props if isstr and name(k) == "FONT")
+
+
+names = {f: xlfd(os.path.join(d, f)) for f in sorted(os.listdir(d)) if f.endswith(".pcf.gz")}
+with open(os.path.join(d, "fonts.dir"), "w") as out:
+    out.write("%d\n" % len(names) + "".join("%s %s\n" % kv for kv in names.items()))
+fixed = names["6x13-ISO8859-1.pcf.gz"]
+with open(os.path.join(d, "fonts.alias"), "w") as out:
+    out.write("fixed %s\nvariable %s\n6x13 %s\n9x15 %s\n" % (fixed, fixed, fixed, names["9x15.pcf.gz"]))
+print(open(os.path.join(d, "fonts.dir")).read())
+EOF
 echo "Xorg -> $OUT ($(du -sh $OUT/usr | cut -f1))"
 find $OUT/usr -type f | sed "s|$OUT/||" | sort
