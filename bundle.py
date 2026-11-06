@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.request
 import alpine
+from cond import preprocess
 
 IMG = "images"  # собирают build.sh и scripts/build-kernel.sh
 V86 = "vendor/v86"  # libv86.js, v86.wasm и BIOS из проекта v86 (scripts/build-v86.sh)
@@ -187,32 +188,9 @@ def local(src):
     return open(src).read()
 
 
-COND = re.compile(r"(?:/\*|<!--)\s*#(?:if\s+(!?)([\w-]+)|(endif))\s*(?:\*/|-->)")
-
-
-def preprocess(text, have):
-    """Условные блоки страницы, как #if в C: /* #if имя */ ... /* #endif */ (в HTML - <!-- #if имя -->),
-    #if !имя - если функции нет; вложенные можно. Блок остаётся, если функция имя есть в бандле (have),
-    пометки уходят. Без обработки (page.html как есть) включено всё."""
-    out, stack, pos = [], [], 0
-    for m in COND.finditer(text):
-        if all(stack):
-            out.append(text[pos:m.start()])
-        if m.group(3):
-            if not stack:
-                sys.exit("%s: #endif без #if (символ %d)" % (PAGE, m.start()))
-            stack.pop()
-        else:
-            stack.append((m.group(2) in have) != bool(m.group(1)))
-        pos = m.end()
-    if stack:
-        sys.exit("%s: #if без #endif" % PAGE)
-    out.append(text[pos:])
-    return "".join(out)
-
-
 def template(have=()):
-    html = preprocess(open(PAGE).read(), set(have))
+    # функции бандла (have): блоки /* #if имя */ ... /* #endif */ без них вырезаются, см. cond.py
+    html = preprocess(open(PAGE).read(), set(have), PAGE)
     html = re.sub(r'<link (?:rel="stylesheet" )?href="(https://[^"]+)"(?: rel="stylesheet")?>',
                   lambda m: "<style>%s</style>" % fetch(m.group(1)).decode(), html)
     src = lambda u: fetch(u).decode() if u.startswith("https://") else local(u)
@@ -401,8 +379,10 @@ def main():
     files = {
         "wasm": blob(open(v86_dir + "/v86.wasm", "rb").read()),
         "bios": blob(open(v86_dir + "/seabios.bin", "rb").read()),
-        "vgabios": blob(open(v86_dir + "/vgabios.bin", "rb").read()),
     }
+    # VGA BIOS нужен только экрану: ядро грузится через fw_cfg, консоль - ttyS0
+    if a.vga:
+        files["vgabios"] = blob(open(v86_dir + "/vgabios.bin", "rb").read())
     boot = {
         "bzimage": blob(open(IMG + "/bzImage", "rb").read(), gz=False),
         "initrd": {"size": len(initrd), "data": b64(zstd(initrd))},

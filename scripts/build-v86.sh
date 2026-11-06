@@ -12,6 +12,11 @@ CLOSURE_VER=v20210601  # Makefile v86: новее не брать, google/closur
 CACHE=.cache
 SRC=$CACHE/v86-$REV
 OUT=${OUT:-vendor/v86}
+# устройства по выбору (patches/v86/06): floppy ide sound virtio 9p parallel acpi modem multiboot,
+# all - все; по умолчанию ни одного - ядру они не нужны. Пример: DEVICES="ide sound" scripts/build-v86.sh
+DEVICES=${DEVICES-}
+[ "$DEVICES" = all ] && DEVICES="floppy ide sound virtio 9p parallel acpi modem multiboot"
+case " $DEVICES " in *" floppy "* | *" sound "*) DEVICES="$DEVICES dma" ;; esac
 
 mkdir -p $CACHE
 
@@ -35,6 +40,7 @@ tar -xzf $CACHE/v86-$REV.tar.gz -C $CACHE
 for p in patches/v86/*.patch; do
   if [ -f "$p" ]; then patch -s -d $SRC -p1 < "$p"; fi
 done
+python3 cond.py "$DEVICES" $SRC/src/*.js $SRC/src/browser/*.js $SRC/lib/*.js
 mkdir -p $SRC/closure-compiler
 ln -f $JAR $SRC/closure-compiler/compiler.jar
 
@@ -44,4 +50,4 @@ CARGO_PROFILE_RELEASE_STRIP=symbols make -C $SRC -j"$(nproc)" STRIP_DEBUG=true b
 
 mkdir -p "$OUT"
 cp $SRC/build/libv86.js $SRC/build/v86.wasm $SRC/bios/seabios.bin $SRC/bios/vgabios.bin "$OUT/"
-echo "v86 ${REV%"${REV#????????}"} -> $OUT: libv86.js $(du -h "$OUT/libv86.js" | cut -f1), v86.wasm $(du -h "$OUT/v86.wasm" | cut -f1)"
+echo "v86 ${REV%"${REV#????????}"} -> $OUT: libv86.js $(du -h "$OUT/libv86.js" | cut -f1), v86.wasm $(du -h "$OUT/v86.wasm" | cut -f1), устройства: ${DEVICES:-только нужные ядру}"

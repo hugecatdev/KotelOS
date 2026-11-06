@@ -968,6 +968,7 @@ def main():
         assert s.ev("typeof kt.screen") == "undefined", "kt.screen есть в бандле без экрана"
         assert not s.ev("document.querySelector('#screen')"), "#screen есть в бандле без экрана"
         assert s.sh("kt cfg screen.scale")[0] != 0, "screen.scale есть в бандле без экрана"
+        assert s.ev("'vgabios' in BUNDLE.files") is False, "VGA BIOS в бандле без экрана"
         assert "vga: нет" in s.ok("kt info")
 
     def keys_in(cmd):

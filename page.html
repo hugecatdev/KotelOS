@@ -1865,7 +1865,9 @@
         return lazyZero(instance.exports);
       };
       opts.bios = { buffer: await bundleFile("bios") };
+      /* #if vga */
       opts.vga_bios = { buffer: await bundleFile("vgabios") };
+      /* #endif */
 
       if (saved) {
         try {

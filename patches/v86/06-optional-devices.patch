@@ -1,0 +1,444 @@
+устройства по выбору при сборке: блоки /* #if имя */ ... /* #endif */
+
+v86 всегда создаёт флоппи, IDE с CD-ROM, SB16, DMA и параллельный порт, а
+в libv86.js лежат ещё virtio, 9p с файловой системой, модем, ACPI и загрузчик
+multiboot. Нашему ядру ничего из этого не нужно: в нём нет блочных устройств,
+звука, virtio, ACPI. Теперь каждое такое устройство - блок /* #if имя */ в
+cpu.js, rtc.js и starter.js; scripts/build-v86.sh оставляет блоки из DEVICES
+(cond.py), а Closure с --dependency_mode=PRUNE берёт только модули,
+достижимые импортами, - убранный импорт убирает и файл.
+
+Имена: floppy, ide (диски и CD-ROM), sound (SB16 и вывод звука), dma (нужен
+floppy и sound), virtio (сеть, консоль, balloon), 9p, parallel, acpi (и с ним
+APIC), modem, multiboot. Устройство, которого нет, но которое просят в
+настройках (fda, cdrom, filesystem, net_device virtio...), - ошибка "v86 built
+without ...", а не тишина. Сохранения от полной сборки восстанавливаются:
+set_state пропускает отсутствующие устройства, слоты PCI фиксированы.
+
+Исходник после этого патча собирается только через cond.py: ветки
+/* #if !имя */ без обработки противоречат своим парам.
+
+libv86.js без устройств 192 КБ вместо 361 (gzip 54 КБ вместо 94).
+
+--- a/Makefile
++++ b/Makefile
+@@ -134,6 +134,7 @@
+ 		--js_output_file build/libv86.js\
+ 		--define=DEBUG=false\
+ 		$(CLOSURE_FLAGS)\
++		--dependency_mode=PRUNE --entry_point=src/cjs.js --entry_point=src/browser/starter.js\
+ 		--compilation_level SIMPLE\
+ 		--jscomp_off=missingProperties\
+ 		--output_wrapper ';(function(){%output%}).call(this);'\
+--- a/src/cpu.js
++++ b/src/cpu.js
+@@ -14,26 +14,48 @@
+ import { h, view, pads, Bitmap, dump_file } from "./lib.js";
+ import { dbg_assert, dbg_log } from "./log.js";
+ 
++/* #if sound */
+ import { SB16 } from "./sb16.js";
++/* #endif */
++/* #if acpi */
+ import { ACPI } from "./acpi.js";
++/* #endif */
+ import { PIT } from "./pit.js";
++/* #if dma */
+ import { DMA } from "./dma.js";
++/* #endif */
+ import { UART } from "./uart.js";
++/* #if parallel */
+ import { ParallelPort } from "./parallel.js";
++/* #endif */
+ import { Ne2k } from "./ne2k.js";
+ import { IO } from "./io.js";
++/* #if virtio */
+ import { VirtioConsole } from "./virtio_console.js";
++/* #endif */
+ import { PCI } from "./pci.js";
+ import { PS2 } from "./ps2.js";
+ import { VMwareMouse } from "./vmware.js";
++/* #if multiboot */
+ import { read_elf } from "./elf.js";
++/* #endif */
+ 
++/* #if floppy */
+ import { FloppyController } from "./floppy.js";
++/* #endif */
++/* #if ide */
+ import { IDEController } from "./ide.js";
++/* #endif */
++/* #if virtio */
+ import { VirtioNet } from "./virtio_net.js";
++/* #endif */
+ import { VGAScreen } from "./vga.js";
++/* #if virtio */
+ import { VirtioBalloon } from "./virtio_balloon.js";
++/* #endif */
++/* #if 9p */
+ import { Virtio9p, Virtio9pHandler, Virtio9pProxy } from "../lib/9p.js";
++/* #endif */
+ 
+ import { load_kernel } from "./kernel.js";
+ 
+@@ -514,7 +536,7 @@
+     state[54] = this.devices.uart0;
+     state[55] = this.devices.fdc;
+ 
+-    if(!this.devices.ide.secondary)
++    if(this.devices.ide && !this.devices.ide.secondary)
+     {
+         if(this.devices.ide.primary?.master.is_atapi)
+         {
+@@ -525,7 +547,7 @@
+             state[57] = this.devices.ide.primary;
+         }
+     }
+-    else
++    else if(this.devices.ide)
+     {
+         state[85] = this.devices.ide;
+     }
+@@ -708,6 +730,7 @@
+     this.devices.uart0 && this.devices.uart0.set_state(state[54]);
+     this.devices.fdc && this.devices.fdc.set_state(state[55]);
+ 
++    /* #if ide */
+     if(state[56] || state[57])
+     {
+         // ide device from older version of v86, only primary: state[56] contains cdrom, state[57] contains hard drive
+@@ -730,6 +753,7 @@
+     {
+         this.devices.ide.set_state(state[85]);
+     }
++    /* #endif */
+ 
+     this.devices.pci && this.devices.pci.set_state(state[48]);
+ 
+@@ -1011,7 +1035,12 @@
+ 
+     settings.cpuid_level && this.set_cpuid_level(settings.cpuid_level);
+ 
++    /* #if acpi */
+     this.acpi_enabled[0] = +settings.acpi;
++    /* #endif */
++    /* #if !acpi */
++    this.acpi_enabled[0] = 0; // built without ACPI (and so without APIC)
++    /* #endif */
+ 
+     this.reset_cpu();
+ 
+@@ -1180,15 +1209,19 @@
+     {
+         this.devices.pci = new PCI(this);
+ 
++        /* #if acpi */
+         if(this.acpi_enabled[0])
+         {
+             this.devices.acpi = new ACPI(this);
+         }
++        /* #endif */
+ 
+         this.devices.rtc = new RTC(this);
+         this.fill_cmos(this.devices.rtc, settings);
+ 
++        /* #if dma */
+         this.devices.dma = new DMA(this);
++        /* #endif */
+ 
+         this.devices.vga = new VGAScreen(this, device_bus, settings.screen, settings.vga_memory_size || 8 * 1024 * 1024);
+ 
+@@ -1196,7 +1229,9 @@
+         this.devices.vmware = new VMwareMouse(this, device_bus);
+ 
+         this.devices.uart0 = new UART(this, 0x3F8, device_bus);
++        /* #if parallel */
+         this.devices.parallel0 = new ParallelPort(this, 0x378, 7, 0, device_bus);
++        /* #endif */
+ 
+         if(settings.uart1)
+         {
+@@ -1210,13 +1245,30 @@
+         {
+             this.devices.uart3 = new UART(this, 0x2E8, device_bus);
+         }
++        /* #if parallel */
+         if(settings.parallel1)
+         {
+             this.devices.parallel1 = new ParallelPort(this, 0x278, 5, 1, device_bus);
+         }
++        /* #endif */
++        /* #if !parallel */
++        if(settings.parallel1)
++        {
++            throw new Error("v86 built without parallel");
++        }
++        /* #endif */
+ 
++        /* #if floppy */
+         this.devices.fdc = new FloppyController(this, settings.fda, settings.fdb);
++        /* #endif */
++        /* #if !floppy */
++        if(settings.fda || settings.fdb)
++        {
++            throw new Error("v86 built without floppy");
++        }
++        /* #endif */
+ 
++        /* #if ide */
+         const ide_config = [[undefined, undefined], [undefined, undefined]];
+         if(settings.hda)
+         {
+@@ -1226,6 +1278,13 @@
+         ide_config[1][0] = { is_cdrom: true, buffer: settings.cdrom };
+         this.devices.ide = new IDEController(this, device_bus, ide_config);
+         this.devices.cdrom = this.devices.ide.secondary.master;
++        /* #endif */
++        /* #if !ide */
++        if(settings.hda || settings.hdb || settings.cdrom)
++        {
++            throw new Error("v86 built without ide");
++        }
++        /* #endif */
+ 
+         this.devices.pit = new PIT(this, device_bus);
+ 
+@@ -1235,9 +1294,15 @@
+         }
+         else if(settings.net_device.type === "virtio")
+         {
++            /* #if virtio */
+             this.devices.virtio_net = new VirtioNet(this, device_bus, settings.preserve_mac_from_state_image, settings.net_device.mtu);
++            /* #endif */
++            /* #if !virtio */
++            throw new Error("v86 built without virtio");
++            /* #endif */
+         }
+ 
++        /* #if 9p */
+         if(settings.fs9p)
+         {
+             this.devices.virtio_9p = new Virtio9p(settings.fs9p, this, device_bus);
+@@ -1250,6 +1315,8 @@
+         {
+             this.devices.virtio_9p = new Virtio9pProxy(settings.proxy9p, this);
+         }
++        /* #endif */
++        /* #if virtio */
+         if(settings.virtio_console)
+         {
+             this.devices.virtio_console = new VirtioConsole(this, device_bus);
+@@ -1258,13 +1325,29 @@
+         {
+             this.devices.virtio_balloon = new VirtioBalloon(this, device_bus);
+         }
++        /* #endif */
++        /* #if !virtio */
++        if(settings.virtio_console || settings.virtio_balloon)
++        {
++            throw new Error("v86 built without virtio");
++        }
++        /* #endif */
+ 
++        /* #if sound */
+         if(true)
+         {
+             this.devices.sb16 = new SB16(this, device_bus);
+         }
++        /* #endif */
+     }
+ 
++    /* #if !multiboot */
++    if(settings.multiboot)
++    {
++        throw new Error("v86 built without multiboot");
++    }
++    /* #endif */
++    /* #if multiboot */
+     if(settings.multiboot)
+     {
+         dbg_log("loading multiboot", LOG_CPU);
+@@ -1284,10 +1367,12 @@
+             }
+         }
+     }
++    /* #endif */
+ 
+     this.debug_init();
+ };
+ 
++/* #if multiboot */
+ CPU.prototype.load_multiboot = function (buffer)
+ {
+     if(this.bios.main)
+@@ -1640,6 +1725,7 @@
+     }
+     dbg_log("Multiboot header not found", LOG_CPU);
+ };
++/* #endif */
+ 
+ CPU.prototype.fill_cmos = function(rtc, settings)
+ {
+--- a/src/rtc.js
++++ b/src/rtc.js
+@@ -5,7 +5,9 @@
+ 
+ // For Types Only
+ import { CPU } from "./cpu.js";
++/* #if dma */
+ import { DMA } from "./dma.js";
++/* #endif */
+ 
+ 
+ export const CMOS_RTC_SECONDS = 0x00;
+--- a/src/browser/starter.js
++++ b/src/browser/starter.js
+@@ -5,9 +5,13 @@
+ import * as print_stats from "./print_stats.js";
+ import { Bus } from "../bus.js";
+ import { BOOT_ORDER_FD_FIRST, BOOT_ORDER_HD_FIRST, BOOT_ORDER_CD_FIRST } from "../rtc.js";
++/* #if 9p */
+ import { EEXIST, ENOENT } from "../../lib/9p.js";
++/* #endif */
+ 
++/* #if sound */
+ import { SpeakerAdapter } from "./speaker.js";
++/* #endif */
+ import { NetworkAdapter } from "./network.js";
+ import { FetchNetworkAdapter } from "./fetch_network.js";
+ import { WispNetworkAdapter } from "./wisp_network.js";
+@@ -18,11 +22,17 @@
+ import { ANSIScreenAdapter } from "./ansi_screen.js";
+ import { SerialAdapter, VirtioConsoleAdapter, SerialAdapterXtermJS, VirtioConsoleAdapterXtermJS } from "./serial.js";
+ import { InBrowserNetworkAdapter } from "./inbrowser_network.js";
++/* #if modem */
+ import { Modem } from "./modem.js";
++/* #endif */
+ 
++/* #if 9p */
+ import { MemoryFileStorage, ServerFileStorageWrapper } from "./filestorage.js";
++/* #endif */
+ import { SyncBuffer, buffer_from_object } from "../buffer.js";
++/* #if 9p */
+ import { FS } from "../../lib/filesystem.js";
++/* #endif */
+ 
+ /**
+  * Constructor for emulator instances.
+@@ -358,13 +368,20 @@
+ 
+     if(settings.modem)
+     {
++        /* #if modem */
+         this.modem = new Modem(this.bus, settings.modem);
++        /* #endif */
++        /* #if !modem */
++        throw new Error("v86 built without modem");
++        /* #endif */
+     }
+ 
++    /* #if sound */
+     if(!options.disable_speaker)
+     {
+         this.speaker_adapter = new SpeakerAdapter(this.bus);
+     }
++    /* #endif */
+ 
+     // ugly, but required for closure compiler compilation
+     function put_on_settings(name, buffer)
+@@ -481,6 +498,13 @@
+     add_file("bzimage", options.bzimage);
+     add_file("initrd", options.initrd);
+ 
++    /* #if !9p */
++    if(options.filesystem)
++    {
++        throw new Error("v86 built without 9p");
++    }
++    /* #endif */
++    /* #if 9p */
+     if(options.filesystem && options.filesystem.handle9p)
+     {
+         settings.handle9p = options.filesystem.handle9p;
+@@ -523,6 +547,7 @@
+             });
+         }
+     }
++    /* #endif */
+ 
+     var starter = this;
+     var total = files_to_load.length;
+@@ -598,6 +623,7 @@
+         //    settings.memory_size = 0;
+         //}
+ 
++        /* #if 9p */
+         if(settings.fs9p && settings.fs9p_json)
+         {
+             if(!settings.initial_state)
+@@ -629,6 +655,7 @@
+                 !options.bzimage_initrd_from_filesystem || settings.initial_state,
+                 "bzimage_initrd_from_filesystem: Requires a filesystem");
+         }
++        /* #endif */
+ 
+         this.serial_adapter && this.serial_adapter.show && this.serial_adapter.show();
+         this.virtio_console_adapter && this.virtio_console_adapter.show && this.virtio_console_adapter.show();
+@@ -770,6 +797,7 @@
+     });
+ };
+ 
++/* #if 9p */
+ V86.prototype.get_bzimage_initrd_from_filesystem = function(filesystem)
+ {
+     const root = (filesystem.read_dir("/") || []).map(x => "/" + x);
+@@ -804,6 +832,7 @@
+ 
+     return { initrd_path, bzimage_path };
+ };
++/* #endif */
+ 
+ /**
+  * Start emulation. Do nothing if emulator is running already. Can be asynchronous.
+@@ -939,6 +968,7 @@
+     return this.cpu_is_running;
+ };
+ 
++/* #if floppy */
+ /**
+  * Set the image inserted in the floppy drive. Can be changed at runtime, as
+  * when physically changing the floppy disk.
+@@ -1031,7 +1061,9 @@
+ {
+     return this.v86.cpu.devices.fdc.drives[1].get_buffer();
+ };
++/* #endif */
+ 
++/* #if ide */
+ /**
+  * Set the image inserted in the CD-ROM drive. Can be changed at runtime, as
+  * when physically changing the CD-ROM.
+@@ -1065,6 +1097,7 @@
+ {
+     this.v86.cpu.devices.cdrom.eject();
+ };
++/* #endif */
+ 
+ /**
+  * Send a sequence of scan codes to the emulated PS2 controller. A list of
+@@ -1297,6 +1330,7 @@
+     this.bus.send("serial" + serial + "-clear-to-send-input", status);
+ };
+ 
++/* #if 9p */
+ /**
+  * Write to a file in the 9p filesystem. Nothing happens if no filesystem has
+  * been initialized.
+@@ -1358,6 +1392,7 @@
+         return Promise.reject(new FileNotFoundError());
+     }
+ };
++/* #endif */
+ 
+ /*
+  * @deprecated
