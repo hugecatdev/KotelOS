@@ -176,15 +176,21 @@ class Studio(QtWidgets.QMainWindow):
         self.area.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.editor = Editor()
         self.output = Output()
-        split = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        split.addWidget(self.area)
-        split.addWidget(self.editor)
-        split.addWidget(self.output)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 3)
-        split.setStretchFactor(2, 1)
-        split.setChildrenCollapsible(False)
-        self.setCentralWidget(split)
+        # форма | (код над выводом): в высоком окне форма сверху, в широком (dwm-studio на экране телефона
+        # стоя кладёт студию под Designer) - слева
+        code = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        code.addWidget(self.editor)
+        code.addWidget(self.output)
+        code.setStretchFactor(0, 3)
+        code.setStretchFactor(1, 1)
+        self.split = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.split.addWidget(self.area)
+        self.split.addWidget(code)
+        self.split.setStretchFactor(0, 3)
+        self.split.setStretchFactor(1, 4)
+        for s in (code, self.split):
+            s.setChildrenCollapsible(False)
+        self.setCentralWidget(self.split)
 
         QtWidgets.QShortcut(QtGui.QKeySequence.Save, self, self.save)
         QtWidgets.QShortcut(QtGui.QKeySequence("F5"), self, lambda: self.reload(force=True))
@@ -283,6 +289,17 @@ class Studio(QtWidgets.QMainWindow):
         if old is not None:
             old.deleteLater()
         self.setWindowTitle(form.windowTitle() or os.path.basename(self.ui))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        w, h = e.size().width(), e.size().height()
+        wide = self.split.orientation() == QtCore.Qt.Horizontal
+        # с запасом, чтобы почти квадратное окно не перекладывалось туда-сюда
+        if wide != (w > h * (1.0 if wide else 1.25)):
+            wide = not wide
+            self.split.setOrientation(QtCore.Qt.Horizontal if wide else QtCore.Qt.Vertical)
+            n = w if wide else h
+            self.split.setSizes([n * 3 // 7, n - n * 3 // 7])
 
     def showEvent(self, e):
         super().showEvent(e)

@@ -155,7 +155,7 @@
 
     const SETTINGS = {
       "save.auto": { def: "on", values: ["on", "off"] },
-      "save.timer": { def: "0", range: [0, 240] },
+      "save.timer": { def: String((BUNDLE && BUNDLE.save_timer) || 0), range: [0, 240] },
       "term.font": { def: isTouch ? "12" : "13", range: [8, 32], apply: (v) => setFont(+v) },
       "term.family": { def: "system", check: fontCheck, apply: (v) => setFamily(v) },
       "term.theme": { def: "dark", values: Object.keys(THEMES), apply: (v) => setTheme(v) },
@@ -1671,9 +1671,13 @@
       // на телефоне - высота без экранной клавиатуры: startx, набранный с ней, иначе взял бы половину
       const W = $("#app").clientWidth, H = (mobile ? fullH : $("#app").clientHeight) - $("#keys").offsetHeight;
       const d = window.devicePixelRatio || 1, v = cfg.get("screen.scale");
-      let s = (v === "auto" ? (mobile ? 1 : 1 / d) : +v) * d;
-      while ((W * d / s) * (H * d / s) * 8 > vgaSize) s += 0.25;
-      if (s > 2) s = Math.ceil(s - 0.01);
+      // auto на телефоне - точка CSS, если бандл не задал свою (--phone-scale: в qt окна Designer мельче);
+      // свою бандл задаёт, чтобы влезло больше, - и целое число точек экрана берётся меньшее, если влезает
+      const phone = v === "auto" && mobile && BUNDLE && BUNDLE.phone_scale;
+      const fits = (x) => (W * d / x) * (H * d / x) * 8 <= vgaSize;
+      let s = (v === "auto" ? (mobile ? phone || 1 : 1 / d) : +v) * d;
+      while (!fits(s)) s += 0.25;
+      if (s > 2) s = phone && fits(Math.floor(s + 0.01)) ? Math.floor(s + 0.01) : Math.ceil(s - 0.01);
       return `${Math.floor(W * d / s / 8) * 8}x${Math.floor(H * d / s)}`;
     }
     // перемена размера - событием screen-size (его слушает startx и меняет режим X); на телефоне высоту

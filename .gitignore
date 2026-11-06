@@ -19,6 +19,7 @@
 /packages/xorg/usr/share/fonts/
 /packages/mesa-xlib/usr/
 /packages/dwm/usr/bin/dwm
+/packages/dwm-studio/usr/bin/dwm-studio
 /packages/st/usr/bin/st
 /packages/feh/usr/
 /packages/pyzygote/usr/local/bin/python3

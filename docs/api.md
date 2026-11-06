@@ -98,7 +98,7 @@ vm.contentWindow.postMessage({ kt: 1, method: "exec", args: ["uname -a"] }, "*")
 | ключ | по умолчанию | |
 |---|---|---|
 | `save.auto` | on | сохранять машину при сворачивании вкладки |
-| `save.timer` | 0 | сохранять каждые N минут (0 - нет) |
+| `save.timer` | 0 (у бандла с `--save-timer` - его число, в `qt` - 2) | сохранять каждые N минут (0 - нет) |
 | `term.font` | 13 (12 на телефоне) | размер шрифта |
 | `term.family` | system | шрифт: system или любой с Google Fonts по имени (`kt font Space Mono`); jetbrains, fira, ibm, ubuntu, source, vt323 - короткие имена. Грузятся только при выборе |
 | `term.theme` | dark | цвета: dark, light, amber, green, gray (три последних - монохромные, как старые мониторы) |
@@ -110,7 +110,7 @@ vm.contentWindow.postMessage({ kt: 1, method: "exec", args: ["uname -a"] }, "*")
 | `keys.main` | см. ниже | кнопки под терминалом |
 | `keys.more` | см. ниже | кнопки под ⋯ |
 | `keys.screen` | см. [screen.md](screen.md) | кнопки под экраном (`kt screen on`) |
-| `screen.scale` | auto | экран X: точек страницы (CSS) на его точку; auto - на ПК точка в точку экрана, на телефоне - как обычный текст (`startx` и смена размера, см. [screen.md](screen.md)) |
+| `screen.scale` | auto | экран X: точек страницы (CSS) на его точку; auto - на ПК точка в точку экрана, на телефоне - как обычный текст или мельче, если бандл задал `--phone-scale` (в `qt` - 0.75) (`startx` и смена размера, см. [screen.md](screen.md)) |
 | `keys.open` | off | показать кнопки под ⋯ |
 | `keys.size` | 16 | размер подписей кнопок |
 | `boot.mem` | 128 | память при загрузке с ядра, МБ |

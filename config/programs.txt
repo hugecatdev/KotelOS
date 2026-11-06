@@ -21,6 +21,7 @@ mesa-xlib OpenGL без LLVM: программно (softpipe) через обы�
 qt5-qttools-dev Qt Designer: формы для Qt5 (только designer)
 python-qt5 PyQt5: Qt5 из питона (без мультимедиа, карт и QML)
 pyqt-studio форма из Designer и её код на PyQt5 рядом, перезапуск при сохранении
+dwm-studio dwm для pyqt-studio: теги-этапы, на экране стоя окна друг под другом
 tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
 doom Doom на экране

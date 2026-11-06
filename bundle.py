@@ -356,6 +356,9 @@ def options(argv=None):
                     help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker (без экрана)")
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
+    ap.add_argument("--phone-scale", type=float, metavar="CSS",
+                    help="экран на телефоне при screen.scale auto: точек страницы на точку X (иначе 1); на ПК не действует")
+    ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/)")
@@ -401,6 +404,10 @@ def main():
         bundle["mem"] = a.mem
     if a.vga:
         bundle["vga"] = a.vga
+    if a.phone_scale:
+        bundle["phone_scale"] = a.phone_scale
+    if a.save_timer:
+        bundle["save_timer"] = a.save_timer
     if a.worker:
         bundle["worker"] = True
     if a.cmd:

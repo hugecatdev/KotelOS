@@ -1,0 +1,52 @@
+--- a/dwm.c
++++ b/dwm.c
+@@ -2246,13 +2246,36 @@
+ void
+ tile(Monitor *m)
+ {
+-	unsigned int i, n, h, mw, my, ty;
++	unsigned int i, n, h, w, mw, mh, mx, my, tx, ty;
+ 	Client *c;
+ 
+ 	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
+ 	if (n == 0)
+ 		return;
+ 
++	/* экран выше, чем шире (телефон стоя): главная область сверху на всю ширину (её высота - mfact),
++	 * остальные окна - в ряд под ней; при повороте X меняет размер, и раскладка переключается сама */
++	if (m->ww < m->wh) {
++		strncpy(m->ltsymbol, "TTT", sizeof m->ltsymbol);
++		if (n > m->nmaster)
++			mh = m->nmaster ? m->wh * m->mfact : 0;
++		else
++			mh = m->wh - m->gappx;
++		for (i = 0, mx = tx = m->gappx, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
++			if (i < m->nmaster) {
++				w = (m->ww - mx) / (MIN(n, m->nmaster) - i) - m->gappx;
++				resize(c, m->wx + mx, m->wy + m->gappx, w - (2*c->bw), mh - (2*c->bw) - m->gappx, 0);
++				if (mx + WIDTH(c) + m->gappx < m->ww)
++					mx += WIDTH(c) + m->gappx;
++			} else {
++				w = (m->ww - tx) / (n - i) - m->gappx;
++				resize(c, m->wx + tx, m->wy + mh + m->gappx, w - (2*c->bw), m->wh - mh - (2*c->bw) - 2*m->gappx, 0);
++				if (tx + WIDTH(c) + m->gappx < m->ww)
++					tx += WIDTH(c) + m->gappx;
++			}
++		return;
++	}
++
+ 	if (n > m->nmaster)
+ 		mw = m->nmaster ? m->ww * m->mfact : 0;
+ 	else
+--- a/config.h
++++ b/config.h
+@@ -39,7 +39,8 @@
+ };
+ 
+ /* tagging */
+-static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
++/* dwm-studio (бандл qt): первые теги - этапы работы с формой; Alt+1..9 - как прежде */
++static const char *tags[] = { "форма", "код", "запуск", "сборка", "5", "6", "7", "8", "9" };
+ 
+ static const Rule rules[] = {
+ 	/* class                instance   title                 tags mask  isfloating  monitor */

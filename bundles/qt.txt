@@ -1,9 +1,12 @@
-# Qt Designer и PyQt5 под dwm: слева Designer с формой ~/form/form.ui, справа она же живая с кодом main.py
-# и его выводом (pyqt-studio); сохранение формы или кода перезапускает её. Снимок - с уже запущенным X
-# (--run startx): страница открывается сразу в эту сессию и подгоняет X под своё место. Память 384 МБ:
-# Designer и питон с формой держат по ~45 МБ, файлы Qt5, PyQt5 и python3 в памяти - ещё ~110
---snap --vga 8 --mem 384
+# Qt Designer и PyQt5 под dwm-studio: слева Designer с формой ~/form/form.ui, справа она же живая с кодом
+# main.py и его выводом (pyqt-studio); сохранение формы или кода перезапускает её. На экране выше, чем
+# шире (телефон стоя), Designer сверху, студия под ним. Снимок - с уже запущенным X (--run startx):
+# страница открывается сразу в эту сессию и подгоняет X под своё место; на телефоне точка X - 0.75
+# точки страницы (--phone-scale), иначе окна Designer не влезают. Память 384 МБ: Designer и питон с
+# формой держат по ~45 МБ, файлы Qt5, PyQt5 и python3 в памяти - ещё ~110. Машина сохраняется сама
+# каждые 2 минуты (--save-timer, kt cfg save.timer): сохранение ~53 МБ, вкладка на миг +330 МБ
+--snap --vga 8 --mem 384 --phone-scale 0.75 --save-timer 2
 --prep fc-cache
 --run startx
 --file bundles/qt/xinitrc:/root/.xinitrc
-fun nano htop pack notify kt-ttyd dwm st pyqt-studio
+fun nano htop pack notify kt-ttyd dwm-studio st pyqt-studio
