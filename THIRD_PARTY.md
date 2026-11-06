@@ -30,7 +30,7 @@
 | X.Org Server 21.1.19 | MIT/X11 | `scripts/build-xorg.sh` (x.org), правка `patches/xorg-server-novt.patch` (работа без виртуальных консолей), пакет `xorg` |
 | Mesa 25.1.9 | MIT | `scripts/build-mesa.sh` (archive.mesa3d.org), пакет `mesa-xlib` |
 | libdrm, libpciaccess, xkeyboard-config (us и ru) из Alpine 3.22 | MIT | `scripts/build-xorg.sh` кладёт копии в пакет `xorg` |
-| dwm 6.5, st 0.9.2 (suckless.org) | MIT/X | `scripts/build-dwm.sh` (dl.suckless.org), правки `patches/dwm-config.patch`, `patches/dwm-grabkeys.patch`, `patches/st-config.patch`; пакеты `dwm`, `st` |
+| dwm 6.5, st 0.9.2 (suckless.org) | MIT/X | `scripts/build-dwm.sh` (dl.suckless.org), правки `patches/dwm-dmitry.patch` (патчи с dwm.suckless.org: alwaysontop, alwayscenter, fullgaps, status2d, systray, scratchpad, restartsig, awesomebar - и свои), `patches/dwm-grabkeys.patch`, `patches/st-config.patch`, настройки `config/dwm-config.h`; пакеты `dwm`, `st` |
 | feh 3.10.3 | MIT-feh | `scripts/build-dwm.sh` (feh.finalrewind.org), без изменений; пакет `feh` |
 | DOOM shareware v1.9 (`doom1.wad`) | shareware id Software: раздавать можно только без изменений и бесплатно | `scripts/build-doom.sh`, пакет `doom-shareware` |
 | пакеты Alpine Linux 3.22 | у каждого своя | `scripts/get-packages.sh`, `alpine.py`; `kt pkg add` в машине - тоже |

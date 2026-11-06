@@ -1,8 +1,10 @@
 #!/bin/sh
 # dwm, st и feh: свои сборки тулчейном musl против заголовков и библиотек Alpine x86, версии - те же,
-# что в Alpine. dwm и st настраиваются только пересборкой (config.h): patches/dwm-config.patch и
-# patches/st-config.patch - шрифт fixed из пакета xorg вместо шрифтов, которых в машине нет, и
-# почему Alt; patches/dwm-grabkeys.patch - на смену раскладки dwm перехватывает заново только
+# что в Alpine. dwm и st настраиваются только пересборкой (config.h). dwm - сборка пользователя:
+# patches/dwm-dmitry.patch (его патчи: отступы, scratchpad, скрытие окон, systray...) и его
+# настройки под машину - config/dwm-config.h (Alt вместо Super, шрифт fixed из пакета xorg);
+# st - patches/st-config.patch (тот же шрифт); patches/dwm-grabkeys.patch - на смену раскладки dwm
+# перехватывает заново только
 # изменившиеся клавиши: в медленной машине первое сочетание после startx проваливалось в щель между
 # снятием всех захватов и установкой новых. feh - без libcurl (с OpenSSL ~7 МБ в машине, а https
 # из v86 всё равно не ходит) и libmagic (база типов файлов 10 МБ): картинки он узнаёт и так, через
@@ -52,9 +54,9 @@ LINK="-s -L$SR/usr/lib -Wl,-rpath-link,$SR/usr/lib:$SR/lib -Wl,--as-needed"
 export PKG_CONFIG_LIBDIR=$SR/usr/lib/pkgconfig:$SR/usr/share/pkgconfig PKG_CONFIG_SYSROOT_DIR=$SR
 
 D=$B/dwm-$DWM
-patch -d $D -p1 -s < patches/dwm-config.patch
+patch -d $D -p1 -s < patches/dwm-dmitry.patch
 patch -d $D -p1 -s < patches/dwm-grabkeys.patch
-cp $D/config.def.h $D/config.h
+cp config/dwm-config.h $D/config.h
 make -C $D -s CC="$CC" X11INC=$SR/usr/include X11LIB=$SR/usr/lib FREETYPEINC=$SR/usr/include/freetype2 \
   LDFLAGS="$LINK -lX11 -lXinerama -lfontconfig -lXft"
 mkdir -p packages/dwm/usr/bin
