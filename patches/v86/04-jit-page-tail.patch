@@ -1,0 +1,529 @@
+JIT: компилировать и хвост страницы, если инструкция в нём помещается
+
+Инструкции, которые начинаются в последних 16 байтах страницы
+(MAX_INSTRUCTION_LENGTH), JIT никогда не компилировал: такая может уйти на
+следующую страницу, а анализ читает байты по физическим адресам. Их исполнял
+интерпретатор, и любой код, проходящий через конец страницы, выходил из
+модуля в интерпретатор и обратно; цикл с телом в хвосте шёл в 6-10 раз
+медленнее того же цикла посреди страницы.
+
+Теперь инструкция в хвосте компилируется, если она кончается в своей
+странице (в том числе ровно на её конце): fits_in_page() разбирает её
+пробно, декодер читает байты по порядку и за край заглядывает, только когда
+инструкция не помещается. Что из этого следует:
+- блок может кончаться ровно на конце страницы. Физический адрес после него -
+  не обязательно то, где продолжится исполнение: такой адрес не продолжается
+  в блок и не становится входом, блок выходит из модуля;
+- eip из смещения в странице собирается сложением, а не OR: смещение конца
+  может быть 0x1000 (gen_set_eip_low_bits*, gen_set_eip_to_after_current_
+  instruction, gen_get_real_eip - адрес возврата call, BasicBlock::
+  end_offset_in_page);
+- виртуальный адрес следующей инструкции считается от начала страницы, а не
+  как base | (addr & 0xFFF);
+- после STI одна инструкция должна пройти до прерываний: если STI кончается
+  на конце страницы или следующая не помещается, STI по-прежнему уходит
+  интерпретатору;
+- точки входа в хвосте записываются, если инструкция там помещается; пробный
+  разбор вынесен в холодную функцию, в горячем пути только сравнение;
+- проверки dbg_assert в CpuContext::read_imm* про последние байты страницы
+  сняты: инвариант теперь держит анализ блока;
+- 16-битный код - по-старому (переполнение ip).
+
+Инструкции, которые лежат поперёк границы, по-прежнему исполняет
+интерпретатор. Проверено: края страницы (call/jnz/jmp/обычная инструкция
+ровно на границе, цикл целиком в хвосте, блок через хвост) дают те же суммы,
+что на железе, и идут со скоростью середины страницы; debug-сборка без
+срабатываний dbg_assert на загрузке Linux, CPython, Lua, gzip, fork.
+
+--- a/src/rust/codegen.rs
++++ b/src/rust/codegen.rs
+@@ -30,8 +30,10 @@
+     gen_get_eip(ctx.builder);
+     ctx.builder.const_i32(!0xFFF);
+     ctx.builder.and_i32();
+-    ctx.builder.const_i32(ctx.cpu.eip as i32 & 0xFFF);
+-    ctx.builder.or_i32();
++    // may be 0x1000: the instruction ends at the end of the page
++    ctx.builder
++        .const_i32((ctx.cpu.eip - (ctx.start_of_current_instruction & !0xFFF)) as i32);
++    ctx.builder.add_i32();
+     ctx.builder.store_aligned_i32(0);
+ }
+ 
+@@ -51,26 +53,28 @@
+ }
+ 
+ pub fn gen_set_eip_low_bits(builder: &mut WasmBuilder, low_bits: i32) {
+-    // instruction_pointer = instruction_pointer & ~0xFFF | low_bits;
+-    dbg_assert!(low_bits & !0xFFF == 0);
++    // instruction_pointer = (instruction_pointer & ~0xFFF) + low_bits;
++    // low_bits may be 0x1000: the end of the page
++    dbg_assert!(low_bits >= 0 && low_bits <= 0x1000);
+     builder.const_i32(global_pointers::instruction_pointer as i32);
+     gen_get_eip(builder);
+     builder.const_i32(!0xFFF);
+     builder.and_i32();
+     builder.const_i32(low_bits);
+-    builder.or_i32();
++    builder.add_i32();
+     builder.store_aligned_i32(0);
+ }
+ 
+ pub fn gen_set_eip_low_bits_and_jump_rel32(builder: &mut WasmBuilder, low_bits: i32, n: i32) {
+-    // instruction_pointer = (instruction_pointer & ~0xFFF | low_bits) + n;
+-    dbg_assert!(low_bits & !0xFFF == 0);
++    // instruction_pointer = (instruction_pointer & ~0xFFF) + low_bits + n;
++    // low_bits may be 0x1000: the end of the page
++    dbg_assert!(low_bits >= 0 && low_bits <= 0x1000);
+     builder.const_i32(global_pointers::instruction_pointer as i32);
+     gen_get_eip(builder);
+     builder.const_i32(!0xFFF);
+     builder.and_i32();
+     builder.const_i32(low_bits);
+-    builder.or_i32();
++    builder.add_i32();
+     if n != 0 {
+         builder.const_i32(n);
+         builder.add_i32();
+@@ -1642,8 +1646,10 @@
+     gen_get_eip(ctx.builder);
+     ctx.builder.const_i32(!0xFFF);
+     ctx.builder.and_i32();
+-    ctx.builder.const_i32(ctx.cpu.eip as i32 & 0xFFF);
+-    ctx.builder.or_i32();
++    // may be 0x1000: the instruction ends at the end of the page
++    ctx.builder
++        .const_i32((ctx.cpu.eip - (ctx.start_of_current_instruction & !0xFFF)) as i32);
++    ctx.builder.add_i32();
+     if !ctx.cpu.has_flat_segmentation() {
+         ctx.builder
+             .load_fixed_i32(global_pointers::get_seg_offset(regs::CS));
+--- a/src/rust/cpu_context.rs
++++ b/src/rust/cpu_context.rs
+@@ -12,11 +12,9 @@
+ 
+ impl CpuContext {
+     pub fn advance16(&mut self) {
+-        dbg_assert!(self.eip & 0xFFF < 0xFFE);
+         self.eip += 2;
+     }
+     pub fn advance32(&mut self) {
+-        dbg_assert!(self.eip & 0xFFF < 0xFFC);
+         self.eip += 4;
+     }
+     #[allow(unused)]
+@@ -30,20 +28,17 @@
+     }
+ 
+     pub fn read_imm8(&mut self) -> u8 {
+-        dbg_assert!(self.eip & 0xFFF < 0xFFF);
+         let v = memory::read8(self.eip) as u8;
+         self.eip += 1;
+         v
+     }
+     pub fn read_imm8s(&mut self) -> i8 { self.read_imm8() as i8 }
+     pub fn read_imm16(&mut self) -> u16 {
+-        dbg_assert!(self.eip & 0xFFF < 0xFFE);
+         let v = memory::read16(self.eip) as u16;
+         self.eip += 2;
+         v
+     }
+     pub fn read_imm32(&mut self) -> u32 {
+-        dbg_assert!(self.eip & 0xFFF < 0xFFC);
+         let v = memory::read32s(self.eip) as u32;
+         self.eip += 4;
+         v
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -261,6 +261,13 @@
+     pub number_of_instructions: u32,
+ }
+ 
++impl BasicBlock {
++    /// end_addr relative to the page of the block: up to 0x1000 if it ends at the end of the page
++    pub fn end_offset_in_page(&self) -> i32 {
++        (self.end_addr - (self.last_instruction_addr & !0xFFF)) as i32
++    }
++}
++
+ #[derive(Copy, Clone, PartialEq)]
+ pub struct CachedCode {
+     pub wasm_table_index: WasmTableIndex,
+@@ -366,6 +373,39 @@
+     address & 0xFFF >= 0x1000 - MAX_INSTRUCTION_LENGTH
+ }
+ 
++/// Instructions starting in the last MAX_INSTRUCTION_LENGTH bytes of a page used to be left to the
++/// interpreter, as they may continue on the next page. Compile such an instruction if it ends
++/// within its page (possibly exactly at the end). The decoder reads the bytes of an instruction in
++/// order, so it only reads past the end of the page (another physical page, irrelevant here) when
++/// the instruction doesn't fit. 16-bit code keeps the old rule (instruction pointer wrap-around).
++#[inline]
++pub fn fits_in_page(phys_address: u32, cpu: &CpuContext) -> bool {
++    !is_near_end_of_page(phys_address)
++        || fits_in_page_near_end(phys_address, cpu.cs_offset, cpu.state_flags)
++}
++
++// Out of line and cold: jit_increase_hotness runs after every interpreted block, the decoder
++// must not end up in it (it changed inlining in the main loop and slowed down transitions).
++#[cold]
++#[inline(never)]
++fn fits_in_page_near_end(phys_address: u32, cs_offset: u32, state_flags: CachedStateFlags) -> bool {
++    if !state_flags.is_32() {
++        return false;
++    }
++    let page_end = (phys_address | 0xFFF) + 1;
++    if page_end + MAX_INSTRUCTION_LENGTH > unsafe { *crate::cpu::global_pointers::memory_size } {
++        return false;
++    }
++    let mut probe = CpuContext {
++        eip: phys_address,
++        prefixes: 0,
++        cs_offset,
++        state_flags,
++    };
++    analysis::analyze_step(&mut probe);
++    probe.eip <= page_end
++}
++
+ pub fn jit_find_cache_entry(phys_address: u32, state_flags: CachedStateFlags) -> CachedCode {
+     // TODO: dedup with jit_find_cache_entry_in_page?
+     // NOTE: This is currently only used for invariant/missed-entry-point checking
+@@ -440,10 +480,8 @@
+         max_pages: u32,
+         marked_as_entry: &mut HashSet<i32>,
+         to_visit_stack: &mut Vec<i32>,
++        cpu: &CpuContext,
+     ) -> Option<u32> {
+-        if is_near_end_of_page(virt_target as u32) {
+-            return None;
+-        }
+         let phys_target = match cpu::translate_address_read_no_side_effects(virt_target) {
+             Err(()) => {
+                 dbg_log!("Not analysing {:x} (page not mapped)", virt_target);
+@@ -451,6 +489,9 @@
+             },
+             Ok(t) => t,
+         };
++        if !fits_in_page(phys_target, cpu) {
++            return None;
++        }
+ 
+         let phys_page = Page::page_of(phys_target);
+ 
+@@ -525,6 +566,7 @@
+             max_pages,
+             &mut marked_as_entry,
+             &mut to_visit_stack,
++            &cpu,
+         );
+         dbg_assert!(ok.is_some());
+         dbg_assert!(marked_as_entry.contains(&virt_addr));
+@@ -543,7 +585,7 @@
+             continue;
+         }
+ 
+-        if is_near_end_of_page(phys_addr) {
++        if !fits_in_page(phys_addr, &cpu) {
+             // Empty basic block, don't insert
+             profiler::stat_increment(stat::COMPILE_CUT_OFF_AT_END_OF_PAGE);
+             continue;
+@@ -570,10 +612,18 @@
+             let has_next_instruction = !analysis.no_next_instruction;
+             current_address = cpu.eip;
+ 
+-            dbg_assert!(Page::page_of(current_address) == Page::page_of(addr_before_instruction));
+-            let current_virt_addr = to_visit & !0xFFF | current_address as i32 & 0xFFF;
+-
+-            if analysis.ty == AnalysisType::STI && is_near_end_of_page(current_address) {
++            // The instruction may end exactly at the end of its page (see fits_in_page). The
++            // physical address after it is then not necessarily where execution continues: never
++            // follow it, the block ends here.
++            let at_end_of_page =
++                Page::page_of(current_address) != Page::page_of(addr_before_instruction);
++            dbg_assert!(!at_end_of_page || current_address & 0xFFF == 0);
++            let current_virt_addr = (to_visit & !0xFFF)
++                .wrapping_add((current_address - (addr_before_instruction & !0xFFF)) as i32);
++
++            if analysis.ty == AnalysisType::STI
++                && (at_end_of_page || !fits_in_page(current_address, cpu))
++            {
+                 // cut off before the STI so that it is handled by interpreted mode
+                 profiler::stat_increment(stat::COMPILE_CUT_OFF_AT_END_OF_PAGE);
+                 break;
+@@ -591,15 +641,17 @@
+                     if current_block.has_sti {
+                         // Convert next instruction after STI (i.e., the current instruction) into block boundary
+ 
+-                        marked_as_entry.insert(current_virt_addr);
+-                        to_visit_stack.push(current_virt_addr);
++                        if !at_end_of_page {
++                            marked_as_entry.insert(current_virt_addr);
++                            to_visit_stack.push(current_virt_addr);
++                        }
+ 
+                         break;
+                     }
+ 
+                     if analysis.ty == AnalysisType::STI {
+                         dbg_assert!(
+-                            !is_near_end_of_page(current_address),
++                            !at_end_of_page && fits_in_page(current_address, cpu),
+                             "should be handled above"
+                         );
+ 
+@@ -609,8 +661,8 @@
+                         // Only split non-STI blocks (one instruction needs to run after STI before
+                         // handle_irqs may be called)
+ 
+-                        if basic_blocks.contains_key(&current_address) {
+-                            dbg_assert!(!is_near_end_of_page(current_address));
++                        if !at_end_of_page && basic_blocks.contains_key(&current_address) {
++                            dbg_assert!(fits_in_page(current_address, cpu));
+                             current_block.ty = BasicBlockType::Normal {
+                                 next_block_addr: Some(current_address),
+                                 jump_offset: 0,
+@@ -637,9 +689,11 @@
+                     };
+ 
+                     dbg_assert!(has_next_instruction);
+-                    to_visit_stack.push(current_virt_addr);
++                    if !at_end_of_page {
++                        to_visit_stack.push(current_virt_addr);
++                    }
+ 
+-                    let next_block_addr = if is_near_end_of_page(current_address) {
++                    let next_block_addr = if at_end_of_page || !fits_in_page(current_address, cpu) {
+                         None
+                     }
+                     else {
+@@ -656,6 +710,7 @@
+                             max_pages,
+                             &mut marked_as_entry,
+                             &mut to_visit_stack,
++                            cpu,
+                         ),
+                         condition,
+                         jump_offset: offset,
+@@ -680,7 +735,7 @@
+                             + (current_virt_addr - cpu.cs_offset as i32 + offset & 0xFFFF)
+                     };
+ 
+-                    if has_next_instruction {
++                    if has_next_instruction && !at_end_of_page {
+                         // Execution will eventually come back to the next instruction (CALL)
+                         marked_as_entry.insert(current_virt_addr);
+                         to_visit_stack.push(current_virt_addr);
+@@ -695,6 +750,7 @@
+                             max_pages,
+                             &mut marked_as_entry,
+                             &mut to_visit_stack,
++                            cpu,
+                         ),
+                         jump_offset: offset,
+                         jump_offset_is_32: is_32,
+@@ -705,7 +761,7 @@
+                 AnalysisType::BlockBoundary => {
+                     // a block boundary but not a jump, get out
+ 
+-                    if has_next_instruction {
++                    if has_next_instruction && !at_end_of_page {
+                         // block boundary, but execution will eventually come back
+                         // to the next instruction. Create a new basic block
+                         // starting at the next instruction and register it as an
+@@ -722,7 +778,7 @@
+                 },
+             }
+ 
+-            if is_near_end_of_page(current_address) {
++            if at_end_of_page || !fits_in_page(current_address, cpu) {
+                 profiler::stat_increment(stat::COMPILE_CUT_OFF_AT_END_OF_PAGE);
+                 break;
+             }
+@@ -899,8 +955,8 @@
+     let mut pages = HashSet::new();
+ 
+     for b in basic_blocks.iter() {
+-        // Remove this assertion once page-crossing jit is enabled
+-        dbg_assert!(Page::page_of(b.addr) == Page::page_of(b.end_addr));
++        // a block may end exactly at the end of its page
++        dbg_assert!(Page::page_of(b.addr) == Page::page_of(b.end_addr - 1));
+         pages.insert(Page::page_of(b.addr));
+     }
+ 
+@@ -1341,7 +1397,7 @@
+                         } => {
+                             codegen::gen_set_eip_low_bits(
+                                 ctx.builder,
+-                                block.end_addr as i32 & 0xFFF,
++                                block.end_offset_in_page(),
+                             );
+                             codegen::gen_condition_fn(ctx, condition);
+                             ctx.builder.if_void();
+@@ -1361,14 +1417,14 @@
+                             if jump_offset_is_32 {
+                                 codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                     ctx.builder,
+-                                    block.end_addr as i32 & 0xFFF,
++                                    block.end_offset_in_page(),
+                                     jump_offset,
+                                 );
+                             }
+                             else {
+                                 codegen::gen_set_eip_low_bits(
+                                     ctx.builder,
+-                                    block.end_addr as i32 & 0xFFF,
++                                    block.end_offset_in_page(),
+                                 );
+                                 codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                             }
+@@ -1414,14 +1470,14 @@
+                         if jump_offset_is_32 {
+                             codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                 ctx.builder,
+-                                block.end_addr as i32 & 0xFFF,
++                                block.end_offset_in_page(),
+                                 jump_offset,
+                             );
+                         }
+                         else {
+                             codegen::gen_set_eip_low_bits(
+                                 ctx.builder,
+-                                block.end_addr as i32 & 0xFFF,
++                                block.end_offset_in_page(),
+                             );
+                             codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                         }
+@@ -1443,14 +1499,14 @@
+                             if jump_offset_is_32 {
+                                 codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                     ctx.builder,
+-                                    block.end_addr as i32 & 0xFFF,
++                                    block.end_offset_in_page(),
+                                     jump_offset,
+                                 );
+                             }
+                             else {
+                                 codegen::gen_set_eip_low_bits(
+                                     ctx.builder,
+-                                    block.end_addr as i32 & 0xFFF,
++                                    block.end_offset_in_page(),
+                                 );
+                                 codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                             }
+@@ -1580,14 +1636,14 @@
+                                     if jump_offset_is_32 {
+                                         codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                             ctx.builder,
+-                                            block.end_addr as i32 & 0xFFF,
++                                            block.end_offset_in_page(),
+                                             jump_offset,
+                                         );
+                                     }
+                                     else {
+                                         codegen::gen_set_eip_low_bits(
+                                             ctx.builder,
+-                                            block.end_addr as i32 & 0xFFF,
++                                            block.end_offset_in_page(),
+                                         );
+                                         codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                                     }
+@@ -1705,14 +1761,14 @@
+                                     if jump_offset_is_32 {
+                                         codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                             ctx.builder,
+-                                            block.end_addr as i32 & 0xFFF,
++                                            block.end_offset_in_page(),
+                                             jump_offset,
+                                         );
+                                     }
+                                     else {
+                                         codegen::gen_set_eip_low_bits(
+                                             ctx.builder,
+-                                            block.end_addr as i32 & 0xFFF,
++                                            block.end_offset_in_page(),
+                                         );
+                                         codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                                     }
+@@ -1720,7 +1776,7 @@
+                                 else {
+                                     codegen::gen_set_eip_low_bits(
+                                         ctx.builder,
+-                                        block.end_addr as i32 & 0xFFF,
++                                        block.end_offset_in_page(),
+                                     );
+                                 }
+ 
+@@ -1774,14 +1830,14 @@
+                                 if jump_offset_is_32 {
+                                     codegen::gen_set_eip_low_bits_and_jump_rel32(
+                                         ctx.builder,
+-                                        block.end_addr as i32 & 0xFFF,
++                                        block.end_offset_in_page(),
+                                         jump_offset,
+                                     );
+                                 }
+                                 else {
+                                     codegen::gen_set_eip_low_bits(
+                                         ctx.builder,
+-                                        block.end_addr as i32 & 0xFFF,
++                                        block.end_offset_in_page(),
+                                     );
+                                     codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                                 }
+@@ -2070,8 +2126,7 @@
+     let last_instruction_addr = block.last_instruction_addr;
+     let stop_addr = block.end_addr;
+ 
+-    // First iteration of do-while assumes the caller confirms this condition
+-    dbg_assert!(!is_near_end_of_page(start_addr));
++    dbg_assert!(Page::page_of(start_addr) == Page::page_of(stop_addr - 1));
+ 
+     if cfg!(feature = "profiler") {
+         ctx.builder.const_i32(start_addr as i32);
+@@ -2104,7 +2159,10 @@
+                     ctx.builder,
+                     last_instruction_addr as i32 & 0xFFF,
+                 );
+-                codegen::gen_set_eip_low_bits(ctx.builder, stop_addr as i32 & 0xFFF);
++                codegen::gen_set_eip_low_bits(
++                    ctx.builder,
++                    (stop_addr - (last_instruction_addr & !0xFFF)) as i32,
++                );
+             }
+         }
+ 
+@@ -2128,12 +2186,12 @@
+         let end_addr = ctx.cpu.eip;
+ 
+         if end_addr == stop_addr {
+-            // no page was crossed
+-            dbg_assert!(Page::page_of(end_addr) == Page::page_of(start_addr));
++            // no page was crossed (but the block may end exactly at the end of the page)
++            dbg_assert!(Page::page_of(end_addr - 1) == Page::page_of(start_addr));
+             break;
+         }
+ 
+-        if was_block_boundary || is_near_end_of_page(end_addr) || end_addr > stop_addr {
++        if was_block_boundary || end_addr > stop_addr {
+             dbg_log!(
+                 "Overlapping basic blocks start={:x} expected_end={:x} end={:x} was_block_boundary={} near_end_of_page={}",
+                 start_addr,
+@@ -2161,6 +2219,8 @@
+         return;
+     }
+ 
++    let fits = !is_near_end_of_page(phys_address)
++        || fits_in_page_near_end(phys_address, cs_offset, state_flags);
+     let mut ctx = get_jit_state();
+     let is_compiling = ctx.compiling.is_some();
+     let page = Page::page_of(phys_address);
+@@ -2170,7 +2230,7 @@
+         (0, HashSet::new())
+     });
+ 
+-    if !is_near_end_of_page(phys_address) {
++    if fits {
+         entry_points.insert(phys_address as u16 & 0xFFF);
+     }
+ 

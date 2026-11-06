@@ -3,8 +3,9 @@
 python3 tests/bench.py vendor/v86 ДРУГАЯ_ПАПКА... [-n 3] [-k имя]
 
 Для каждой папки собирается бандл (bundle.py --v86, загрузка с ядра), потом
-круги: в каждом круге каждый вариант по разу, в свежем headless Chromium, в
-перемешку A B A B - так шум от соседей по хосту делится поровну. Три числа на
+круги: в каждом круге каждый вариант по разу, в свежем headless Chromium, и
+порядок в каждом круге сдвигается (A B C, B C A, C A B) - так шум от соседей
+по хосту и место в круге делятся поровну; кругов лучше не меньше вариантов. Три числа на
 нагрузку: время по часам страницы вокруг exec() (то, что видит пользователь,
 включая мост), процессорное время всей вкладки (с фоновой компиляцией wasm в
 V8) и её основного потока (сам v86) - эти два почти не зависят от занятости
@@ -155,8 +156,9 @@ def main():
         runs = [[] for _ in a.v86]
         for k in range(a.n):
             print("круг %d/%d, load %s" % (k + 1, a.n, open("/proc/loadavg").read().split()[0]), flush=True)
-            for i, page in enumerate(pages):
-                r = run_once(page, names, tmp)
+            # порядок сдвигается каждый круг: место в круге делится поровну
+            for i in [(j + k) % len(pages) for j in range(len(pages))]:
+                r = run_once(pages[i], names, tmp)
                 runs[i].append(r)
                 print("  %-28s %s" % (a.v86[i][-28:], " ".join("%s=%.2f/%.2f/%.2f" % (n, *r[n]) for n in names if n in r)), flush=True)
         if a.json:
