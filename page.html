@@ -13,6 +13,7 @@
   #term > .tty { position: absolute; inset: 0; }
   .tty.off { display: none; }
   .xterm .xterm-viewport { background: var(--bg) !important; scrollbar-color: var(--line) var(--bg); scrollbar-width: thin; }
+  /* #if vga */
   /* экран VGA поверх терминала и окон, ряд клавиш под ним остаётся; размер и сглаживание
      холста - свои: адаптер v86 ставит их в style под пиксели устройства */
   #screen { display: none; position: absolute; left: 0; right: 0; top: 0; z-index: 16; background: #000; touch-action: none; }
@@ -20,6 +21,7 @@
   #screen > div { display: none !important; }
   #screen canvas { width: 100% !important; height: 100% !important; object-fit: contain; image-rendering: auto !important; }
   #screen canvas.px { image-rendering: pixelated !important; }
+  /* #endif */
   #kbd {
     position: fixed; opacity: 0; height: 1px; width: 1px;
     border: 0; padding: 0; margin: 0; resize: none; left: -9999px; top: 0;
@@ -63,7 +65,7 @@
 <body>
   <div id="app">
     <div id="term"><div id="tty1" class="tty"></div></div>
-    <div id="screen"><canvas></canvas><div></div></div>
+    <!-- #if vga --><div id="screen"><canvas></canvas><div></div></div><!-- #endif -->
     <div id="keys"><div id="more"></div><div id="base"></div></div>
     <div id="toast" class="box"><span></span><button>Копировать</button></div>
   </div>
@@ -85,7 +87,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js" data-lazy="kt-canvas"></script>
   <script src="vendor/v86/libv86.js"></script>
   <script>
     "use strict";
@@ -135,10 +137,12 @@
 
     const KEYS_MAIN = [["ESC", "/", "-", "|", "~", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", ">", "$", "LEFT", "DOWN", "RIGHT", "KBD"]];
     const KEYS_MORE = [["F1", "F2", "F3", "F4", "F5", "F6", "PGUP", "{", "}"], ["F7", "F8", "F9", "F10", "F11", "F12", "PGDN", "[", "]"]];
+    /* #if vga */
     const KEYS_SCREEN = [["ESC", "1", "2", "3", "4", "SPACE", "UP", "ENTER", "MORE"], ["TAB", "CTRL", "ALT", "Y", "N", "LEFT", "DOWN", "RIGHT", "KBD"]];
     function scaleCheck(v) {
       if (v !== "auto" && !(+v >= 0.25 && +v <= 4)) throw new Error("screen.scale: auto или 0.25..4 (точек страницы на точку экрана)");
     }
+    /* #endif */
     function parseKeys(v) {
       let rows;
       try { rows = JSON.parse(v); } catch { try { rows = JSON.parse(v.replace(/'/g, '"')); } catch {} }
@@ -160,12 +164,14 @@
       "term.mobile": { def: isTouch ? "on" : "off", values: ["on", "off"], apply: (v) => setMobile(v === "on") },
       "keys.main": { def: JSON.stringify(KEYS_MAIN), check: parseKeys, apply: () => buildKeys() },
       "keys.more": { def: JSON.stringify(KEYS_MORE), check: parseKeys, apply: () => buildKeys() },
+      /* #if vga */
       "keys.screen": { def: JSON.stringify(KEYS_SCREEN), check: parseKeys, apply: () => buildKeys() },
       "screen.scale": { def: "auto", check: scaleCheck, apply: () => screenResized(true) },
+      /* #endif */
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
       "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
-      "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] },
+      /* #if vga */ "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] }, /* #endif */
       "boot.log": { def: "off", values: ["on", "off"] },
       "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
       "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
@@ -314,10 +320,21 @@
     const ttys = new Map([[1, { id: 1, term, fit, el: $("#tty1"), title: "", host: null }]]);
     let active = ttys.get(1);
     let canvas = null;
+    // скрипт data-lazy лежит в бандле текстом и запускается при первой надобности: canvas-рендер (92 КБ)
+    // нужен немногим, а разобранный он держит 2-3 МБ вкладки (tests/mem.py)
+    function lazyScript(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const s = document.createElement("script");
+      s.textContent = el.textContent;
+      el.remove();
+      document.head.append(s);
+    }
     function setRender(v) {
       if (canvas) canvas.dispose();
       canvas = null;
       if (v !== "canvas") return;
+      if (!window.CanvasAddon) lazyScript("kt-canvas");
       try { term.loadAddon(canvas = new CanvasAddon.CanvasAddon()); } catch (e) { console.warn("canvas", e); canvas = null; }
     }
     setRender(cfg.get("term.render"));
@@ -391,9 +408,11 @@
       try { active.fit.fit(); } catch {}
       active.term.scrollToBottom();
       $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
+      /* #if vga */
       $("#screen").style.bottom = $("#keys").offsetHeight + "px";
       if (screenOn) fitScreen();
       screenResized();
+      /* #endif */
     }
     if (window.visualViewport) {
       visualViewport.addEventListener("resize", layout);
@@ -452,8 +471,11 @@
     // объём: on - 8 МБ; драйвер берёт режим, если влезают два кадра: 4 МБ - до ~800x600,
     // 8 - до 1280x800, 16 - до 1920x1080
     const VGA_OFF = 256 << 10, VGA_MIN = 4 << 20;
+    let vgaSize = VGA_OFF;
+    /* #if vga */
     const vgaBytes = (v) => v === "off" ? VGA_OFF : (v === "on" ? 8 : +v) << 20;
-    let vgaSize = vgaBytes(cfg.get("boot.vga"));
+    vgaSize = vgaBytes(cfg.get("boot.vga"));
+    /* #endif */
     let screenOn = false;
     let agentReady = false;
     let markReady;
@@ -1322,6 +1344,7 @@
         },
         get active() { return active.id; },
       },
+      /* #if vga */
       // экран VGA: kt screen on/off; без аргумента - показан ли; size - размер для X (startx), дальше
       // перемены страница шлёт событием screen-size
       screen(on) {
@@ -1334,6 +1357,7 @@
         setScreen(on === true || on === "on");
         return "";
       },
+      /* #endif */
       get emulator() { return emulator; },
     };
     window.kt = api;
@@ -1418,7 +1442,7 @@
       if (!f || !ttySwitch()) return;
       e.preventDefault();
       e.stopPropagation();
-      setScreen(false); // с экрана - в консоль, как Ctrl+Alt+F1 из графики в Linux
+      /* #if vga */ setScreen(false); /* #endif */ // с экрана - в консоль, как Ctrl+Alt+F1 из графики в Linux
       ttyKey(+f[1]);
     }, true);
 
@@ -1437,7 +1461,7 @@
       while (i < a.length && i < b.length && a[i] === b[i]) i++;
       const out = "\x7f".repeat(a.length - i) + b.slice(i).join("");
       sent = kbd.value;
-      if (screenOn) { screenType(out); return; }
+      /* #if vga */ if (screenOn) { screenType(out); return; } /* #endif */
       if (mods.alt && /^[1-9]$/.test(out) && ttySwitch()) { releaseMods(); ttyKey(+out); return; } // ALT и цифра на телефоне
       if (out) send(withMods(out).replace(/\n/g, "\r"));
     }
@@ -1447,6 +1471,7 @@
     kbd.addEventListener("input", () => { flushKbd(); if (!composing) resetKbd(); });
     kbd.addEventListener("keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
+      /* #if vga */
       if (screenOn) {
         const n = { ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Home: "HOME", End: "END",
           PageUp: "PGUP", PageDown: "PGDN", Delete: "DEL", Insert: "INS", Enter: "ENTER", Tab: "TAB", Escape: "ESC",
@@ -1454,6 +1479,7 @@
         if (n) { screenKey(n, true); screenKey(n, false); e.preventDefault(); }
         return;
       }
+      /* #endif */
       let s = null;
       const named = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
         Home: "home", End: "end", PageUp: "pgup", PageDown: "pgdn", Delete: "del", Insert: "ins" }[e.key];
@@ -1492,6 +1518,7 @@
       return [k, k];
     }
 
+    /* #if vga */
     // экран: клавиши уходят в машину скан-кодами PS/2 (набор 1, расширенные - с 0xE0), кнопка
     // ряда держится, пока на ней палец (игры ждут отпускания), символы - нажатием с Shift по
     // раскладке US
@@ -1612,6 +1639,7 @@
         if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
       }, { passive: false });
     }
+    /* #endif */
 
     let moreBtn = null;
     function setMore(open) {
@@ -1666,17 +1694,19 @@
           clearTimeout(timer);
           clearInterval(timer);
           b.classList.remove("down");
-          if (held) screenKey(k, false);
+          /* #if vga */ if (held) screenKey(k, false); /* #endif */
           held = false;
         };
         b.addEventListener("pointerdown", (e) => {
           e.preventDefault();
           b.classList.add("down");
+          /* #if vga */
           if (!t && screenOn && value !== "@more" && value !== "@kbd") {
             held = true;
             screenKey(k, true);
             return;
           }
+          /* #endif */
           pressKey(value, t);
           if (repeat) timer = setTimeout(() => { timer = setInterval(() => pressKey(value, t), 60); }, 380);
         });
@@ -1881,10 +1911,12 @@
       for (const el of document.querySelectorAll(PARTS)) el.remove();
 
       opts.vga_memory_size = vgaSize;
+      /* #if vga */
       if (vgaSize >= VGA_MIN) {
         opts.screen_container = $("#screen");
         opts.disable_keyboard = false;
       }
+      /* #endif */
       emulator = new V86(opts);
       emulator.keyboard_set_enabled(false);
       const outDec = new TextDecoder();
@@ -1915,7 +1947,7 @@
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
         if (saved) startCmd = null;
-        if (saved && saved.screen_on && vgaSize >= VGA_MIN) setScreen(true);
+        /* #if vga */ if (saved && saved.screen_on && vgaSize >= VGA_MIN) setScreen(true); /* #endif */
         onReady = () => {
           ctl("REDRAW");
           emit("restore");

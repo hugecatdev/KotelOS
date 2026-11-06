@@ -9,12 +9,9 @@ term.scroll прокрутка, строк
 term.mobile интерфейс телефона
 keys.main раскладка
 keys.more раскладка под ⋯
-keys.screen раскладка на экране
-screen.scale точек страницы на точку экрана (auto)
 keys.open открыть ⋯
 keys.size размер кнопок
 boot.mem память, МБ
-boot.vga экран (видеопамять 4 МБ)
 boot.log лог загрузки
 boot.cmd команда при загрузке
 pkg.repo репозиторий

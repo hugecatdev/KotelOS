@@ -964,9 +964,10 @@ def main():
     def no_screen():
         assert s.sh("test -e /dev/fb0")[0] != 0, "/dev/fb0 есть без boot.vga"
         assert s.sh("kt screen")[0] != 0, "kt screen есть без пакета kt-screen"
-        err = s.ev("(() => { try { kt.screen('on'); return ''; } catch (e) { return e.message; } })()")
-        assert "boot.vga" in err, err
-        assert s.ev("kt.screen()") == "off"
+        # бандл без --vga: код экрана на странице вырезан при сборке (/* #if vga */)
+        assert s.ev("typeof kt.screen") == "undefined", "kt.screen есть в бандле без экрана"
+        assert not s.ev("document.querySelector('#screen')"), "#screen есть в бандле без экрана"
+        assert s.sh("kt cfg screen.scale")[0] != 0, "screen.scale есть в бандле без экрана"
         assert "vga: нет" in s.ok("kt info")
 
     def keys_in(cmd):

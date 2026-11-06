@@ -187,12 +187,39 @@ def local(src):
     return open(src).read()
 
 
-def template():
-    html = open(PAGE).read()
+COND = re.compile(r"(?:/\*|<!--)\s*#(?:if\s+(!?)([\w-]+)|(endif))\s*(?:\*/|-->)")
+
+
+def preprocess(text, have):
+    """Условные блоки страницы, как #if в C: /* #if имя */ ... /* #endif */ (в HTML - <!-- #if имя -->),
+    #if !имя - если функции нет; вложенные можно. Блок остаётся, если функция имя есть в бандле (have),
+    пометки уходят. Без обработки (page.html как есть) включено всё."""
+    out, stack, pos = [], [], 0
+    for m in COND.finditer(text):
+        if all(stack):
+            out.append(text[pos:m.start()])
+        if m.group(3):
+            if not stack:
+                sys.exit("%s: #endif без #if (символ %d)" % (PAGE, m.start()))
+            stack.pop()
+        else:
+            stack.append((m.group(2) in have) != bool(m.group(1)))
+        pos = m.end()
+    if stack:
+        sys.exit("%s: #if без #endif" % PAGE)
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def template(have=()):
+    html = preprocess(open(PAGE).read(), set(have))
     html = re.sub(r'<link (?:rel="stylesheet" )?href="(https://[^"]+)"(?: rel="stylesheet")?>',
                   lambda m: "<style>%s</style>" % fetch(m.group(1)).decode(), html)
-    html = re.sub(r'<script src="([^"]+)"></script>',
-                  lambda m: script(fetch(m.group(1)).decode() if m.group(1).startswith("https://") else local(m.group(1))), html)
+    src = lambda u: fetch(u).decode() if u.startswith("https://") else local(u)
+    # data-lazy: скрипт - текстом, страница запустит его сама, когда понадобится (lazyScript)
+    html = re.sub(r'<script src="([^"]+)" data-lazy="([\w-]+)"></script>',
+                  lambda m: '<script type="text/plain" id="%s">%s</script>' % (m.group(2), src(m.group(1)).replace("</script", "<\\/script")), html)
+    html = re.sub(r'<script src="([^"]+)"></script>', lambda m: script(src(m.group(1))), html)
     return html
 
 
@@ -389,7 +416,8 @@ def main():
         bundle["cmd"] = a.cmd
     if a.version:
         bundle["version"] = a.version
-    page = template()
+    # функции бандла: блоки страницы /* #if имя */ без них вырезаются
+    page = template({"vga"} if a.vga else ())
 
     if snap:
         bundle["state"] = snapshot(assemble(page, bundle, False), a.run, a.timeout, a.prep)
