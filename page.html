@@ -1437,12 +1437,13 @@
 
     window.addEventListener("keydown", (e) => {
       // Alt+1..9 - консоль (как вкладки терминалов; Alt+F4 браузер не отдаёт). По коду клавиши: на Mac
-      // Option+1 даёт «¡»
-      const f = e.altKey && !e.ctrlKey && !e.metaKey && /^Digit([1-9])$/.exec(e.code);
+      // Option+1 даёт «¡». На экране Alt+цифра - программе (dwm, doom), а в консоль - Ctrl+Alt+1..9,
+      // как Ctrl+Alt+F1 из графики в Linux
+      const f = e.altKey && e.ctrlKey === screenOn && !e.metaKey && /^Digit([1-9])$/.exec(e.code);
       if (!f || !ttySwitch()) return;
       e.preventDefault();
       e.stopPropagation();
-      /* #if vga */ setScreen(false); /* #endif */ // с экрана - в консоль, как Ctrl+Alt+F1 из графики в Linux
+      /* #if vga */ setScreen(false); /* #endif */
       ttyKey(+f[1]);
     }, true);
 

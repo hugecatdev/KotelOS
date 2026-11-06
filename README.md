@@ -20,7 +20,7 @@ MicroPython и на странице.
 ```sh
 scripts/build-busybox.sh   # busybox, kt-net, kt-seed, pyzygote
 scripts/build-kernel.sh    # ядро -> images/bzImage
-scripts/get-packages.sh    # пакеты из Alpine, свой CPython, openblas, jdk8, doom, Xorg -> build/packages/
+scripts/get-packages.sh    # пакеты из Alpine, свой CPython, openblas, jdk8, doom, Xorg, dwm -> build/packages/
 ./build.sh                 # rootfs -> images/, репозиторий пакетов -> site/repo/
 python3 bundle.py          # бандл -> site/index.html
 ```

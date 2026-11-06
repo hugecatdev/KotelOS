@@ -1,0 +1,12 @@
+--- a/config.def.h
++++ b/config.def.h
+@@ -5,7 +5,8 @@
+  *
+  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
+  */
+-static char *font = "Liberation Mono:pixelsize=12:antialias=true:autohint=true";
++/* KotelOS: растровый fixed из пакета xorg (6x13, в Юникоде - с кириллицей) вместо Liberation Mono (4 МБ) */
++static char *font = "fixed:pixelsize=13";
+ static int borderpx = 2;
+ 
+ /*

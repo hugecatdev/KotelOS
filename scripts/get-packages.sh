@@ -76,6 +76,7 @@ scripts/build-openblas.sh
 scripts/build-numpy.sh
 scripts/build-doom.sh
 scripts/build-xorg.sh
+scripts/build-dwm.sh
 scripts/build-mesa.sh
 # Qt5 под X: libGL - наша mesa-xlib (у mesa из Alpine LLVM, ~480 МБ), без EGL/GBM (они - для платформ без X),
 # GTK3 (тема), libinput, cups, pango, xdg-utils (тянет libmagic, 10 МБ), libdrm (копия - в xorg) и полных

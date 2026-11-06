@@ -83,8 +83,8 @@ rm -f $OUT/usr/lib/xorg/modules/*.la $OUT/usr/lib/xorg/modules/*/*.la
 # libpciaccess и libdrm - своими копиями: пакет Alpine libpciaccess тянет базу имён PCI
 # (hwdata-pci, 1.5 МБ), а libdrm - ещё библиотеки чужих видеокарт и тот же libpciaccess
 cp -P $SR/usr/lib/libpciaccess.so.0 $SR/usr/lib/libpciaccess.so.0.* $SR/usr/lib/libdrm.so.2 $SR/usr/lib/libdrm.so.2.* $OUT/usr/lib/
-# раскладки: из xkeyboard-config (3.3 МБ) только us и ru с переключением Alt+Shift - 0.8 МБ;
-# symbols - всё, что берёт xkbcomp для pc105, us,ru и grp:alt_shift_toggle по правилам evdev
+# раскладки: из xkeyboard-config (3.3 МБ) только us и ru с переключением CapsLock - 0.8 МБ;
+# symbols - всё, что берёт xkbcomp для pc105, us,ru и grp:caps_toggle по правилам evdev
 # (клавиатура) и base (виртуальная клавиатура сервера). Проверять с пустым путём поиска
 # (xkbcomp -I -I<каталог>): иначе недостающее молча берётся из xkeyboard-config хоста
 # (так потерялся kpdl из ru, и раскладка us,ru не загружалась)

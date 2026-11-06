@@ -76,7 +76,8 @@ Section "InputDevice"
   Driver "evdev"
   Option "Device" "$kbd"
   Option "XkbLayout" "us,ru"
-  Option "XkbOptions" "grp:alt_shift_toggle"
+  # раскладка - CapsLock (Shift+CapsLock - сам CapsLock): Alt+Shift нужен оконным менеджерам (dwm)
+  Option "XkbOptions" "grp:caps_toggle"
 EndSection
 Section "InputDevice"
   Identifier "mouse"

@@ -23,6 +23,9 @@ tk-term терминал в окне (xterm.js)
 doom Doom на экране
 doom-shareware первый эпизод Doom (shareware)
 xorg X на экране: Xorg без OpenGL, twm и xterm (startx)
+dwm оконный менеджер dwm для startx (клавиша - Alt)
+st терминал st для X
+feh просмотр картинок в X
 python-mpy команда python для micropython
 minipython лёгкий CPython 3.12
 python3 полный CPython 3.12

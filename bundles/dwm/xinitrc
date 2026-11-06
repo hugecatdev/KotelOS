@@ -1,0 +1,5 @@
+# сессия бандла dwm (startx): два терминала st и dwm; новый терминал - Alt+Shift+Enter,
+# выход из X - Alt+Shift+Q
+st &
+st &
+exec dwm
