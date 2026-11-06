@@ -76,4 +76,11 @@ scripts/build-openblas.sh
 scripts/build-numpy.sh
 scripts/build-doom.sh
 scripts/build-xorg.sh
+scripts/build-mesa.sh
+# Qt5 под X: libGL - наша mesa-xlib (у mesa из Alpine LLVM, ~480 МБ), без EGL/GBM (они - для платформ без X),
+# GTK3 (тема), libinput, cups, pango, xdg-utils (тянет libmagic, 10 МБ), libdrm (копия - в xorg) и полных
+# xkeyboard-config (раскладку Qt берёт у сервера) и ICU (хватает icu-data-en)
+python3 alpine.py sqlitebrowser --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib \
+  --skip mesa-egl --skip mesa-gbm --skip gtk+3.0 --skip libinput-libs --skip cups-libs --skip pango \
+  --skip xdg-utils --skip libdrm --skip xkeyboard-config --skip icu-data-full
 python3 scripts/jdk8.py

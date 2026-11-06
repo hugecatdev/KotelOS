@@ -150,7 +150,7 @@ awk -F'\t' -v OFS='\t' '
     for (i = 1; i <= nn; i++) if (!(names[i] in done)) print line[names[i]], ""
   }
 ' config/programs.txt "$tmp/index" > "$NEW/index.txt"
-if ! python3 alpine.py --kt-index "$NEW/alpine.txt.gz" --desc "$NEW/index.txt" --alias py3-requests=python-requests --alias py3-pip=pip --rename py3-:python- 2> "$tmp/alpine.err"; then
+if ! python3 alpine.py --kt-index "$NEW/alpine.txt.gz" --desc "$NEW/index.txt" --alias py3-requests=python-requests --alias py3-pip=pip --alias mesa-gl=mesa-xlib --rename py3-:python- 2> "$tmp/alpine.err"; then
   cat "$tmp/alpine.err" >&2
   if [ -f "$PKG/alpine.txt.gz" ]; then cp "$PKG/alpine.txt.gz" "$NEW/"; echo "alpine: беру прошлый индекс" >&2; fi
 fi

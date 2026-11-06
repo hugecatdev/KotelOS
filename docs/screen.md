@@ -1,4 +1,4 @@
-# Экран: /dev/fb0, Doom и X
+# Экран: /dev/fb0, Doom, X, OpenGL и Qt5
 
 Терминал машины - последовательный порт, а видеокарта v86 (Bochs VBE, PCI
 1234:1111) обычно лежит без дела с минимальной видеопамятью. Экран её
@@ -126,3 +126,28 @@ ISO8859-1, как везде: xterm в UTF-8 сам берёт Юникод-ве
 
 Время: сервер готов за ~1 с, окно xterm появляется через ~9 с (ПК, хост
 нагружен). Набранное до появления окна никуда не попадает.
+
+## OpenGL и Qt5 (`mesa-xlib`, `kt pkg add sqlitebrowser`)
+
+В сервере OpenGL нет, но программам он доступен: `mesa-xlib` - mesa 25.1.9 из
+`scripts/build-mesa.sh`, GLX через Xlib (кадр уходит в X обычной картинкой,
+расширение GLX серверу не нужно) и программный softpipe, без LLVM.
+`glxinfo` - «Mesa, softpipe, OpenGL 3.3», `glxgears` в окне 300x300 - ~6
+кадров в секунду (ПК). mesa из Alpine - llvmpipe с LLVM, вместе ~480 МБ, а
+`mesa-xlib` - одна `libGL.so.1`: 17 МБ в машине, 3.5 МБ в репозитории.
+
+С ней работает Qt5 из Alpine: его `libQt5Gui` требует `libGL`. Индекс `kt pkg`
+(`build.sh`, `--alias mesa-gl=mesa-xlib`) подставляет `mesa-xlib` вместо mesa
+из Alpine, а `scripts/get-packages.sh` кладёт в репозиторий `sqlitebrowser`
+(DB Browser for SQLite) с Qt5 без лишнего: без EGL и GBM (они для платформ без
+X), темы GTK3, libinput, cups, pango, xdg-utils (тянет libmagic, 10 МБ),
+полных xkeyboard-config (раскладку Qt берёт у сервера) и ICU. Шрифт - Cantarell
+(0.2 МБ, с кириллицей; его ставит `xorg`): без шрифта fontconfig отдаёт Qt
+`fixed`.
+
+`kt pkg add sqlitebrowser` в бандле `vga` - ~1 мин (75 МБ в /usr/lib вместе с X),
+окно появляется через ~26 с, программа держит ~56 МБ: машине нужно 256 МБ
+памяти. Другие программы на Qt5 из Alpine (`cutecom`, `keepassxc`...) тоже
+возьмут `mesa-xlib`, если их зависимости - Qt5 и `libGL`. Qt6 (LXQt:
+`qterminal`, `pcmanfm-qt`) так не запустить: его `libQt6Gui` требует ещё
+`libEGL`, а EGL в mesa есть только вместе с DRI.

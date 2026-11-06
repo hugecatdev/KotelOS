@@ -172,6 +172,7 @@ def main():
     ap.add_argument("--alias", action="append", default=[], help="ALPINE=OURS: не импортировать, в зависимостях писать OURS")
     ap.add_argument("--rename", default="", help="OLD-:NEW-: приставка имён")
     ap.add_argument("--keep-existing", action="store_true", help="уже существующие packages/<имя> не трогать")
+    ap.add_argument("--max-age", type=float, metavar="ЧАСОВ", help="свой индекс не старше стольких часов (общий не трогается)")
     ap.add_argument("--branch", default=BRANCH, help="ветка Alpine, если пакета нет в нашей (v3.24, edge); уже собранные пакеты (musl...) она не перезаписывает")
     a = ap.parse_args()
 
@@ -184,7 +185,10 @@ def main():
     if not a.packages:
         ap.error("нужны пакеты")
     mirror = MIRROR.replace(BRANCH, a.branch)
-    pkgs, provides = index(mirror, "" if a.branch == BRANCH else a.branch + "-")
+    # --max-age: свой индекс не старше стольких часов (общий бывает давним, а старых версий на зеркале
+    # уже нет); лежит отдельно, общий не трогается
+    tag = ("" if a.branch == BRANCH else a.branch + "-") + ("fresh-" if a.max_age else "")
+    pkgs, provides = index(mirror, tag, a.max_age * 3600 if a.max_age else None)
     skip = set(a.skip)
 
     def ours(n):

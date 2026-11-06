@@ -12,6 +12,8 @@
 #
 
 NoGrabServer
+# KotelOS: новое окно встаёт само, а не ждёт клика для размещения (на телефоне это непонятно)
+RandomPlacement
 RestartPreviousState
 DecorateTransients
 TitleFont "-misc-fixed-medium-r-semicondensed--13-*"

@@ -17,6 +17,7 @@
 /packages/xorg/usr/lib/
 /packages/xorg/usr/share/X11/xkb/
 /packages/xorg/usr/share/fonts/
+/packages/mesa-xlib/usr/
 /packages/pyzygote/usr/local/bin/python3
 
 __pycache__/
