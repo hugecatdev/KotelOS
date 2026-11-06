@@ -138,7 +138,7 @@
     const KEYS_MAIN = [["ESC", "/", "-", "|", "~", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", ">", "$", "LEFT", "DOWN", "RIGHT", "KBD"]];
     const KEYS_MORE = [["F1", "F2", "F3", "F4", "F5", "F6", "PGUP", "{", "}"], ["F7", "F8", "F9", "F10", "F11", "F12", "PGDN", "[", "]"]];
     /* #if vga */
-    const KEYS_SCREEN = [["ESC", "1", "2", "3", "4", "SPACE", "UP", "ENTER", "MORE"], ["TAB", "CTRL", "ALT", "Y", "N", "LEFT", "DOWN", "RIGHT", "KBD"]];
+    const KEYS_SCREEN = [["ESC", "SHIFT", "DEL", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", "LEFT", "DOWN", "RIGHT", "KBD"]];
     function scaleCheck(v) {
       if (v !== "auto" && !(+v >= 0.25 && +v <= 4)) throw new Error("screen.scale: auto или 0.25..4 (точек страницы на точку экрана)");
     }
@@ -1465,7 +1465,12 @@
       while (i < a.length && i < b.length && a[i] === b[i]) i++;
       const out = "\x7f".repeat(a.length - i) + b.slice(i).join("");
       sent = kbd.value;
-      /* #if vga */ if (screenOn) { screenType(out); return; } /* #endif */
+      /* #if vga */
+      if (screenOn) {
+        if (out) { smodBefore(); screenType(out); smodAfter(); }
+        return;
+      }
+      /* #endif */
       if (mods.alt && /^[1-9]$/.test(out) && ttySwitch()) { releaseMods(); ttyKey(+out); return; } // ALT и цифра на телефоне
       if (out) send(withMods(out).replace(/\n/g, "\r"));
     }
@@ -1480,7 +1485,7 @@
         const n = { ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Home: "HOME", End: "END",
           PageUp: "PGUP", PageDown: "PGDN", Delete: "DEL", Insert: "INS", Enter: "ENTER", Tab: "TAB", Escape: "ESC",
           Backspace: "BKSP" }[e.key];
-        if (n) { screenKey(n, true); screenKey(n, false); e.preventDefault(); }
+        if (n) { smodBefore(); screenKey(n, true); screenKey(n, false); smodAfter(); e.preventDefault(); }
         return;
       }
       /* #endif */
@@ -1525,7 +1530,7 @@
     /* #if vga */
     // экран: клавиши уходят в машину скан-кодами PS/2 (набор 1, расширенные - с 0xE0), кнопка
     // ряда держится, пока на ней палец (игры ждут отпускания), символы - нажатием с Shift по
-    // раскладке US
+    // раскладке US; CTRL, ALT и SHIFT ряда ещё и залипают (smodUp)
     const SCAN = { ESC: 1, BKSP: 14, TAB: 15, ENTER: 28, CTRL: 29, SHIFT: 42, ALT: 56, SPACE: 57,
       HOME: 0xe047, UP: 0xe048, PGUP: 0xe049, LEFT: 0xe04b, RIGHT: 0xe04d, END: 0xe04f, DOWN: 0xe050,
       PGDN: 0xe051, INS: 0xe052, DEL: 0xe053 };
@@ -1535,29 +1540,105 @@
       ["asdfghjkl;'`", 'ASDFGHJKL:"~', 30], ["\\zxcvbnm,./", "|ZXCVBNM<>?", 43]]) {
       for (let i = 0; i < a.length; i++) { CHARS[a[i]] = [c + i, 0]; CHARS[b[i]] = [c + i, 1]; }
     }
+    // клавиши уходят порциями: у читателя /dev/input/event* в ядре очередь на 64 события (3 на
+    // клавишу), а X в машине читает её не чаще раза в ~100 мс - набранное разом слово длиннее ~10
+    // букв он терял целиком (SYN_DROPPED). По 4 клавиши (буква с Shift) раз в 40 мс - ~12 букв в
+    // секунду; одна очередь на всё - кнопки, залипшие CTRL/ALT/SHIFT и набор - держит их порядок
+    const scanQueue = [];
+    let scanBusy = false;
     function scan(code, down) {
       if (!emulator) return;
       const seq = code > 0xff ? [0xe0, code & 0xff] : [code];
       if (!down) seq[seq.length - 1] |= 0x80;
-      emulator.keyboard_send_scancodes(seq);
+      scanQueue.push(seq);
+      if (!scanBusy) {
+        scanBusy = true;
+        queueMicrotask(scanPump); // после того, как набор целиком встанет в очередь
+      }
+    }
+    async function scanPump() {
+      while (scanQueue.length) {
+        for (let n = 0; n < 4 && scanQueue.length; n++) {
+          const seq = scanQueue.shift();
+          if (emulator) emulator.keyboard_send_scancodes(seq);
+        }
+        if (scanQueue.length) await new Promise((r) => setTimeout(r, 40));
+      }
+      scanBusy = false;
     }
     function charKey(ch, down) {
       const c = CHARS[ch];
       if (!c) return;
-      if (c[1] && down) scan(SCAN.SHIFT, true);
+      const shift = c[1] && !smodOn("SHIFT");
+      if (shift && down) scan(SCAN.SHIFT, true);
       scan(c[0], down);
-      if (c[1] && !down) scan(SCAN.SHIFT, false);
+      if (shift && !down) scan(SCAN.SHIFT, false);
     }
     function screenKey(name, down) {
       if (Object.hasOwn(SCAN, name)) return scan(SCAN[name], down);
       if (/^[A-Z]$/.test(name)) return charKey(name.toLowerCase(), down); // буква на кнопке - клавиша, как на клавиатуре
       if (CHARS[name]) return charKey(name, down);
       if (!down) return;
-      if (/^\^.$/.test(name)) { scan(SCAN.CTRL, true); screenType(name[1].toLowerCase()); scan(SCAN.CTRL, false); }
-      else screenType(name);
+      if (/^\^.$/.test(name)) {
+        const ctrl = !smodOn("CTRL");
+        if (ctrl) scan(SCAN.CTRL, true);
+        screenType(name[1].toLowerCase());
+        if (ctrl) scan(SCAN.CTRL, false);
+      } else screenType(name);
     }
     function screenType(s) {
       for (const ch of s) { charKey(ch, true); charKey(ch, false); }
+    }
+
+    // CTRL, ALT и SHIFT ряда: пока на кнопке палец - нажата, как на клавиатуре; касание без других
+    // клавиш - залипла до следующей клавиши или щелчка, два касания подряд - нажата, пока не
+    // коснёшься ещё раз (как CTRL и ALT в консоли). Так Alt+Shift+Enter dwm набирается по кнопке
+    // за раз, а с залипшим ALT палец тащит окно
+    const SMODS = {};
+    for (const n of ["CTRL", "ALT", "SHIFT"]) SMODS[n] = { v: 0, tap: 0, held: false, used: false, btn: [] };
+    const smodOn = (n) => SMODS[n].v > 0 || SMODS[n].held;
+    function smodShow(n, v) {
+      const m = SMODS[n];
+      m.v = v;
+      m.btn = m.btn.filter((b) => b.isConnected);
+      for (const b of m.btn) {
+        b.classList.toggle("on", v === 1);
+        b.classList.toggle("lock", v === 2);
+      }
+    }
+    function smodDown(n) {
+      const m = SMODS[n];
+      if (m.v === 2) { scan(SCAN[n], false); smodShow(n, 0); return; }
+      scan(SCAN[n], true);
+      m.held = true;
+      m.used = false;
+    }
+    function smodUp(n) {
+      const m = SMODS[n], now = Date.now();
+      if (!m.held) return;
+      m.held = false;
+      const v = m.used ? 0 : m.v === 0 ? 1 : now - m.tap < 350 ? 2 : 0;
+      if (v !== 2) scan(SCAN[n], false);
+      smodShow(n, v);
+      m.tap = now;
+    }
+    // вокруг клавиши или щелчка: залипшие нажимаются перед ней и отпускаются после, кнопка под
+    // пальцем отпустится вместе с пальцем
+    function smodBefore() {
+      for (const [n, m] of Object.entries(SMODS)) if (m.v === 1 && !m.held) scan(SCAN[n], true);
+    }
+    function smodAfter() {
+      for (const [n, m] of Object.entries(SMODS)) {
+        if (m.held) m.used = true;
+        else if (m.v === 1) { scan(SCAN[n], false); smodShow(n, 0); }
+      }
+    }
+    function smodRelease() {
+      for (const [n, m] of Object.entries(SMODS)) {
+        if (m.v === 2 || m.held) scan(SCAN[n], false);
+        m.held = false;
+        smodShow(n, 0);
+      }
     }
 
     // экран показывает и прячет гость (kt screen on/off): видеокарта v86 после графики в текст не
@@ -1567,6 +1648,7 @@
       on = !!on;
       if (on && vgaSize < VGA_MIN) throw new Error("экрана нет: boot.vga off");
       if (on === screenOn) return;
+      if (!on) smodRelease();
       screenOn = on;
       $("#screen").classList.toggle("on", on);
       if (emulator) emulator.keyboard_set_enabled(on);
@@ -1632,11 +1714,12 @@
         cv.setPointerCapture(e.pointerId);
         if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
         move(e);
+        smodBefore();
         click(e);
       });
       cv.addEventListener("pointermove", move);
-      cv.addEventListener("pointerup", (e) => { move(e); click(e); });
-      cv.addEventListener("pointercancel", click);
+      cv.addEventListener("pointerup", (e) => { move(e); click(e); smodAfter(); });
+      cv.addEventListener("pointercancel", (e) => { click(e); smodAfter(); });
       cv.addEventListener("contextmenu", (e) => e.preventDefault());
       cv.addEventListener("wheel", (e) => {
         e.preventDefault();
@@ -1691,14 +1774,21 @@
         b.textContent = label;
         b.tabIndex = -1;
         if (keys.length > 9) b.style.fontSize = `calc(var(--keys, 16px) * ${(9 / keys.length).toFixed(3)})`;
-        if (value === "@ctrl" || value === "@alt") modBtn[value.slice(1)].push(b);
+        /* #if vga */
+        const smod = !t && screenOn && Object.hasOwn(SMODS, k);
+        if (smod) SMODS[k].btn.push(b);
+        /* #endif */
+        if ((value === "@ctrl" || value === "@alt") /* #if vga */ && !smod /* #endif */) modBtn[value.slice(1)].push(b);
         if (value === "@more") { if (t) t.kmoreBtn = b; else moreBtn = b; }
         let timer = 0, held = false;
         const stop = () => {
           clearTimeout(timer);
           clearInterval(timer);
           b.classList.remove("down");
-          /* #if vga */ if (held) screenKey(k, false); /* #endif */
+          /* #if vga */
+          if (held && smod) smodUp(k);
+          else if (held) { screenKey(k, false); smodAfter(); }
+          /* #endif */
           held = false;
         };
         b.addEventListener("pointerdown", (e) => {
@@ -1707,7 +1797,8 @@
           /* #if vga */
           if (!t && screenOn && value !== "@more" && value !== "@kbd") {
             held = true;
-            screenKey(k, true);
+            if (smod) smodDown(k);
+            else { smodBefore(); screenKey(k, true); }
             return;
           }
           /* #endif */
@@ -1733,6 +1824,7 @@
       for (const t of ttys.values()) kbar(t);
       setMod("ctrl", mods.ctrl);
       setMod("alt", mods.alt);
+      /* #if vga */ for (const n in SMODS) smodShow(n, SMODS[n].v); /* #endif */
       setMore(mobile && cfg.get("keys.open") === "on");
     }
     // ряд клавиш в окне tk-term: те же keys.main и keys.more, только на телефоне (как ряд страницы)

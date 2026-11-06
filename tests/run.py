@@ -1007,6 +1007,32 @@ def main():
         got = keys_in(press)
         # Enter клавиатурой, ↑ кнопкой ряда (держится), Y кнопкой (без Shift), «A» набором (с Shift)
         assert got == [(28, 1), (28, 0), (103, 1), (103, 0), (21, 1), (21, 0), (42, 1), (30, 1), (30, 0), (42, 0)], got
+
+        # CTRL, ALT и SHIFT ряда залипают: касание - на следующую клавишу, два - пока не коснёшься
+        typed = lambda ch: s.ev("kbd.value = %s; kbd.dispatchEvent(new Event('input')); 0" % json.dumps(ch))
+        cls = lambda label: s.ev("[...document.querySelectorAll('#keys button')].find((b) => b.textContent === %s).className" % json.dumps(label))
+        seen = []
+
+        def sticky():
+            tap("ALT")
+            tap("SHIFT")
+            seen.append(cls("ALT"))
+            typed("x")
+            seen.append(cls("ALT"))
+            tap("CTRL")
+            tap("CTRL")
+            seen.append(cls("CTRL"))
+            typed("c")
+            tap("CTRL")
+            typed("d")
+        s.ok("kt cfg term.mobile on")  # ряд клавиш - только на телефоне
+        try:
+            got = keys_in(sticky)
+        finally:
+            s.ok("kt cfg term.mobile off")
+        assert seen == ["on", "", "lock"], seen
+        assert got == [(56, 1), (56, 0), (42, 1), (42, 0), (56, 1), (42, 1), (45, 1), (45, 0), (56, 0), (42, 0),
+                       (29, 1), (29, 0), (29, 1), (46, 1), (46, 0), (29, 0), (32, 1), (32, 0)], got
         s.ok("kt screen off")
         assert not s.ev("document.querySelector('#screen').classList.contains('on')")
         assert not s.ev("emulator.keyboard_adapter.emu_enabled")
@@ -1061,6 +1087,13 @@ def main():
         t1 = time.time()
         while s.sh("test -e /tmp/x-ok")[0]:
             assert time.time() - t1 < 10, "набранное в xterm не выполнилось"
+            time.sleep(0.5)
+        # строка разом (слово с клавиатуры телефона, вставка): очередь evdev в ядре - 64 события, X
+        # терял такую целиком, страница отдаёт клавиши порциями
+        s.ev("screenType(%s)" % json.dumps("echo 'Hello, World' > /tmp/x-long\n"))
+        t1 = time.time()
+        while s.sh("cat /tmp/x-long")[1] != "Hello, World\n":
+            assert time.time() - t1 < 15, "строка разом не дошла до xterm: %r" % s.sh("cat /tmp/x-long")[1]
             time.sleep(0.5)
         # окно браузера стало меньше - X идёт за ним (событие screen-size -> xrandr)
         s.c.call("Emulation.setDeviceMetricsOverride", width=640, height=480, deviceScaleFactor=1, mobile=False)
