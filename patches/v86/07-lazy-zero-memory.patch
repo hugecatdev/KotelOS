@@ -1,0 +1,46 @@
+zero_memory - только ненулевые страницы; видеопамять - обнулённой
+
+zero_memory (её зовёт restore_state для всей памяти гостя) заливала нулями
+весь диапазон. Прочитать нетронутую страницу браузеру ничего не стоит,
+записать в неё ноль - стоит: восстановленная машина на 128 МБ, где занято
+~35, занимала все 128. Теперь пишутся только страницы, где не ноль
+(is_memory_zeroed); раньше то же делала обёртка в page.html через wasm_fn, но
+в Web Worker (08) её не подсунуть.
+
+svga_allocate_memory брала видеопамять у аллокатора без обнуления: тот
+отдаёт и уже бывшую в деле память, и в снимки попадали мегабайты мусора
+(раньше её обнуляла страница). Теперь alloc_zeroed.
+
+--- a/src/rust/cpu/memory.rs
++++ b/src/rust/cpu/memory.rs
+@@ -44,7 +44,19 @@
+ 
+ #[no_mangle]
+ pub unsafe fn zero_memory(addr: u32, size: u32) {
+-    ptr::write_bytes(mem8.offset(addr as isize), 0, size as usize);
++    // Write only to pages that are not zero yet: reading an untouched page costs nothing, writing
++    // zeros to it makes the browser commit it (restoring a 128 MB machine with ~35 MB in use
++    // occupied all 128 MB)
++    if addr % 4096 == 0 && size % 4096 == 0 {
++        for page in (addr..addr + size).step_by(4096) {
++            if !is_memory_zeroed(page, 4096) {
++                ptr::write_bytes(mem8.offset(page as isize), 0, 4096);
++            }
++        }
++    }
++    else {
++        ptr::write_bytes(mem8.offset(addr as isize), 0, size as usize);
++    }
+ }
+ 
+ #[allow(non_upper_case_globals)]
+@@ -58,7 +70,8 @@
+         dbg_assert!(vga_mem8.is_null());
+     };
+     let layout = alloc::Layout::from_size_align(size as usize, 0x1000).unwrap();
+-    let ptr = unsafe { alloc::alloc(layout) };
++    // zeroed: the allocator may hand out memory used before, which then ends up in state images
++    let ptr = unsafe { alloc::alloc_zeroed(layout) };
+     dbg_assert!(
+         size & ((1 << 12 << 6) - 1) == 0,
+         "size not aligned to dirty_bitmap"

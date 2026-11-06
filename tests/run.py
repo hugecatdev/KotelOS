@@ -23,6 +23,8 @@ sys.path.insert(0, ROOT)
 import bundle
 
 PKGS = ["fun", "micropython", "python3", "python-requests", "pip", "curl", "pack", "sync", "notify", "ai"]
+# KT_WORKER=1: бандлы без экрана - с boot.worker on (v86 в Web Worker)
+WORKER = os.environ.get("KT_WORKER") == "1"
 AGENTS = r"""n=0
 for d in /proc/[0-9]*; do
   read -r pid comm st ppid pgrp sid rest < $d/stat 2>/dev/null || continue
@@ -370,7 +372,9 @@ def main():
     tmp = tempfile.mkdtemp(prefix="kt-tests-")
     www = os.path.join(tmp, "www")
     os.makedirs(www)
-    for args in (["-o", www + "/t.html", "-n", "test"] + PKGS, ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"],
+    worker = ["--worker"] if WORKER else []
+    for args in (["-o", www + "/t.html", "-n", "test"] + worker + PKGS,
+                 ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"] + worker,
                  ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg"]):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
@@ -393,12 +397,17 @@ def main():
         return "загрузка %.1f с" % t
 
     def vga_clean():
+        if WORKER:
+            return "видеопамять в воркере; проверяется без воркера"
         n = s.ev("emulator.v86.cpu.devices.vga.svga_memory.reduce((a, b) => a + (b ? 1 : 0), 0)")
         assert n == 0, "в видеопамяти %d ненулевых байт, снимки раздуются" % n
 
     def bundle_memory():
         n = s.ev("document.querySelectorAll('script[type=\"application/base64\"]').length")
         assert n == 0, "в DOM остались данные бандла: %d" % n
+        assert s.ev("!!emulator.worker") == WORKER, "boot.worker не тот: ждали %s" % WORKER
+        if WORKER:
+            return "v86 в воркере; zero_memory проверяется без воркера"
         r = s.ev("""(() => {
           const cpu = emulator.v86.cpu, P = 4096, zero = (p) => cpu.is_memory_zeroed(p * P, P);
           let p = cpu.mem8.length / P - 8;

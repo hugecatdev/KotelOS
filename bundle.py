@@ -197,6 +197,9 @@ def template(have=()):
     # data-lazy: скрипт - текстом, страница запустит его сама, когда понадобится (lazyScript)
     html = re.sub(r'<script src="([^"]+)" data-lazy="([\w-]+)"></script>',
                   lambda m: '<script type="text/plain" id="%s">%s</script>' % (m.group(2), src(m.group(1)).replace("</script", "<\\/script")), html)
+    # id: текст выполненного скрипта страница берёт по нему (libv86 - исходник для воркера, boot.worker)
+    html = re.sub(r'<script src="([^"]+)" id="([\w-]+)"></script>',
+                  lambda m: '<script id="%s">%s</script>' % (m.group(2), src(m.group(1)).replace("</script", "<\\/script")), html)
     html = re.sub(r'<script src="([^"]+)"></script>', lambda m: script(src(m.group(1))), html)
     return html
 
@@ -345,6 +348,8 @@ def options(argv=None):
     ap.add_argument("--timeout", type=int, default=300, help="сколько ждать каждую --run, с")
     ap.add_argument("--bare", action="store_true", help="без пакетов: только busybox и kt")
     ap.add_argument("--mem", type=int, help="память машины по умолчанию, МБ (иначе 128)")
+    ap.add_argument("--worker", action="store_true",
+                    help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker (без экрана)")
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
@@ -392,6 +397,8 @@ def main():
         bundle["mem"] = a.mem
     if a.vga:
         bundle["vga"] = a.vga
+    if a.worker:
+        bundle["worker"] = True
     if a.cmd:
         bundle["cmd"] = a.cmd
     if a.version:

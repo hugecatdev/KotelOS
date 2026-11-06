@@ -1,0 +1,37 @@
+TCP в fake_network: данные в одном сегменте с FIN не теряются
+
+Если гость закрывал запись (shutdown), пока последние данные ещё стояли в
+очереди сокета, Linux отправлял их одним сегментом с FIN. TCPConnection
+обрабатывал FIN раньше данных, а данные такого сегмента выбрасывал: страница
+получала обрезанный запрос, подтверждала только FIN и закрывала соединение,
+повторы гостя получали RST (kt js с аргументом в десятки КБ - код 1 без
+вывода). Без Web Worker подтверждения приходили синхронно, прямо внутри
+записи в порт ne2k, и FIN почти всегда шёл отдельно; с воркером (08) они на
+~1 мс позже, и так было в 20000-байтном kt js 8 раз из 8.
+
+Теперь данные из сегмента с FIN, если он пришёл по порядку, принимаются
+раньше FIN, а проверка порядка FIN считает их длину.
+
+--- a/src/browser/fake_network.js
++++ b/src/browser/fake_network.js
+@@ -1291,9 +1291,18 @@
+         }
+     }
+ 
++    // The last data may come in the same segment as FIN (the sender still had it queued when the
++    // application shut down writing): take the data before the FIN, it used to be dropped
++    let fin_seq = packet.tcp.seq;
++    if(packet.tcp.fin && packet.tcp_data.length > 0 && this.ack === packet.tcp.seq) {
++        this.ack += packet.tcp_data.length;
++        fin_seq += packet.tcp_data.length;
++        this.emit("data", packet.tcp_data);
++    }
++
+     if(packet.tcp.fin) {
+-        if(this.ack !== packet.tcp.seq) {
+-            dbg_log(`TCP[${this.tuple}]: WARNING: closing connection in state "${this.state}" with invalid seq (${this.ack} != ${packet.tcp.seq})`, LOG_FETCH);
++        if(this.ack !== fin_seq) {
++            dbg_log(`TCP[${this.tuple}]: WARNING: closing connection in state "${this.state}" with invalid seq (${this.ack} != ${fin_seq})`, LOG_FETCH);
+         }
+         ++this.ack; // FIN increases seqnr
+         const reply = this.packet_reply(packet, {});

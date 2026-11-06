@@ -1,0 +1,593 @@
+v86 в Web Worker: опция worker = { source, wasm }
+
+Процессор и устройства идут в воркере, созданном из исходника этой же
+библиотеки (source), адаптеры - сеть с TCP-соединениями, последовательный
+порт, клавиатура, мышь - остаются на странице. Эмуляция и страница (терминал,
+отрисовка, обработчики) больше не делят один поток. Без опции worker код
+прежний.
+
+- Шина: на странице bus.send, в воркере send устройств кладут сообщения в
+  пачку и шлют одним postMessage на микрозадачу: байты терминала
+  (serial0-output-byte) и пакеты сети не идут по одному сообщению. Виды на
+  память (пакет в буфере ne2k) копируются в момент постановки - буфер
+  переиспользуется до отправки пачки. Если что-то в пачке не клонируется,
+  пачка уходит по одному, ошибка - в консоль страницы.
+- В continue_init всё до v86.init() как было (файлы, адаптеры); settings
+  уходят в воркер, буферы - передачей. .zst распаковывает воркер (тот же
+  zstd_decompress, его wasm). Диски, cdrom, 9p, multiboot в воркере - ошибка.
+- run, stop, save_state, restore_state, destroy - запрос-ответ; сообщения
+  шины, отправленные раньше, уходят раньше запроса.
+- env wasm-модуля вынесен в make_wasm_env() (тот же текст, cpu -> core.cpu):
+  нужен и странице, и воркеру.
+- В воркере yield - MessageChannel и setTimeout (его таймеры в фоновой
+  вкладке не душатся), без вложенного воркера: ветка с Worker - только при
+  window.
+- Экрана в воркере пока нет: screen_container с worker - ошибка.
+
+--- a/src/browser/starter.js
++++ b/src/browser/starter.js
+@@ -67,57 +67,20 @@
+     this.bus = bus[0];
+     this.emulator_bus = bus[1];
+ 
+-    var cpu;
+-    var wasm_memory;
++    /** @type {Worker} */
++    this.worker = null;
+ 
+-    const wasm_table = new WebAssembly.Table({ element: "anyfunc", initial: WASM_TABLE_SIZE + WASM_TABLE_OFFSET });
+-
+-    const wasm_shared_funcs = {
+-        "cpu_exception_hook": n => this.cpu_exception_hook(n),
+-        "run_hardware_timers": function(a, t) { return cpu.run_hardware_timers(a, t); },
+-        "cpu_event_halt": () => { this.emulator_bus.send("cpu-event-halt"); },
+-        "abort": function() { dbg_assert(false); },
+-        "microtick": v86.microtick,
+-        "get_rand_int": function() { return get_rand_int(); },
+-        "stop_idling": function() { return cpu.stop_idling(); },
+-
+-        "io_port_read8": function(addr) { return cpu.io.port_read8(addr); },
+-        "io_port_read16": function(addr) { return cpu.io.port_read16(addr); },
+-        "io_port_read32": function(addr) { return cpu.io.port_read32(addr); },
+-        "io_port_write8": function(addr, value) { cpu.io.port_write8(addr, value); },
+-        "io_port_write16": function(addr, value) { cpu.io.port_write16(addr, value); },
+-        "io_port_write32": function(addr, value) { cpu.io.port_write32(addr, value); },
+-
+-        "mmap_read8": function(addr) { return cpu.mmap_read8(addr); },
+-        "mmap_read32": function(addr) { return cpu.mmap_read32(addr); },
+-        "mmap_write8": function(addr, value) { cpu.mmap_write8(addr, value); },
+-        "mmap_write16": function(addr, value) { cpu.mmap_write16(addr, value); },
+-        "mmap_write32": function(addr, value) { cpu.mmap_write32(addr, value); },
+-        "mmap_write64": function(addr, value0, value1) { cpu.mmap_write64(addr, value0, value1); },
+-        "mmap_write128": function(addr, value0, value1, value2, value3) {
+-            cpu.mmap_write128(addr, value0, value1, value2, value3);
+-        },
+-
+-        "log_from_wasm": function(offset, len) {
+-            const str = read_sized_string_from_mem(wasm_memory, offset, len);
+-            dbg_log(str, LOG_CPU);
+-        },
+-        "console_log_from_wasm": function(offset, len) {
+-            const str = read_sized_string_from_mem(wasm_memory, offset, len);
+-            console.error(str);
+-        },
+-        "dbg_trace_from_wasm": function() {
+-            dbg_trace(LOG_CPU);
+-        },
++    if(options.worker)
++    {
++        // CPU and devices run in a Web Worker, the adapters stay on this thread
++        this.worker_init(options);
++        return;
++    }
+ 
+-        "codegen_finalize": (wasm_table_index, start, state_flags, ptr, len) => {
+-            cpu.codegen_finalize(wasm_table_index, start, state_flags, ptr, len);
+-        },
+-        "jit_clear_func": (wasm_table_index) => cpu.jit_clear_func(wasm_table_index),
+-        "jit_clear_all_funcs": () => cpu.jit_clear_all_funcs(),
++    const core = { cpu: undefined, wasm_memory: undefined };
++    const wasm_table = new WebAssembly.Table({ element: "anyfunc", initial: WASM_TABLE_SIZE + WASM_TABLE_OFFSET });
+ 
+-        "__indirect_function_table": wasm_table,
+-    };
++    const wasm_shared_funcs = make_wasm_env(this, core, wasm_table);
+ 
+     let wasm_fn = options.wasm_fn;
+ 
+@@ -186,11 +149,11 @@
+ 
+     wasm_fn({ "env": wasm_shared_funcs })
+         .then((exports) => {
+-            wasm_memory = exports.memory;
++            core.wasm_memory = exports.memory;
+             exports["rust_init"]();
+ 
+             const emulator = this.v86 = new v86(this.emulator_bus, { exports, wasm_table });
+-            cpu = emulator.cpu;
++            core.cpu = emulator.cpu;
+ 
+             this.continue_init(emulator, options);
+         });
+@@ -199,6 +162,63 @@
+     this.zstd_worker_request_id = 0;
+ }
+ 
++/**
++ * Imports of v86.wasm; core.cpu and core.wasm_memory are filled in once the module is instantiated
++ *
++ * @param {Object} starter has cpu_exception_hook and emulator_bus
++ * @param {Object} core has cpu and wasm_memory
++ * @param {WebAssembly.Table} wasm_table
++ */
++function make_wasm_env(starter, core, wasm_table)
++{
++    return {
++        "cpu_exception_hook": n => starter.cpu_exception_hook(n),
++        "run_hardware_timers": function(a, t) { return core.cpu.run_hardware_timers(a, t); },
++        "cpu_event_halt": () => { starter.emulator_bus.send("cpu-event-halt"); },
++        "abort": function() { dbg_assert(false); },
++        "microtick": v86.microtick,
++        "get_rand_int": function() { return get_rand_int(); },
++        "stop_idling": function() { return core.cpu.stop_idling(); },
++
++        "io_port_read8": function(addr) { return core.cpu.io.port_read8(addr); },
++        "io_port_read16": function(addr) { return core.cpu.io.port_read16(addr); },
++        "io_port_read32": function(addr) { return core.cpu.io.port_read32(addr); },
++        "io_port_write8": function(addr, value) { core.cpu.io.port_write8(addr, value); },
++        "io_port_write16": function(addr, value) { core.cpu.io.port_write16(addr, value); },
++        "io_port_write32": function(addr, value) { core.cpu.io.port_write32(addr, value); },
++
++        "mmap_read8": function(addr) { return core.cpu.mmap_read8(addr); },
++        "mmap_read32": function(addr) { return core.cpu.mmap_read32(addr); },
++        "mmap_write8": function(addr, value) { core.cpu.mmap_write8(addr, value); },
++        "mmap_write16": function(addr, value) { core.cpu.mmap_write16(addr, value); },
++        "mmap_write32": function(addr, value) { core.cpu.mmap_write32(addr, value); },
++        "mmap_write64": function(addr, value0, value1) { core.cpu.mmap_write64(addr, value0, value1); },
++        "mmap_write128": function(addr, value0, value1, value2, value3) {
++            core.cpu.mmap_write128(addr, value0, value1, value2, value3);
++        },
++
++        "log_from_wasm": function(offset, len) {
++            const str = read_sized_string_from_mem(core.wasm_memory, offset, len);
++            dbg_log(str, LOG_CPU);
++        },
++        "console_log_from_wasm": function(offset, len) {
++            const str = read_sized_string_from_mem(core.wasm_memory, offset, len);
++            console.error(str);
++        },
++        "dbg_trace_from_wasm": function() {
++            dbg_trace(LOG_CPU);
++        },
++
++        "codegen_finalize": (wasm_table_index, start, state_flags, ptr, len) => {
++            core.cpu.codegen_finalize(wasm_table_index, start, state_flags, ptr, len);
++        },
++        "jit_clear_func": (wasm_table_index) => core.cpu.jit_clear_func(wasm_table_index),
++        "jit_clear_all_funcs": () => core.cpu.jit_clear_all_funcs(),
++
++        "__indirect_function_table": wasm_table,
++    };
++}
++
+ V86.prototype.continue_init = async function(emulator, options)
+ {
+     this.bus.register("emulator-stopped", function()
+@@ -579,7 +599,14 @@
+                     if(f.url.endsWith(".zst") && f.name !== "initial_state")
+                     {
+                         dbg_assert(f.size, "A size must be provided for compressed images");
+-                        result = this.zstd_decompress(f.size, new Uint8Array(result));
++                        if(this.worker)
++                        {
++                            this.worker_zst[f.name] = f.size;
++                        }
++                        else
++                        {
++                            result = this.zstd_decompress(f.size, new Uint8Array(result));
++                        }
+                     }
+ 
+                     put_on_settings.call(this, f.name, f.as_json ? result : new SyncBuffer(result));
+@@ -673,6 +700,12 @@
+             }
+         }
+ 
++        if(this.worker)
++        {
++            this.worker_start(settings, options);
++            return;
++        }
++
+         this.v86.init(settings);
+ 
+         this.modem && this.modem.initialize();
+@@ -839,6 +872,11 @@
+  */
+ V86.prototype.run = async function()
+ {
++    if(this.worker)
++    {
++        await this.worker_call("run");
++        return;
++    }
+     this.v86.run();
+ };
+ 
+@@ -858,6 +896,11 @@
+             resolve();
+         };
+         this.add_listener("emulator-stopped", listener);
++        if(this.worker)
++        {
++            this.worker_call("stop");
++            return;
++        }
+         this.v86.stop();
+     });
+ };
+@@ -869,7 +912,15 @@
+ {
+     await this.stop();
+ 
+-    this.v86.destroy();
++    if(this.worker)
++    {
++        this.worker.terminate();
++        this.worker = null;
++    }
++    else
++    {
++        this.v86.destroy();
++    }
+     this.keyboard_adapter && this.keyboard_adapter.destroy();
+     this.network_adapter && this.network_adapter.destroy();
+     this.mouse_adapter && this.mouse_adapter.destroy();
+@@ -929,6 +980,11 @@
+ V86.prototype.restore_state = async function(state)
+ {
+     dbg_assert(arguments.length === 1);
++    if(this.worker)
++    {
++        await this.worker_call("restore_state", state, [state]);
++        return;
++    }
+     this.v86.restore_state(state);
+ };
+ 
+@@ -940,6 +996,10 @@
+ V86.prototype.save_state = async function()
+ {
+     dbg_assert(arguments.length === 0);
++    if(this.worker)
++    {
++        return /** @type {ArrayBuffer} */ (await this.worker_call("save_state"));
++    }
+     return this.v86.save_state();
+ };
+ 
+@@ -1632,6 +1692,271 @@
+ }
+ FileNotFoundError.prototype = Error.prototype;
+ 
++/*
++ * Web Worker mode (options.worker = { source, wasm }): the CPU and the devices run in a worker
++ * created from the source of this library, the adapters (network, serial, keyboard, mouse) stay
++ * on the page. Both ends of the bus are bridged with postMessage: messages are batched and sent
++ * once per microtask, so per-byte events (serial0-output-byte) don't become one message each.
++ * The screen is not supported in this mode yet. Errors in the worker come as the bus event
++ * "worker-error" (and in the console of the page).
++ */
++
++/**
++ * Messages are sent in batches, later: a view on memory that gets reused (a packet in the buffer
++ * of the network card) must be copied when it is queued
++ *
++ * @param {*} value
++ * @return {*}
++ */
++function copy_view(value)
++{
++    return value instanceof Uint8Array ? value.slice() : value;
++}
++
++/**
++ * @param {Object} options
++ */
++V86.prototype.worker_init = function(options)
++{
++    if(options.screen_container)
++    {
++        throw new Error("v86 worker: no screen yet");
++    }
++
++    const blob = new Blob([options.worker.source, "\n;self['V86']['worker_main']();\n"], { type: "text/javascript" });
++    const url = URL.createObjectURL(blob);
++    this.worker = new Worker(url);
++    URL.revokeObjectURL(url);
++
++    this.worker_calls = new Map();
++    // compressed files that the worker unpacks (it has the wasm with zstd): name -> size
++    this.worker_zst = {};
++    this.worker_call_id = 0;
++    this.worker_queue = [];
++
++    // adapters -> devices
++    /**
++     * @param {string} name
++     * @param {*=} value
++     */
++    this.bus.send = (name, value) => {
++        if(this.worker_queue.push([name, copy_view(value)]) === 1)
++        {
++            queueMicrotask(() => this.worker_flush());
++        }
++    };
++
++    this.worker.onmessage = e => {
++        const data = e.data;
++        if(data.t === "bus")
++        {
++            // devices -> adapters (and the page)
++            for(const [name, value] of data.m)
++            {
++                this.emulator_bus.send(name, value);
++            }
++        }
++        else if(data.t === "result")
++        {
++            const call = this.worker_calls.get(data.id);
++            this.worker_calls.delete(data.id);
++            if(data.error) call.reject(new Error(data.error));
++            else call.resolve(data.result);
++        }
++        else if(data.t === "error")
++        {
++            console.error("v86 worker:", data.error);
++            this.emulator_bus.send("worker-error", data.error);
++        }
++    };
++    // the script of the worker itself failed (syntax, blocked)
++    this.worker.onerror = e => {
++        console.error("v86 worker:", e.message);
++        this.emulator_bus.send("worker-error", e.message || "worker failed");
++    };
++
++    this.continue_init(null, options);
++};
++
++V86.prototype.worker_flush = function()
++{
++    if(this.worker && this.worker_queue.length)
++    {
++        this.worker.postMessage({ t: "bus", m: this.worker_queue });
++        this.worker_queue = [];
++    }
++};
++
++/**
++ * @param {string} method
++ * @param {*=} arg
++ * @param {Array=} transfer
++ * @return {Promise<*>}
++ */
++V86.prototype.worker_call = function(method, arg, transfer)
++{
++    return new Promise((resolve, reject) => {
++        const id = ++this.worker_call_id;
++        this.worker_calls.set(id, { resolve, reject });
++        // after the bus messages sent before, in the same order
++        this.worker_flush();
++        this.worker.postMessage({ t: "call", id, method, arg }, transfer || []);
++    });
++};
++
++/**
++ * @param {!Object} settings
++ * @param {!Object} options
++ */
++V86.prototype.worker_start = function(settings, options)
++{
++    for(const name of ["hda", "hdb", "cdrom", "fda", "fdb", "multiboot", "fs9p"])
++    {
++        if(settings[name]) throw new Error("v86 worker: " + name + " is not supported");
++    }
++    const send = {};
++    for(const name of Object.keys(settings))
++    {
++        // live objects of this thread: the screen and serial adapters, DOM elements
++        if(name !== "screen" && name !== "screen_options" && name !== "serial_console" && name !== "fs9p_json")
++        {
++            send[name] = settings[name];
++        }
++    }
++    const transfer = new Set([options.worker.wasm]);
++    for(const name of ["bios", "vga_bios", "bzimage", "initrd", "initial_state"])
++    {
++        if(send[name] instanceof ArrayBuffer) transfer.add(send[name]);
++    }
++    settings.initial_state = undefined;
++    this.worker.postMessage({
++        t: "init",
++        settings: send,
++        wasm: options.worker.wasm,
++        zst: this.worker_zst,
++        autostart: !!options.autostart,
++    }, [...transfer]);
++};
++
++/**
++ * Entry of the worker: wasm, CPU and devices, the bus to the page
++ */
++V86["worker_main"] = function()
++{
++    /**
++     * @param {*} msg
++     * @param {Array=} transfer
++     */
++    const post = function(msg, transfer) { globalThis["postMessage"](msg, transfer || []); };
++    const pair = Bus.create();
++    const from_page = pair[0];
++    const device_bus = pair[1];
++    /** @type {v86} */
++    let emulator = null;
++    let queue = [];
++    const flush = () => {
++        if(queue.length)
++        {
++            const m = queue;
++            queue = [];
++            try
++            {
++                post({ t: "bus", m });
++            }
++            catch(err)
++            {
++                // one value that can't be cloned must not take the others with it
++                for(const one of m)
++                {
++                    try { post({ t: "bus", m: [one] }); }
++                    catch(e) { report("bus message " + one[0] + ": " + e); }
++                }
++            }
++        }
++    };
++    /**
++     * @param {string} name
++     * @param {*=} value
++     */
++    device_bus.send = function(name, value)
++    {
++        if(queue.push([name, copy_view(value)]) === 1)
++        {
++            queueMicrotask(flush);
++        }
++    };
++    const report = err => post({ t: "error", error: String(err && err.stack || err) });
++    globalThis["addEventListener"]("error", e => report(e.error || e.message));
++    globalThis["addEventListener"]("unhandledrejection", e => report(e.reason));
++
++    globalThis["addEventListener"]("message", async e => {
++        const data = e.data;
++        if(data.t === "bus")
++        {
++            for(const [name, value] of data.m)
++            {
++                from_page.send(name, value);
++            }
++        }
++        else if(data.t === "init")
++        {
++            const wasm_table = new WebAssembly.Table({ element: "anyfunc", initial: WASM_TABLE_SIZE + WASM_TABLE_OFFSET });
++            const core = { cpu: undefined, wasm_memory: undefined };
++            const starter = { cpu_exception_hook: n => {}, emulator_bus: device_bus };
++            const { instance } = await WebAssembly.instantiate(data.wasm, { "env": make_wasm_env(starter, core, wasm_table) });
++            const exports = instance.exports;
++            core.wasm_memory = exports.memory;
++            exports["rust_init"]();
++            emulator = new v86(device_bus, { exports, wasm_table });
++            core.cpu = emulator.cpu;
++
++            const settings = data.settings;
++            const zst = /** @type {!Object<string, number>} */ (data.zst);
++            for(const name of Object.keys(zst))
++            {
++                // the same unpacking as on the page, with the wasm of this worker
++                const unpack = /** @type {V86} */ (/** @type {?} */ ({ v86: emulator, zstd_context: null }));
++                settings[name] = V86.prototype.zstd_decompress.call(unpack, zst[name], new Uint8Array(settings[name]));
++            }
++            settings.screen = new DummyScreenAdapter({});
++            emulator.init(settings);
++            if(settings.initial_state)
++            {
++                emulator.restore_state(settings.initial_state);
++                settings.initial_state = undefined;
++            }
++            if(data.autostart)
++            {
++                emulator.run();
++            }
++            device_bus.send("emulator-loaded");
++        }
++        else if(data.t === "call")
++        {
++            let result;
++            let transfer = [];
++            try
++            {
++                if(data.method === "save_state")
++                {
++                    result = await emulator.save_state();
++                    transfer = [result];
++                }
++                else if(data.method === "restore_state") emulator.restore_state(data.arg);
++                else if(data.method === "run") emulator.run();
++                else if(data.method === "stop") emulator.stop();
++                flush();
++                post({ t: "result", id: data.id, result }, transfer);
++            }
++            catch(err)
++            {
++                flush();
++                post({ t: "result", id: data.id, error: String(err && err.stack || err) });
++            }
++        }
++    });
++};
++
+ /* global module, self */
+ 
+ if(typeof module !== "undefined" && typeof module.exports !== "undefined")
+--- a/src/main.js
++++ b/src/main.js
+@@ -125,7 +125,7 @@
+     v86.prototype.register_yield = function() {};
+     v86.prototype.unregister_yield = function() {};
+ }
+-else if(typeof Worker !== "undefined")
++else if(typeof Worker !== "undefined" && typeof window !== "undefined")
+ {
+     // XXX: This has a slightly lower throughput compared to window.postMessage
+ 
+@@ -218,13 +218,37 @@
+ //}
+ else
+ {
+-    v86.prototype.yield = function(t)
++    // also v86 itself in a Web Worker: timers of a worker are not throttled in background tabs,
++    // no nested worker needed; without a delay a message to ourselves, setTimeout(0) is clamped
++    v86.prototype.yield = function(t, tick)
+     {
+-        setTimeout(() => { this.do_tick(); }, t);
++        if(t < 1 && this.yield_channel)
++        {
++            this.yield_channel.port2.postMessage(tick);
++        }
++        else
++        {
++            setTimeout(() => this.yield_callback(tick), t);
++        }
+     };
+ 
+-    v86.prototype.register_yield = function() {};
+-    v86.prototype.unregister_yield = function() {};
++    v86.prototype.register_yield = function()
++    {
++        if(typeof MessageChannel !== "undefined")
++        {
++            this.yield_channel = new MessageChannel();
++            this.yield_channel.port1.onmessage = e => this.yield_callback(e.data);
++        }
++    };
++
++    v86.prototype.unregister_yield = function()
++    {
++        if(this.yield_channel)
++        {
++            this.yield_channel.port1.close();
++            this.yield_channel = null;
++        }
++    };
+ }
+ 
+ v86.prototype.save_state = function()

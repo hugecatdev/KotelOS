@@ -88,7 +88,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js" data-lazy="kt-canvas"></script>
-  <script src="vendor/v86/libv86.js"></script>
+  <script src="vendor/v86/libv86.js" id="kt-v86"></script>
   <script>
     "use strict";
     const $ = (s) => document.querySelector(s);
@@ -173,6 +173,7 @@
       "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
       /* #if vga */ "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] }, /* #endif */
       "boot.log": { def: "off", values: ["on", "off"] },
+      "boot.worker": { def: BUNDLE && BUNDLE.worker ? "on" : "off", values: ["on", "off"] },
       "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
       "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
     };
@@ -1806,18 +1807,8 @@
       return new Response(chunks(bytes.buffer).pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
     }
     function release(buf) {
-      if (typeof structuredClone === "function") structuredClone(buf, { transfer: [buf] });
-    }
-    function lazyZero(ex) {
-      if (!ex.zero_memory || !ex.is_memory_zeroed) return ex;
-      const PAGE = 4096;
-      return {
-        ...ex,
-        zero_memory(addr, len) {
-          if (addr % PAGE || len % PAGE) return ex.zero_memory(addr, len);
-          for (const end = addr + len; addr < end; addr += PAGE) if (!ex.is_memory_zeroed(addr, PAGE)) ex.zero_memory(addr, PAGE);
-        },
-      };
+      // в режиме воркера буфер уже отдан туда (byteLength 0)
+      if (buf.byteLength && typeof structuredClone === "function") structuredClone(buf, { transfer: [buf] });
     }
 
     let bootLines = 0, bootLive = "";
@@ -1859,11 +1850,6 @@
 
       bootlog("распаковываю v86 и bios");
       let wasm = await bundleFile("wasm"), state = null, initrd = null;
-      opts.wasm_fn = async (env) => {
-        const { instance } = await WebAssembly.instantiate(wasm, env);
-        wasm = null;
-        return lazyZero(instance.exports);
-      };
       opts.bios = { buffer: await bundleFile("bios") };
       /* #if vga */
       opts.vga_bios = { buffer: await bundleFile("vgabios") };
@@ -1920,7 +1906,40 @@
         opts.disable_keyboard = false;
       }
       /* #endif */
-      emulator = new V86(opts);
+      // boot.worker: процессор и устройства v86 в Web Worker, страница (терминал, мост kt) - в своём
+      // потоке. Экрана в воркере пока нет: с видеопамятью под экран машина идёт на странице, как раньше
+      if (cfg.get("boot.worker") === "on" && vgaSize < VGA_MIN && typeof Worker === "function") {
+        try {
+          emulator = new V86({ ...opts, worker: { source: $("#kt-v86").textContent, wasm } });
+        } catch (e) {
+          // воркер не создать (политика страницы, браузер): машина идёт на странице, как без boot.worker
+          console.warn("boot.worker: воркер не создать, v86 на странице", e);
+          emulator = null;
+        }
+      }
+      if (!emulator) {
+        emulator = new V86({
+          ...opts,
+          wasm_fn: async (env) => {
+            const { instance } = await WebAssembly.instantiate(wasm, env);
+            wasm = null;
+            return instance.exports;
+          },
+        });
+      }
+      if (emulator.worker) {
+        wasm = null;
+        // воркер не поднял машину: дальше без него, сохранение и настройки остаются
+        let loaded = false;
+        emulator.add_listener("emulator-loaded", () => { loaded = true; });
+        emulator.add_listener("worker-error", (e) => {
+          if (loaded) return;
+          loaded = true;
+          bootlog(`v86 в воркере не запустился (${String(e).split("\n")[0]}), boot.worker off`);
+          cfg.set("boot.worker", "off");
+          setTimeout(() => location.reload(), 1500);
+        });
+      }
       emulator.keyboard_set_enabled(false);
       const outDec = new TextDecoder();
       let out = [];
@@ -1942,8 +1961,6 @@
         bootlog(`${name} ${human(e.total)} ${Math.round(e.loaded / e.total * 100)}%`, name);
       });
       emulator.add_listener("emulator-loaded", () => {
-        const vga = emulator.v86 && emulator.v86.cpu.devices.vga;
-        if (vga && vga.svga_memory && !saved && !image) vga.svga_memory.fill(0);
         if (state) release(state);
         if (initrd) URL.revokeObjectURL(initrd);
         connectAgent();
