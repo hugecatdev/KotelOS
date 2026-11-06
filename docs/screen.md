@@ -167,7 +167,10 @@ X), темы GTK3, libinput, cups, pango, xdg-utils (тянет libmagic, 10 М�
 Qt Designer - `kt pkg add qt5-qttools-dev`, запуск `designer`. В репозитории
 этот пакет урезан до одного `designer` (0.35 МБ) с `libqt5designer` и
 `libqt5designercomponents`: 3 пакета, 5 МБ скачать, 6.4 МБ в машине, остальное
-Qt5 - то же, что у `sqlitebrowser`. Целиком из Alpine он тянет 91 пакет и ~925 МБ:
+Qt5 - то же, что у `sqlitebrowser`. В бандле `vga` с нуля - 36 пакетов вместе с
+Qt5 и `mesa-xlib`, 23 МБ скачать, 74 МБ в машине, ~50 с; окно с «New Form»
+появляется меньше чем за 30 с после запуска, форма из шаблона создаётся,
+программа держит ~46 МБ. Целиком из Alpine он тянет 91 пакет и ~925 МБ:
 LLVM 18 через `libclang` (нужен только `qdoc`), Qt Quick через `qt5-qttools`
 (`qdbus`, `qtdiag`), `qt5-qtbase-dev` с mesa-dev и perl (заголовки). Без них в
 Designer нет «Просмотра кода» (`uic` - в `qt5-qtbase-dev`), справки (assistant)
