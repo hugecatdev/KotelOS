@@ -16,9 +16,17 @@ OUT=$PWD/packages/mesa-xlib
 
 [ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
 python3 -c "import mako, yaml" 2>/dev/null || { echo "нужны python3 mako и yaml (генераторы mesa)"; exit 1; }
-[ -f $CACHE/mesa-$VER.tar.xz ] || curl -fsSL https://archive.mesa3d.org/mesa-$VER.tar.xz -o $CACHE/mesa-$VER.tar.xz
+# через .tmp и с проверкой суммы: оборванная загрузка не остаётся в кэше «готовым» архивом,
+# а битый архив качается заново (sha512 сверен с APKBUILD mesa в Alpine 3.22)
+TAR=$CACHE/mesa-$VER.tar.xz
+SUM=412df33a1bb3c785ed698555a3972118a37c458e7accf6ae53f4bb87b3db454a
+if [ "$(sha256sum $TAR 2>/dev/null | cut -d' ' -f1)" != $SUM ]; then
+  curl -fsSL https://archive.mesa3d.org/mesa-$VER.tar.xz -o $TAR.tmp
+  mv $TAR.tmp $TAR
+  [ "$(sha256sum $TAR | cut -d' ' -f1)" = $SUM ] || { echo "mesa-$VER.tar.xz: не та контрольная сумма" >&2; exit 1; }
+fi
 rm -rf $SRC
-tar -xJf $CACHE/mesa-$VER.tar.xz -C $CACHE
+tar -xJf $TAR -C $CACHE
 
 rm -rf $SR
 python3 - "$SR" <<'EOF'
