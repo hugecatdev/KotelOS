@@ -8,7 +8,7 @@
 ```sh
 scripts/build-busybox.sh  # тулчейн musl.cc, статический busybox с юникодом -> overlay/bin/busybox, kt-seed, kt-net, pyzygote
 scripts/build-kernel.sh   # ядро по config/linux.config + config/kernel.fragment -> images/bzImage
-scripts/get-packages.sh   # пакеты из Alpine x86, свой CPython, openblas, jdk8 -> build/packages/
+scripts/get-packages.sh   # пакеты из Alpine x86, свой CPython, openblas, numpy, jdk8 -> build/packages/
 ./build.sh                # base/ + overlay/ -> images/rootfs.cpio, packages/ + build/packages/ -> site/repo/ (без sudo)
 python3 bundle.py         # images/ + vendor/v86/ + site/repo/ + page.html -> site/index.html
 ```
@@ -17,7 +17,9 @@ python3 bundle.py         # images/ + vendor/v86/ + site/repo/ + page.html -> si
 
 ```sh
 scripts/build-python.sh         # свой CPython -> build/packages/minipython, python3, python3-* (его зовёт get-packages.sh)
-scripts/build-openblas.sh       # openblas без SSSE3 -> build/packages/openblas (его зовёт get-packages.sh)
+scripts/build-openblas.sh       # openblas под SSE2, LAPACK на C -> build/packages/openblas (его зовёт get-packages.sh)
+scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> build/packages/python-numpy (его зовёт get-packages.sh)
+scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
 python3 tests/run.py            # тесты моста в headless Chromium (--build - сначала собрать, -k имя - выборочно)
 python3 tests/mpl.py            # matplotlib с patches/matplotlib.patch против исходного: те же картинки (--time - время кадров на хосте)

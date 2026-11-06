@@ -23,6 +23,8 @@
 | BusyBox 1.36.1 | GPL-2.0 | `scripts/build-busybox.sh` (busybox.net), патчи и конфиг - из Buildroot 2024.02.5 + `config/busybox.fragment` |
 | CPython 3.12.15, в том числе IDLE, turtle и turtledemo без изменений | PSF-2.0 | `scripts/build-python.sh` (python.org) |
 | OpenBLAS 0.3.28 | BSD-3-Clause | `scripts/build-openblas.sh` (GitHub) |
+| NumPy 2.2.4 | BSD-3-Clause (и лицензии вложенных частей, см. её `LICENSE.txt`) | `scripts/build-numpy.sh` (PyPI) |
+| Cython 3.1 | Apache-2.0 | `scripts/build-numpy.sh` (PyPI), только для сборки numpy |
 | пакеты Alpine Linux 3.22 | у каждого своя | `scripts/get-packages.sh`, `alpine.py`; `kt pkg add` в машине - тоже |
 | xterm.js и аддоны | MIT | `bundle.py` (cdn.jsdelivr.net), встраивается в бандл |
 | тулчейн musl.cc | - | `scripts/build-*.sh`, только для сборки, в бандлы не попадает |

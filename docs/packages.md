@@ -106,21 +106,47 @@ Firefox ради него шлёт preflight, который сайты не п�
 Процессы страниц chawan запирает в seccomp, поэтому в ядре включён `CONFIG_SECCOMP`.
 
 Питоновские библиотеки из Alpine лежат в репозитории как `python-<имя>`
-(`py3-numpy` -> `python-numpy`), их ставит pip, когда нет колеса. Отбор - `scripts/pyset.py`: все `py3-*` с C-кодом,
+(`py3-pandas` -> `python-pandas`), их ставит pip, когда нет колеса. Отбор - `scripts/pyset.py`: все `py3-*` с C-кодом,
 которые вместе с недостающими зависимостями весят до 10 МБ и не тянут графику
 (Qt, GTK, WebKit, mesa, LLVM), плюс numpy, pandas, scipy, matplotlib: ~270
 питоновских пакетов, ~500 вместе с библиотеками. Зависимости от `py3-requests`
 и `py3-pip` указывают на наши шимы (`alpine.py --alias`), уже собранные
 пакеты не перезаписываются (`--keep-existing`). numpy, pandas и scipy большие:
-нужен `kt cfg boot.mem 256` и больше.
+нужен `kt cfg boot.mem 256` и больше. Из пакетов Alpine выкидываются подсказки
+типов (`*.pyi`, `py.typed`), C-исходники, из которых Cython собрал лежащий рядом
+модуль (fontTools кладёт их в колесо, 5 МБ), и программы qhull (matplotlib
+нужна только `libqhull_r`).
 
-openblas свой (`scripts/build-openblas.sh`, тот же тулчейн musl.cc с gfortran): у
-Alpine он собран под Core2 и в общем коде (`dlaswp`, нужен `inv`/`solve`)
-использует SSSE3 (`palignr`), а v86 умеет только SSE, SSE2 и SSE3 - процесс
-падал с SIGILL. Наш - `TARGET=PRESCOTT`, общий код `-march=pentium4`, один
-поток (у v86 одно ядро), 13 МБ вместо 25, то же имя `libopenblas.so.3`;
-скрипт проверяет, что SSSE3 в библиотеке нет. Остальные библиотеки с SSSE3/SSE4
-(libcrypto, zlib-ng, numpy) выбирают код по CPUID и работают.
+v86 сообщает в CPUID MMX, SSE, SSE2, SSE3 и POPCNT, но из SSE3 не умеет
+`addsubps`, `addsubpd` и `lddqu`: на них, как и на SSSE3/SSE4/AVX, процесс
+падает с SIGILL. Библиотеки, которые выбирают код по CPUID (libcrypto, zlib-ng),
+работают; то, что собираем сами под один процессор, проверяет
+`scripts/check-isa.sh`. Ещё одно свойство v86: JIT компилирует код
+постранично, и цикл, тело которого лежит на двух страницах 4 КБ, идёт в ~7 раз
+медленнее (тот же цикл на C: 13 мс внутри страницы, 89 через границу). Какой
+горячий цикл ляжет на границу - дело случая компоновки; `-falign-loops=32`
+не даёт короткому циклу лечь на две страницы.
+
+openblas и numpy свои, тот же тулчейн musl.cc. openblas
+(`scripts/build-openblas.sh`): у Alpine он собран под Core2 и в общем коде
+(`dlaswp`, нужен `inv`/`solve`) использует SSSE3 (`palignr`). Наш -
+`TARGET=NORTHWOOD` (ядра на SSE2: у PRESCOTT комплексные `zgemm`/`ztrsm` на
+`addsubpd`, и `c @ c` или `inv` комплексной матрицы падали с SIGILL), общий код `-march=pentium4`, один поток (у v86 одно ядро), LAPACK -
+C-перевод из OpenBLAS вместо фортрановского, без LAPACKE: 11 МБ вместо 25 и без
+`libgfortran`/`libquadmath` (3.4 МБ), то же имя `libopenblas.so.3`. Соглашения
+о вызовах остаются как у gfortran, scipy (он сам на gfortran и тянет
+`libgfortran`) работает с ним как раньше; в госте он быстрее прежнего
+(`matmul` 200x200 87 мс вместо 120, `qr` 288 вместо 366). numpy
+(`scripts/build-numpy.sh`, meson из исходников numpy, Cython 3.1 в
+`.cache/numpy-tools`, CPython цели запускается на хосте через загрузчик musl):
+база SSE и SSE2, как у Alpine, но без вариантов кода под SSSE3..AVX-512, которые
+в v86 никогда не выполняются, без модулей для тестов (`_simd` и др.) и с
+`-falign-loops=32`: `_multiarray_umath` 4.7 МБ вместо 10.5, пакет 11.7 МБ вместо
+21.8. Тесты numpy на хосте (i386-питон через загрузчик musl) - 90000 прошли,
+упавших сверх тех, что падают и у сборки Alpine, нет; в госте скорость та же, что у
+Alpine, сортировка целых и `unique` быстрее. Из тестов оставлен
+`numpy/_core/tests/_natype.py`: его импортирует `numpy.testing`, а без него не
+импортировался scipy.
 
 Пакеты мелкие, по одному на каждый пакет Alpine: `nano` тянет `musl` и
 `libncursesw`, та - `ncurses-terminfo-base`. musl тоже пакет: в базе только

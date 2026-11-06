@@ -12,9 +12,10 @@ MicroPython и на странице.
 ## Сборка
 
 Нужны Linux x86-64 (ядро с поддержкой i386: собранный CPython запускается на
-хосте), `python3`, `curl`, `xz`, `zstd`, `cpio`, `patch`, `make`, `gcc`;
-Chromium - для `--snap` и тестов, `npx` - для сжатия js (без него остаётся как
-есть). Тулчейн musl.cc и исходники скачиваются сами в `.cache/`.
+хосте), `python3` (с `venv`), `curl`, `xz`, `zstd`, `cpio`, `patch`, `make`, `gcc`,
+`ninja` и `pkg-config` (сборка numpy); Chromium - для `--snap` и тестов, `npx` - для
+сжатия js (без него остаётся как есть). Тулчейн musl.cc, исходники и Cython
+скачиваются сами в `.cache/`.
 
 ```sh
 scripts/build-busybox.sh   # busybox, kt-net, kt-seed, pyzygote

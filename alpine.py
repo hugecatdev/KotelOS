@@ -22,6 +22,7 @@ DROP = [
     "usr/share/locale/*", "usr/share/bash-completion/*", "usr/share/zsh/*", "usr/share/fish/*",
     "usr/lib/pkgconfig/*", "usr/lib/cmake/*", "*.a", "*.la",
     "usr/share/icons/*", "usr/share/pixmaps/*",  # .desktop (usr/share/applications) остаются: их показывает рабочий стол
+    "*.pyi", "*/py.typed",  # подсказки типов питона: нужны только проверяльщикам типов
 ]
 
 
