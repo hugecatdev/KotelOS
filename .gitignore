@@ -12,6 +12,7 @@
 /overlay/usr/sbin/kt-net
 /overlay/usr/sbin/kt-seed
 /packages/kt-ttyd/usr/sbin/kt-ttyd
+/packages/doom/usr/lib/doom/doom
 /packages/pyzygote/usr/local/bin/python3
 
 __pycache__/

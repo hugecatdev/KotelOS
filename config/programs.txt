@@ -18,6 +18,8 @@ python-matplotlib-demo примеры matplotlib (команда mpldemo)
 kt-ttyd виртуальные консоли (Alt+1..9, kt tty)
 tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
+doom Doom на экране
+doom-shareware первый эпизод Doom (shareware)
 python-mpy команда python для micropython
 minipython лёгкий CPython 3.12
 python3 полный CPython 3.12

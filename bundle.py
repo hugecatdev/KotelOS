@@ -287,7 +287,7 @@ SETTLE = """(async (quiet, max) => {
 SNAP = """(async () => {
   const raw = await emulator.save_state();
   const gz = await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
-  return { state: toB64(new Uint8Array(gz)), screen: serializer.serialize({ scrollback: 300 }), mem: memSize };
+  return { state: toB64(new Uint8Array(gz)), screen: serializer.serialize({ scrollback: 300 }), mem: memSize, vga: vgaSize };
 })()"""
 
 
@@ -323,7 +323,7 @@ def snapshot(html, cmds, timeout, prep=()):
             r = chrome.eval(SNAP)
         finally:
             chrome.close()
-    return {"data": b64(zstd(gzip.decompress(base64.b64decode(r["state"])))), "mem": r["mem"], "screen": r["screen"]}
+    return {"data": b64(zstd(gzip.decompress(base64.b64decode(r["state"])))), "mem": r["mem"], "vga": r["vga"], "screen": r["screen"]}
 
 
 def options(argv=None):
@@ -340,6 +340,7 @@ def options(argv=None):
     ap.add_argument("--timeout", type=int, default=300, help="сколько ждать каждую --run, с")
     ap.add_argument("--bare", action="store_true", help="без пакетов: только busybox и kt")
     ap.add_argument("--mem", type=int, help="память машины по умолчанию, МБ (иначе 128)")
+    ap.add_argument("--vga", action="store_true", help="экран (boot.vga on): видеопамять 4 МБ, /dev/fb0")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/)")
@@ -376,6 +377,8 @@ def main():
     bundle = {"name": a.name, "build": json.load(open(IMG + "/build.json")), "repo": a.repo, "files": {**files, **boot}, "state": None}
     if a.mem:
         bundle["mem"] = a.mem
+    if a.vga:
+        bundle["vga"] = True
     if a.cmd:
         bundle["cmd"] = a.cmd
     if a.version:

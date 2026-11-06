@@ -1,0 +1,18 @@
+#!/bin/sh
+# Doom на экране: настройки и сохранения - в ~/.doom; свой WAD (doom.wad, doom2.wad,
+# freedoom1.wad...) кладётся туда же, иначе - первый эпизод из пакета doom-shareware
+mkdir -p "$HOME/.doom" && cd "$HOME/.doom" || exit 1
+iwad=
+case " $* " in
+  *" -iwad "*) ;;
+  *)
+    if ! ls ./*.wad ./*.WAD > /dev/null 2>&1; then
+      for w in /usr/share/games/doom/*.wad; do
+        [ -f "$w" ] && iwad=$w && break
+      done
+    fi ;;
+esac
+kt screen on || exit 1
+trap 'kt screen off' EXIT
+trap 'exit 130' INT TERM HUP
+/usr/lib/doom/doom ${iwad:+-iwad "$iwad"} "$@" > /dev/null

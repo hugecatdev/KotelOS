@@ -1,4 +1,5 @@
 import argparse
+import base64
 import gzip
 import hashlib
 import io
@@ -7,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -368,7 +370,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix="kt-tests-")
     www = os.path.join(tmp, "www")
     os.makedirs(www)
-    for args in (["-o", www + "/t.html", "-n", "test"] + PKGS, ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"]):
+    for args in (["-o", www + "/t.html", "-n", "test"] + PKGS, ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"],
+                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom"]):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -958,6 +961,68 @@ def main():
         assert out.strip() == "600002", out
         assert closed() > n, "ответ: окно гостя не закрывалось, проверять нечего"
 
+    def no_screen():
+        assert s.sh("test -e /dev/fb0")[0] != 0, "/dev/fb0 есть без boot.vga"
+        assert s.ok("kt screen").strip() == "off"
+        code, out, err = s.sh("kt screen on")
+        assert code == 1 and "boot.vga" in err, (code, out, err)
+        assert "vga: нет" in s.ok("kt info")
+
+    def keys_in(cmd):
+        """evdev-события клавиатуры (код, нажата), пока страница делает cmd."""
+        s.ok("(cat /dev/input/event0 > /tmp/k.bin &)")
+        time.sleep(0.5)
+        cmd()
+        time.sleep(1)
+        raw = base64.b64decode(s.ok("killall cat; base64 /tmp/k.bin"))
+        ev = [struct.unpack("<IIHHi", raw[i:i + 16])[2:] for i in range(0, len(raw) - 15, 16)]
+        return [(code, v) for t, code, v in ev if t == 1 and v != 2]
+
+    def screen_doom():
+        t = s.open(base + "vga.html")
+        s.ok("test -c /dev/fb0 && test -c /dev/dri/card0")
+        assert "vga: 4.0 МБ, спрятан" in s.ok("kt info")
+        s.ok("kt screen on")
+        assert s.ev("document.querySelector('#screen').classList.contains('on')"), "экран не показан"
+        assert s.ev("emulator.keyboard_adapter.emu_enabled"), "клавиатура не ушла в машину"
+
+        def press():
+            for t_ in ("rawKeyDown", "keyUp"):
+                s.c.call("Input.dispatchKeyEvent", type=t_, key="Enter", code="Enter", windowsVirtualKeyCode=13)
+            s.ev("screenKey('UP', true)")
+            time.sleep(0.3)
+            s.ev("screenKey('UP', false); screenKey('Y', true); screenKey('Y', false); screenType('A')")
+        got = keys_in(press)
+        # Enter клавиатурой, ↑ кнопкой ряда (держится), Y кнопкой (без Shift), «A» набором (с Shift)
+        assert got == [(28, 1), (28, 0), (103, 1), (103, 0), (21, 1), (21, 0), (42, 1), (30, 1), (30, 0), (42, 0)], got
+        s.ok("kt screen off")
+        assert not s.ev("document.querySelector('#screen').classList.contains('on')")
+        assert not s.ev("emulator.keyboard_adapter.emu_enabled")
+
+        # хеш показанного кадра: буфер doom (KMS) лежит в видеопамяти за буфером /dev/fb0
+        frame = """(() => { const v = emulator.v86.cpu.devices.vga, m = v.svga_memory; let h = 0;
+          for (let i = v.svga_offset; i < v.svga_offset + 1228800; i += 997) h = (h * 31 + m[i]) | 0; return h; })()"""
+        s.start("doom")
+        t0 = time.time()
+        while not s.ev("document.querySelector('#screen').classList.contains('on')"):
+            assert time.time() - t0 < 20, "doom не показал экран"
+            time.sleep(0.3)
+        time.sleep(2)
+        size = s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]")
+        assert size == [640, 480], size
+        a, t0 = s.ev(frame), time.time()
+        while s.ev(frame) == a:  # титульная картинка стоит несколько секунд, потом демо
+            assert time.time() - t0 < 15, "кадр не меняется"
+            time.sleep(0.5)
+        # pkill -f нашёл бы и свой шелл: движок - по exe
+        s.ok("for p in /proc/[0-9]*; do [ \"$(readlink $p/exe)\" = /usr/lib/doom/doom ] && kill ${p#/proc/}; done; true")
+        t0 = time.time()
+        while s.ev("document.querySelector('#screen').classList.contains('on')"):
+            assert time.time() - t0 < 10, "экран не спрятался после выхода doom"
+            time.sleep(0.3)
+        assert s.ev("document.activeElement === term.textarea"), "фокус не вернулся в терминал"
+        return "загрузка %.1f с" % t
+
     def snap_bundle():
         t = s.open(base + "snap.html")
         tz = s.ok("date +%z").strip()
@@ -971,7 +1036,7 @@ def main():
         return "восстановление %.1f с, пояс %s" % (t, tz)
 
     tests = [
-        ("загрузка", boot), ("видеопамять пустая", vga_clean), ("память бандла", bundle_memory), ("один агент", one_agent), ("чистый терминал", clean_screen),
+        ("загрузка", boot), ("видеопамять пустая", vga_clean), ("без экрана", no_screen), ("память бандла", bundle_memory), ("один агент", one_agent), ("чистый терминал", clean_screen),
         ("kt js", kt_js), ("kt js из фона", kt_js_background), ("задержки", latency),
         ("kt.exec коды и stdin", exec_codes), ("kt.read/kt.write 2 МБ", read_write),
         ("kt dl файл, папка, stdin", kt_dl), ("kt up через кнопку", kt_up), ("kt up сразу после Enter", kt_up_typed),
@@ -984,7 +1049,7 @@ def main():
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("kt reset", reset),
-        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("бандл со снимком", snap_bundle),
+        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]
     try:

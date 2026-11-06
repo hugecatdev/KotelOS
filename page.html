@@ -13,6 +13,13 @@
   #term > .tty { position: absolute; inset: 0; }
   .tty.off { display: none; }
   .xterm .xterm-viewport { background: var(--bg) !important; scrollbar-color: var(--line) var(--bg); scrollbar-width: thin; }
+  /* экран VGA поверх терминала и окон, ряд клавиш под ним остаётся; размер и сглаживание
+     холста - свои: адаптер v86 ставит их в style под пиксели устройства */
+  #screen { display: none; position: absolute; left: 0; right: 0; top: 0; z-index: 16; background: #000; touch-action: none; }
+  #screen.on { display: block; }
+  #screen > div { display: none !important; }
+  #screen canvas { width: 100% !important; height: 100% !important; object-fit: contain; image-rendering: auto !important; }
+  #screen canvas.px { image-rendering: pixelated !important; }
   #kbd {
     position: fixed; opacity: 0; height: 1px; width: 1px;
     border: 0; padding: 0; margin: 0; resize: none; left: -9999px; top: 0;
@@ -56,6 +63,7 @@
 <body>
   <div id="app">
     <div id="term"><div id="tty1" class="tty"></div></div>
+    <div id="screen"><canvas></canvas><div></div></div>
     <div id="keys"><div id="more"></div><div id="base"></div></div>
     <div id="toast" class="box"><span></span><button>Копировать</button></div>
   </div>
@@ -127,6 +135,7 @@
 
     const KEYS_MAIN = [["ESC", "/", "-", "|", "~", "HOME", "UP", "END", "MORE"], ["TAB", "CTRL", "ALT", ">", "$", "LEFT", "DOWN", "RIGHT", "KBD"]];
     const KEYS_MORE = [["F1", "F2", "F3", "F4", "F5", "F6", "PGUP", "{", "}"], ["F7", "F8", "F9", "F10", "F11", "F12", "PGDN", "[", "]"]];
+    const KEYS_SCREEN = [["ESC", "1", "2", "3", "4", "SPACE", "UP", "ENTER", "MORE"], ["TAB", "CTRL", "ALT", "Y", "N", "LEFT", "DOWN", "RIGHT", "KBD"]];
     function parseKeys(v) {
       let rows;
       try { rows = JSON.parse(v); } catch { try { rows = JSON.parse(v.replace(/'/g, '"')); } catch {} }
@@ -148,9 +157,11 @@
       "term.mobile": { def: isTouch ? "on" : "off", values: ["on", "off"], apply: (v) => setMobile(v === "on") },
       "keys.main": { def: JSON.stringify(KEYS_MAIN), check: parseKeys, apply: () => buildKeys() },
       "keys.more": { def: JSON.stringify(KEYS_MORE), check: parseKeys, apply: () => buildKeys() },
+      "keys.screen": { def: JSON.stringify(KEYS_SCREEN), check: parseKeys, apply: () => buildKeys() },
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
       "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
+      "boot.vga": { def: BUNDLE && BUNDLE.vga ? "on" : "off", values: ["on", "off"] },
       "boot.log": { def: "off", values: ["on", "off"] },
       "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
       "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
@@ -376,6 +387,8 @@
       try { active.fit.fit(); } catch {}
       active.term.scrollToBottom();
       $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
+      $("#screen").style.bottom = $("#keys").offsetHeight + "px";
+      if (screenOn) fitScreen();
     }
     if (window.visualViewport) {
       visualViewport.addEventListener("resize", layout);
@@ -428,6 +441,12 @@
     let emulator = null;
     const build = BUNDLE ? BUNDLE.build : null;
     let memSize = +cfg.get("boot.mem") * 1048576;
+    // видеопамять и есть выключатель экрана: драйвер bochs в ядре берёт карту только с 4 МБ,
+    // с 256 КБ (минимум v86) /dev/fb0 нет. Размер зашит в снимок, поэтому, как boot.mem,
+    // boot.vga действует при загрузке с ядра, а сохранение помнит свой
+    const VGA_OFF = 256 << 10, VGA_ON = 4 << 20;
+    let vgaSize = cfg.get("boot.vga") === "on" ? VGA_ON : VGA_OFF;
+    let screenOn = false;
     let agentReady = false;
     let markReady;
     let ready = new Promise((r) => { markReady = r; });
@@ -1009,7 +1028,7 @@
         const screenDump = serializer.serialize({ scrollback: 300 });
         const blob = await gzip(raw);
         await kv.set(name ? SNAP + name : SLOT, {
-          blob, screen: screenDump, memory_size: memSize, replyId: id || null,
+          blob, screen: screenDump, memory_size: memSize, vga_memory_size: vgaSize, screen_on: screenOn, replyId: id || null,
           created: Date.now(), build: build && build.build, bundle: NAME,
         });
         lastSave = Date.now();
@@ -1075,6 +1094,7 @@
         ...(BUNDLE && BUNDLE.version ? [`version: ${BUNDLE.version}`] : []),
         `image: ${build ? build.build : "?"}`,
         `memory: ${mb(memSize)}`,
+        `vga: ${vgaSize >= VGA_ON ? `${mb(vgaSize)}, ${screenOn ? "на виду" : "спрятан"}` : "нет"}`,
         s ? `save: ${when(s.created)}, ${mb(s.blob.size)}` : "save: нет",
       ];
       if (s && build && s.build && s.build !== build.build) lines.push("save-image: старый, kt reset - загрузиться на новом");
@@ -1204,7 +1224,7 @@
         if (!r) return say(id, "отменено");
         const [f] = await r.value;
         if (!f) return say(id, "отменено");
-        await kv.set(SLOT, { blob: f, memory_size: memSize, created: f.lastModified || Date.now(), build: null });
+        await kv.set(SLOT, { blob: f, memory_size: memSize, vga_memory_size: vgaSize, created: f.lastModified || Date.now(), build: null });
         say(id, `импортировано ${f.name}, перезагружаю...`);
         leave();
       },
@@ -1294,6 +1314,13 @@
         },
         get active() { return active.id; },
       },
+      // экран VGA: kt screen on/off; без аргумента - показан ли
+      screen(on) {
+        if (on === undefined || on === "") return screenOn ? "on" : "off";
+        if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("kt screen: on или off");
+        setScreen(on === true || on === "on");
+        return "";
+      },
       get emulator() { return emulator; },
     };
     window.kt = api;
@@ -1378,6 +1405,7 @@
       if (!f || !ttySwitch()) return;
       e.preventDefault();
       e.stopPropagation();
+      setScreen(false); // с экрана - в консоль, как Ctrl+Alt+F1 из графики в Linux
       ttyKey(+f[1]);
     }, true);
 
@@ -1396,6 +1424,7 @@
       while (i < a.length && i < b.length && a[i] === b[i]) i++;
       const out = "\x7f".repeat(a.length - i) + b.slice(i).join("");
       sent = kbd.value;
+      if (screenOn) { screenType(out); return; }
       if (mods.alt && /^[1-9]$/.test(out) && ttySwitch()) { releaseMods(); ttyKey(+out); return; } // ALT и цифра на телефоне
       if (out) send(withMods(out).replace(/\n/g, "\r"));
     }
@@ -1405,6 +1434,13 @@
     kbd.addEventListener("input", () => { flushKbd(); if (!composing) resetKbd(); });
     kbd.addEventListener("keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
+      if (screenOn) {
+        const n = { ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Home: "HOME", End: "END",
+          PageUp: "PGUP", PageDown: "PGDN", Delete: "DEL", Insert: "INS", Enter: "ENTER", Tab: "TAB", Escape: "ESC",
+          Backspace: "BKSP" }[e.key];
+        if (n) { screenKey(n, true); screenKey(n, false); e.preventDefault(); }
+        return;
+      }
       let s = null;
       const named = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right",
         Home: "home", End: "end", PageUp: "pgup", PageDown: "pgdn", Delete: "del", Insert: "ins" }[e.key];
@@ -1441,6 +1477,99 @@
       if (f) return [k, "\x1b" + FKEYS[f[1] - 1]];
       if (/^\^.$/.test(k)) return [k, ctrlOf(k[1])];
       return [k, k];
+    }
+
+    // экран: клавиши уходят в машину скан-кодами PS/2 (набор 1, расширенные - с 0xE0), кнопка
+    // ряда держится, пока на ней палец (игры ждут отпускания), символы - нажатием с Shift по
+    // раскладке US
+    const SCAN = { ESC: 1, BKSP: 14, TAB: 15, ENTER: 28, CTRL: 29, SHIFT: 42, ALT: 56, SPACE: 57,
+      HOME: 0xe047, UP: 0xe048, PGUP: 0xe049, LEFT: 0xe04b, RIGHT: 0xe04d, END: 0xe04f, DOWN: 0xe050,
+      PGDN: 0xe051, INS: 0xe052, DEL: 0xe053 };
+    for (let i = 1; i <= 12; i++) SCAN["F" + i] = i <= 10 ? 58 + i : 76 + i;
+    const CHARS = { " ": [57, 0], "\r": [28, 0], "\n": [28, 0], "\t": [15, 0], "\x7f": [14, 0], "\x1b": [1, 0] };
+    for (const [a, b, c] of [["1234567890-=", "!@#$%^&*()_+", 2], ["qwertyuiop[]", "QWERTYUIOP{}", 16],
+      ["asdfghjkl;'`", 'ASDFGHJKL:"~', 30], ["\\zxcvbnm,./", "|ZXCVBNM<>?", 43]]) {
+      for (let i = 0; i < a.length; i++) { CHARS[a[i]] = [c + i, 0]; CHARS[b[i]] = [c + i, 1]; }
+    }
+    function scan(code, down) {
+      if (!emulator) return;
+      const seq = code > 0xff ? [0xe0, code & 0xff] : [code];
+      if (!down) seq[seq.length - 1] |= 0x80;
+      emulator.keyboard_send_scancodes(seq);
+    }
+    function charKey(ch, down) {
+      const c = CHARS[ch];
+      if (!c) return;
+      if (c[1] && down) scan(SCAN.SHIFT, true);
+      scan(c[0], down);
+      if (c[1] && !down) scan(SCAN.SHIFT, false);
+    }
+    function screenKey(name, down) {
+      if (Object.hasOwn(SCAN, name)) return scan(SCAN[name], down);
+      if (/^[A-Z]$/.test(name)) return charKey(name.toLowerCase(), down); // буква на кнопке - клавиша, как на клавиатуре
+      if (CHARS[name]) return charKey(name, down);
+      if (!down) return;
+      if (/^\^.$/.test(name)) { scan(SCAN.CTRL, true); screenType(name[1].toLowerCase()); scan(SCAN.CTRL, false); }
+      else screenType(name);
+    }
+    function screenType(s) {
+      for (const ch of s) { charKey(ch, true); charKey(ch, false); }
+    }
+
+    // экран показывает и прячет гость (kt screen on/off): видеокарта v86 после графики в текст не
+    // возвращается, и по ней не понять, что программа закончила. Пока экран на виду, клавиатура
+    // (адаптер v86) и мышь идут в машину, а ряд клавиш - keys.screen
+    function setScreen(on) {
+      on = !!on;
+      if (on && vgaSize < VGA_ON) throw new Error("экрана нет: boot.vga off");
+      if (on === screenOn) return;
+      screenOn = on;
+      $("#screen").classList.toggle("on", on);
+      if (emulator) emulator.keyboard_set_enabled(on);
+      buildKeys();
+      if (!on) focusInput();
+      else if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
+      layout();
+    }
+    // пиксели крупнее точек экрана - без размытия, иначе (телефон) - сглаживание
+    function fitScreen() {
+      const cv = $("#screen canvas"), r = cv.getBoundingClientRect();
+      cv.classList.toggle("px", cv.width > 0 && Math.min(r.width / cv.width, r.height / cv.height) * (window.devicePixelRatio || 1) >= 1);
+    }
+    {
+      const cv = $("#screen canvas");
+      new MutationObserver(fitScreen).observe(cv, { attributes: true, attributeFilter: ["width", "height"] });
+      let lx = 0, ly = 0;
+      const at = (e) => {
+        const r = cv.getBoundingClientRect(), s = Math.min(r.width / cv.width, r.height / cv.height);
+        const w = cv.width * s, h = cv.height * s;
+        const x = Math.max(0, Math.min(w, e.clientX - r.left - (r.width - w) / 2));
+        return [x, Math.max(0, Math.min(h, e.clientY - r.top - (r.height - h) / 2)), w, h];
+      };
+      // мышь VMware в ядре: точка уходит абсолютной, а обычный пакет PS/2 будит драйвер забрать её
+      const move = (e) => {
+        if (!emulator || !cv.width) return;
+        const p = at(e);
+        emulator.bus.send("mouse-absolute", p);
+        emulator.bus.send("mouse-delta", [Math.round(p[0] - lx) || 1, Math.round(ly - p[1])]);
+        [lx, ly] = p;
+      };
+      const click = (e) => emulator && emulator.bus.send("mouse-click", [!!(e.buttons & 1), !!(e.buttons & 4), !!(e.buttons & 2)]);
+      cv.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        cv.setPointerCapture(e.pointerId);
+        if (document.activeElement && document.activeElement !== kbd) document.activeElement.blur();
+        move(e);
+        click(e);
+      });
+      cv.addEventListener("pointermove", move);
+      cv.addEventListener("pointerup", (e) => { move(e); click(e); });
+      cv.addEventListener("pointercancel", click);
+      cv.addEventListener("contextmenu", (e) => e.preventDefault());
+      cv.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
+      }, { passive: false });
     }
 
     let moreBtn = null;
@@ -1483,18 +1612,30 @@
       const row = document.createElement("div");
       row.className = "row";
       row.style.gridTemplateColumns = `repeat(${keys.length}, 1fr)`;
-      for (const [label, value, repeat] of keys.map(keyDef)) {
+      for (const k of keys) {
+        const [label, value, repeat] = keyDef(k);
         const b = document.createElement("button");
         b.textContent = label;
         b.tabIndex = -1;
         if (keys.length > 9) b.style.fontSize = `calc(var(--keys, 16px) * ${(9 / keys.length).toFixed(3)})`;
         if (value === "@ctrl" || value === "@alt") modBtn[value.slice(1)].push(b);
         if (value === "@more") { if (t) t.kmoreBtn = b; else moreBtn = b; }
-        let timer = 0;
-        const stop = () => { clearTimeout(timer); clearInterval(timer); b.classList.remove("down"); };
+        let timer = 0, held = false;
+        const stop = () => {
+          clearTimeout(timer);
+          clearInterval(timer);
+          b.classList.remove("down");
+          if (held) screenKey(k, false);
+          held = false;
+        };
         b.addEventListener("pointerdown", (e) => {
           e.preventDefault();
           b.classList.add("down");
+          if (!t && screenOn && value !== "@more" && value !== "@kbd") {
+            held = true;
+            screenKey(k, true);
+            return;
+          }
           pressKey(value, t);
           if (repeat) timer = setTimeout(() => { timer = setInterval(() => pressKey(value, t), 60); }, 380);
         });
@@ -1512,7 +1653,7 @@
       moreBtn = null;
       $("#base").replaceChildren();
       $("#more").replaceChildren();
-      for (const r of parseKeys(cfg.get("keys.main"))) makeRow($("#base"), r);
+      for (const r of parseKeys(cfg.get(screenOn ? "keys.screen" : "keys.main"))) makeRow($("#base"), r);
       for (const r of parseKeys(cfg.get("keys.more"))) makeRow($("#more"), r);
       for (const t of ttys.values()) kbar(t);
       setMod("ctrl", mods.ctrl);
@@ -1636,7 +1777,6 @@
 
       const opts = {
         memory_size: memSize,
-        vga_memory_size: 262144,
         autostart: true,
         disable_mouse: true,
         disable_keyboard: true,
@@ -1660,6 +1800,7 @@
           bootlog(`сохранение от ${when(saved.created)}, ${mb(saved.blob.size)}`);
           state = await gunzip(saved.blob);
           memSize = saved.memory_size || memSize;
+          vgaSize = saved.vga_memory_size || VGA_OFF;
           bootEnd();
           if (saved.screen) term.write(saved.screen);
         } catch (e) {
@@ -1671,6 +1812,7 @@
       if (!saved && BUNDLE.state && !coldBoot) {
         image = BUNDLE.state;
         memSize = image.mem;
+        vgaSize = image.vga || VGA_OFF;
         state = take("state").buffer;
         bootEnd();
         if (image.screen) term.write(image.screen);
@@ -1697,7 +1839,13 @@
       }
       for (const el of document.querySelectorAll(PARTS)) el.remove();
 
+      opts.vga_memory_size = vgaSize;
+      if (vgaSize >= VGA_ON) {
+        opts.screen_container = $("#screen");
+        opts.disable_keyboard = false;
+      }
       emulator = new V86(opts);
+      emulator.keyboard_set_enabled(false);
       const outDec = new TextDecoder();
       let out = [];
       emulator.add_listener("serial0-output-byte", (b) => {
@@ -1726,6 +1874,7 @@
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
         if (saved) startCmd = null;
+        if (saved && saved.screen_on && vgaSize >= VGA_ON) setScreen(true);
         onReady = () => {
           ctl("REDRAW");
           emit("restore");

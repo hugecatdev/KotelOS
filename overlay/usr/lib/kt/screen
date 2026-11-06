@@ -1,0 +1,12 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов   on - экран на виду, off - спрятан
+on               показать экран поверх терминала: клавиатура и мышь - в машину
+off              спрятать, обратно в терминал'
+kt_meta "[on | off]" "экран /dev/fb0" "$@"
+case $1 in
+  ""|on|off) ;;
+  *) kt_usage "[on | off]" ;;
+esac
+kt_send js "$(kt_b64 '(a) => kt.screen(a)') $(kt_b64 "$1")"
+kt_status 6000
