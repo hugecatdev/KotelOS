@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Image Viewer
+Name[ru]=Просмотр картинок
+Exec=tk-imgview %f
+Icon=image-viewer
+Terminal=false
+NoDisplay=true
+Categories=Graphics;Viewer;
+MimeType=image/png;image/gif;image/svg+xml;image/jpeg;

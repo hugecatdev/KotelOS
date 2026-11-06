@@ -1,0 +1,37 @@
+#!/bin/sh
+# ktdesktop команда [путь]: при запущенном рабочем столе отдать команду ему (окно откроется в его процессе),
+# иначе запустить свой питон; рабочий стол уходит в фон, вывод программ - в ~/.cache/desktop.log
+cmd=$1
+shift
+f=
+if [ -n "$1" ]; then
+  case $1 in
+    /*|*://*) f=$1 ;;
+    *) f=$PWD/$1 ;;
+  esac
+fi
+case $f in
+  http://*|https://*) exec kt js '(u) => void window.open(u, "_blank")' "$f" > /dev/null ;;
+esac
+pid=$(cat /run/ktdesktop.pid 2>/dev/null)
+if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+  exec kt js '(c, f) => void kt.emit("desktop", [c, f])' "$cmd" "$f" > /dev/null
+fi
+case $cmd in
+  hide|quit) echo "рабочий стол не запущен"; exit 1 ;;
+  show) cmd=desktop ;;
+esac
+if command -v python3 > /dev/null; then
+  set -- python3
+else
+  set -- micropython -X heapsize=16M
+fi
+if [ "$cmd" = desktop ]; then
+  mkdir -p "$HOME/.cache"
+  setsid "$@" -m ktdesktop desktop >> "$HOME/.cache/desktop.log" 2>&1 < /dev/null &
+  # pid сразу: второй tk-desktop следом (post-install и profile.d при первом входе) не поднимет второй стол;
+  # питон потом запишет свой (с pyzygote он другой, а этот - клиент, живёт столько же)
+  echo $! > /run/ktdesktop.pid
+  exit 0
+fi
+exec "$@" -m ktdesktop "$cmd" ${f:+"$f"}

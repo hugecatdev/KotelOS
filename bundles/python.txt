@@ -8,5 +8,5 @@ fun nano htop tmux curl wget pack notify
 python3 python3-sqlite python3-curses pip pyzygote python-requests python-numpy
 python-tkinter python-idle python-turtle python-turtledemo
 python-matplotlib python-matplotlib-tk python-matplotlib-demo
-desktop terminal
+tk-desktop tk-term
 examples-python

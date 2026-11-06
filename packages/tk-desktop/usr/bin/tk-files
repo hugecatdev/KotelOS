@@ -1,0 +1,3 @@
+#!/bin/sh
+# tk-files [папка]: файловый менеджер
+exec /usr/libexec/ktdesktop files "$@"

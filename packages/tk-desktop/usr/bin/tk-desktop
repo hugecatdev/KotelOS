@@ -1,0 +1,3 @@
+#!/bin/sh
+# tk-desktop [show|hide|quit]: рабочий стол; уже запущенный - показать
+exec /usr/libexec/ktdesktop "${1:-show}"

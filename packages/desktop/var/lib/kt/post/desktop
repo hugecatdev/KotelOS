@@ -1,6 +1,0 @@
-#!/bin/sh
-# рабочий стол сразу после kt pkg add из консоли. При первом входе (пакет стоял в образе) /etc/profile
-# зовёт post-скрипты раньше profile.d: HOME, MICROPYPATH ещё не выставлены (KT_SHELL тоже) - стол тогда
-# поднимет /etc/profile.d/desktop.sh уже с ними
-[ -n "$KT_SHELL" ] && [ "$(tty 2>/dev/null)" = /dev/ttyS0 ] && exec desktop
-exit 0

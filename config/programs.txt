@@ -13,8 +13,8 @@ python-turtle черепашья графика turtle
 python-turtledemo примеры turtle (команда turtledemo)
 python-matplotlib-tk окна matplotlib через tkinter
 python-matplotlib-demo примеры matplotlib (команда mpldemo)
-desktop рабочий стол, файлы и блокнот на tkinter
-terminal терминал в окне (xterm.js)
+tk-desktop рабочий стол, файлы и блокнот на tkinter
+tk-term терминал в окне (xterm.js)
 python-mpy команда python для micropython
 minipython лёгкий CPython 3.12
 python3 полный CPython 3.12
