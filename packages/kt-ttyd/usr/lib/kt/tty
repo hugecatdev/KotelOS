@@ -1,0 +1,24 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов   консоли: номер, * - на виду, своя - эта
+new [команда]    новая консоль: шелл или команда, номер - на stdout
+N                перейти на консоль N (на клавиатуре Alt+F1..F9)
+kill N           закрыть консоль N (шеллу - SIGHUP)'
+kt_meta "[new [команда] | N | kill N]" "виртуальные консоли" "$@"
+page() {
+  code=$1
+  shift
+  a=$(kt_b64 "$code")
+  for x in "$@"; do a="$a $(kt_b64 "$x")"; done
+  kt_send js "$a"
+  kt_status 6000
+}
+case $1 in
+  "")
+    page '(me) => kt.tty.list().map((t) => (t.active ? "*" : " ") + " " + t.id + (String(t.id) === me ? " (эта)" : "")
+      + (t.window ? " окно" : "") + (t.title ? " " + t.title : "")).join("\n")' "${KT_TTY:-1}" ;;
+  new) shift; page '(c) => kt.tty.open(c)' "$*" ;;
+  kill) [ -n "$2" ] || kt_usage "kill N"; page '(n) => kt.tty.kill(n) && ""' "$2" ;;
+  *[!0-9]*) kt_usage "[new [команда] | N | kill N]" ;;
+  *) page '(n) => kt.tty.go(n) ? "" : "нет консоли " + n' "$1" ;;
+esac

@@ -15,6 +15,7 @@
 | `kt save [имя]`, `kt load [имя]`, `kt snap`, `kt reset [-b]` | `kt.save(name="")` | `kt.save()` | сохранение машины и снимки в IndexedDB |
 | `kt pack имя путь...`, `kt unpack имя [куда]` (пакет `pack`) | - | - | файлы в браузер и обратно, в любую машину |
 | `kt info` | `kt.info()` | - | что знает страница: браузер, экран, пояс, бандл, образ, память, сохранение |
+| `kt tty`, `kt tty new [команда]`, `kt tty N`, `kt tty kill N` (пакет `kt-ttyd`) | - | `kt.tty.list()`, `open(cmd, host, keys)`, `go(id)`, `kill(id)`, `input(id, s)`, `font(id, d)`, `attach(id, host, keys)` | виртуальные консоли: список, новая, перейти, закрыть; на клавиатуре Alt+F1..F9 |
 | `kt export [имя]`, `kt import` | - | - | сохранение в файл / из файла |
 | `kt font [имя] [размер]`, `kt theme [имя]` | - | - | шрифт и тема |
 | `kt notify [text]` (пакет `notify`, код - `/usr/lib/kt-notify.js`) | `kt.notify(s)` | - | системное уведомление (первый раз спросит разрешение; нужен https или localhost, через file:// браузер их не даёт - только мигает заголовок вкладки) |

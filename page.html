@@ -9,7 +9,9 @@
   :root { --line: #333; --text: #bbb; --hi: #eee; --bg: #000; --mono: ui-monospace, Menlo, Consolas, monospace; }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
   #app { position: relative; display: flex; flex-direction: column; height: 100vh; }
-  #term { flex: 1 1 auto; min-height: 0; margin: 8px 8px 4px; }
+  #term { position: relative; flex: 1 1 auto; min-height: 0; margin: 8px 8px 4px; }
+  #term > .tty { position: absolute; inset: 0; }
+  .tty.off { display: none; }
   .xterm .xterm-viewport { background: var(--bg) !important; scrollbar-color: var(--line) var(--bg); scrollbar-width: thin; }
   #kbd {
     position: fixed; opacity: 0; height: 1px; width: 1px;
@@ -22,18 +24,21 @@
     touch-action: none; user-select: none; -webkit-user-select: none;
   }
   body.mobile #keys { display: flex; }
-  #keys .row { display: grid; }
+  #keys .row, .kbar .row { display: grid; }
+  .kbar { display: flex; flex-direction: column; padding: 2px 0; border-top: 1px solid var(--line); background: var(--bg); touch-action: none; user-select: none; -webkit-user-select: none; }
+  .kbar .more { display: none; flex-direction: column; }
+  .kbar .more.open { display: flex; }
   #base, #more { display: flex; flex-direction: column; }
   #more { display: none; }
   #more.open { display: flex; }
-  #keys button {
+  #keys button, .kbar button {
     background: none; color: #999; border: 0; border-radius: 0;
     padding: 11px 0; min-width: 0; font: var(--keys, 16px)/1 var(--mono);
     -webkit-tap-highlight-color: transparent;
   }
-  #more button { color: #777; }
-  #keys button.down, #keys button.on, #keys button.lock { color: #fff; }
-  #keys button.lock { text-decoration: underline; text-underline-offset: 4px; }
+  #more button, .kbar .more button { color: #777; }
+  #keys button.down, #keys button.on, #keys button.lock, .kbar button.down, .kbar button.on, .kbar button.lock { color: #fff; }
+  #keys button.lock, .kbar button.lock { text-decoration: underline; text-underline-offset: 4px; }
 
   .box { font: 14px/1.4 var(--mono); color: var(--text); background: #000; border: 1px solid #777; }
   .box button { font: inherit; background: #000; color: var(--hi); border: 1px solid #777; padding: 4px 12px; cursor: pointer; }
@@ -50,7 +55,7 @@
 </head>
 <body>
   <div id="app">
-    <div id="term"></div>
+    <div id="term"><div id="tty1" class="tty"></div></div>
     <div id="keys"><div id="more"></div><div id="base"></div></div>
     <div id="toast" class="box"><span></span><button>Копировать</button></div>
   </div>
@@ -137,9 +142,9 @@
       "term.family": { def: "system", check: fontCheck, apply: (v) => setFamily(v) },
       "term.theme": { def: "dark", values: Object.keys(THEMES), apply: (v) => setTheme(v) },
       "term.render": { def: "dom", values: ["dom", "canvas"], apply: (v) => { setRender(v); layout(); } },
-      "term.cursor": { def: "block", values: ["block", "bar", "underline"], apply: (v) => { term.options.cursorStyle = v; } },
-      "term.blink": { def: "off", values: ["on", "off"], apply: (v) => { term.options.cursorBlink = v === "on"; } },
-      "term.scroll": { def: "5000", range: [0, 100000], apply: (v) => { term.options.scrollback = +v; } },
+      "term.cursor": { def: "block", values: ["block", "bar", "underline"], apply: (v) => { for (const t of ttys.values()) t.term.options.cursorStyle = v; } },
+      "term.blink": { def: "off", values: ["on", "off"], apply: (v) => { for (const t of ttys.values()) t.term.options.cursorBlink = v === "on"; } },
+      "term.scroll": { def: "5000", range: [0, 100000], apply: (v) => { for (const t of ttys.values()) t.term.options.scrollback = +v; } },
       "term.mobile": { def: isTouch ? "on" : "off", values: ["on", "off"], apply: (v) => setMobile(v === "on") },
       "keys.main": { def: JSON.stringify(KEYS_MAIN), check: parseKeys, apply: () => buildKeys() },
       "keys.more": { def: JSON.stringify(KEYS_MORE), check: parseKeys, apply: () => buildKeys() },
@@ -289,7 +294,10 @@
     term.loadAddon(fit);
     term.loadAddon(serializer);
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
-    term.open($("#term"));
+    term.open($("#tty1"));
+    // консоли (см. ttyMake ниже): 1 - этот терминал; шрифт, тема и курсор применяются ко всем
+    const ttys = new Map([[1, { id: 1, term, fit, el: $("#tty1"), title: "", host: null }]]);
+    let active = ttys.get(1);
     let canvas = null;
     function setRender(v) {
       if (canvas) canvas.dispose();
@@ -365,8 +373,8 @@
       const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
       $("#app").style.height = h + "px";
       window.scrollTo(0, 0);
-      fit.fit();
-      term.scrollToBottom();
+      try { active.fit.fit(); } catch {}
+      active.term.scrollToBottom();
       $("#toast").style.bottom = $("#keys").offsetHeight + 12 + "px";
     }
     if (window.visualViewport) {
@@ -378,7 +386,7 @@
     function setFont(size) {
       size = Math.max(8, Math.min(32, Math.round(size)));
       if (size === term.options.fontSize) return;
-      term.options.fontSize = size;
+      for (const t of ttys.values()) t.term.options.fontSize = size;
       layout();
     }
 
@@ -407,13 +415,13 @@
     async function setFamily(key) {
       const f = (await loadFont(key)) || FONTS.system;
       if (cfg.get("term.family") !== key) return;
-      term.options.fontFamily = f.css || `"${f.name}", monospace`;
+      for (const t of ttys.values()) t.term.options.fontFamily = f.css || `"${f.name}", monospace`;
       layout();
     }
 
     function setTheme(key) {
       const t = THEMES[key] || THEMES.dark;
-      term.options.theme = { cursorAccent: t.background, ...t };
+      for (const x of ttys.values()) x.term.options.theme = { cursorAccent: t.background, ...t };
       document.documentElement.style.setProperty("--bg", t.background);
     }
 
@@ -424,7 +432,9 @@
     let markReady;
     let ready = new Promise((r) => { markReady = r; });
 
-    const send = (s) => emulator && emulator.serial_send_bytes(0, enc.encode(s));
+    const serial = (s) => emulator && emulator.serial_send_bytes(0, enc.encode(s));
+    const sendTo = (t, s) => { if (t.id === 1) serial(s); else ttyIn(t.id, s); };
+    const send = (s) => sendTo(target(), s);
     const AGENT_PORT = 7700, PAGE_PORT = 7771, PAGE_IP = "192.168.86.1";
     let link = null, linkGen = 0, onReady = null;
     const send1 = (s) => { if (link) link.write(typeof s === "string" ? enc.encode(s) : s); };
@@ -514,6 +524,199 @@
       c.on("close", lost);
     }
 
+    // виртуальные консоли, как tty1..N в Linux: 1 - ttyS0 (терминал выше), 2.. - шеллы в pty у kt-ttyd в госте
+    // (порт 7702). Полосы нет: Alt+F1..F9 (на телефоне ALT и F-клавиша из ⋯) и kt tty. Экран каждой рисует свой
+    // xterm здесь, гость только переносит байты; без страницы шеллы живут, а kt-ttyd держит хвост вывода и после
+    // перезагрузки страницы присылает его заново. Консоль может жить и в чужом элементе - окне tk-term,
+    // тогда у неё там свой ряд клавиш
+    const TTY_PORT = 7702;
+    let ttyLink = null;
+    const ttyQ = [];
+    // куда идут ряд клавиш и клавиатура телефона: окно tk-term с фокусом, иначе консоль на виду
+    const target = () => {
+      for (const t of ttys.values()) if (t.host && t.el.contains(document.activeElement)) return t;
+      return active;
+    };
+    function ttyWrite(head, body) {
+      const h = enc.encode(head);
+      let m = h;
+      if (body) {
+        m = new Uint8Array(h.length + body.length);
+        m.set(h);
+        m.set(body, h.length);
+      }
+      if (ttyLink) ttyLink.write(m);
+      else {
+        ttyQ.push(m);
+        ttyConnect();
+      }
+    }
+    function ttyIn(id, s) {
+      const b = enc.encode(s);
+      if (b.length) ttyWrite(`IN ${id} ${b.length}\n`, b);
+    }
+    let ttyWait = null;
+    // соединение с kt-ttyd: true - есть. Пропало, а демона нет (убит, удалён пакет) - его консоли со страницы долой
+    function ttyConnect() {
+      if (ttyLink) return Promise.resolve(true);
+      if (ttyWait) return ttyWait;
+      const net = emulator && emulator.network_adapter;
+      if (!net) return Promise.resolve(false);
+      ttyWait = new Promise((done) => {
+        let c, up = false, over = false;
+        const finish = (ok) => {
+          if (over) return;
+          over = true;
+          ttyWait = null;
+          done(ok);
+        };
+        try { c = net.connect(TTY_PORT); } catch { finish(false); return; }
+        resend(c);
+        const lost = () => {
+          clearTimeout(timer);
+          if (ttyLink === c) ttyLink = null;
+          finish(false);
+          if (up) setTimeout(async () => {
+            if (!(await ttyConnect())) for (const id of [...ttys.keys()]) if (id > 1) ttyGone(id, 129);
+          }, 1000);
+          up = false;
+        };
+        const timer = setTimeout(() => { if (!up) { c.release(); lost(); } }, 1500);
+        c.on("connect", () => {
+          clearTimeout(timer);
+          up = true;
+          ttyLink = c;
+          c.write(enc.encode("HELLO\n"));
+          for (const m of ttyQ.splice(0)) c.write(m);
+          finish(true);
+        });
+        c.on("data", reader(ttyLine));
+        c.on("shutdown", () => { c.close(); lost(); });
+        c.on("close", lost);
+      });
+      return ttyWait;
+    }
+    // консоль нужна: связь с kt-ttyd, а нет его - запустить (пакет kt-ttyd); нет и пакета - консолей нет, молча
+    async function ttyReady() {
+      if (await ttyConnect()) return true;
+      const r = await exec("kt-ttyd");
+      return r.code === 0 && ttyConnect();
+    }
+    function ttyLine(line) {
+      const [cmd, a, b, c] = line.split(" ");
+      const id = +a;
+      if (cmd === "OUT") return { n: +b, cb: (bytes) => { const t = ttys.get(id); if (t) t.term.write(bytes); } };
+      if (cmd === "TTY" && id > 1) {
+        const t = ttys.get(id) || ttyMake(id, null);
+        t.term.reset(); // следом придёт хвост вывода - экран заново
+        if (t.term.cols !== +b || t.term.rows !== +c) ttyWrite(`SIZE ${id} ${t.term.cols} ${t.term.rows}\n`);
+      } else if (cmd === "EXIT") ttyGone(id, +b);
+      return null;
+    }
+    function ttyMake(id, host, keys = null) {
+      const el = document.createElement("div");
+      el.className = host ? "tty" : "tty off";
+      if (host) {
+        el.style.cssText = "position:absolute;inset:0";
+        host.style.position = "relative";
+      }
+      (host || $("#term")).append(el);
+      const o = term.options;
+      const x = new Terminal({ fontFamily: o.fontFamily, fontSize: o.fontSize, theme: o.theme, cursorBlink: o.cursorBlink,
+        cursorStyle: o.cursorStyle, scrollback: o.scrollback });
+      const f = new FitAddon.FitAddon();
+      x.loadAddon(f);
+      x.loadAddon(new WebLinksAddon.WebLinksAddon());
+      x.open(el);
+      if (mobile && !host) x.textarea.setAttribute("inputmode", "none");
+      const t = { id, term: x, fit: f, el, title: "", host, keys };
+      x.onData((d) => ttyIn(id, withMods(d)));
+      x.onResize(({ cols, rows }) => ttyWrite(`SIZE ${id} ${cols} ${rows}\n`));
+      x.onTitleChange((s) => {
+        t.title = s;
+        if (t.host) emit("ktty", { id, title: s });
+      });
+      x.onBell(() => { if (navigator.vibrate) navigator.vibrate(40); });
+      x.attachCustomKeyEventHandler(copyKeys(x));
+      ttys.set(id, t);
+      if (host) ttyHost(t, host);
+      kbar(t);
+      return t;
+    }
+    // консоль в чужом элементе подгоняется под него сама
+    function ttyHost(t, host) {
+      t.ro?.disconnect();
+      t.ro = new ResizeObserver(() => { try { if (t.el.clientWidth) t.fit.fit(); } catch {} });
+      t.ro.observe(host);
+      if (t.zoomed) return;
+      t.zoomed = true; // свой шрифт окна: щипок двумя пальцами и Ctrl+колесо, до закрытия окна
+      let p = null;
+      const dist = (e) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      t.el.addEventListener("touchstart", (e) => { if (e.touches.length === 2) p = { d: dist(e), s: t.term.options.fontSize }; }, { passive: true });
+      t.el.addEventListener("touchmove", (e) => { if (p && e.touches.length === 2) ttyFont(t, Math.round((p.s * dist(e)) / p.d)); }, { passive: true });
+      t.el.addEventListener("touchend", () => { p = null; }, { passive: true });
+      t.el.addEventListener("wheel", (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        ttyFont(t, t.term.options.fontSize + (e.deltaY < 0 ? 1 : -1));
+      }, { passive: false });
+    }
+    function ttyFont(t, size) {
+      size = Math.max(8, Math.min(32, Math.round(size)));
+      if (size === t.term.options.fontSize) return size;
+      t.term.options.fontSize = size;
+      try { t.fit.fit(); } catch {}
+      return size;
+    }
+    async function ttyNew(cmd = "", host = null, want = 0, keys = null) {
+      let id = want;
+      if (!id) for (id = 2; ttys.has(id); id++);
+      if (ttys.has(id)) return ttyGo(id) ? id : 0;
+      if (!(await ttyReady())) return 0;
+      if (ttys.has(id)) return want ? (ttyGo(id) ? id : 0) : ttyNew(cmd, host, 0, keys); // пока ждали, номер заняли
+      const t = ttyMake(id, host, keys);
+      if (!host) ttyGo(id);
+      try { t.fit.fit(); } catch {}
+      const b = enc.encode(String(cmd || ""));
+      ttyWrite(`NEW ${id} ${t.term.cols} ${t.term.rows} ${b.length}\n`, b);
+      if (host) t.term.focus();
+      return id;
+    }
+    function ttyGo(id) {
+      const t = ttys.get(id);
+      if (!t || t.host) return false;
+      if (t !== active) {
+        active.el.classList.add("off");
+        t.el.classList.remove("off");
+        active = t;
+      }
+      layout();
+      focusInput();
+      return true;
+    }
+    // Alt+Fn: консоль n; нет такой - открыть, как getty на tty n
+    function ttyKey(n) {
+      if (!ttyGo(n) && n > 1) ttyNew("", null, n);
+    }
+    function ttyKill(id) {
+      if (id > 1 && ttys.has(id)) ttyWrite(`KILL ${id}\n`);
+    }
+    function ttyGone(id, code) {
+      const t = ttys.get(id);
+      if (!t || id === 1) return;
+      ttys.delete(id);
+      t.ro?.disconnect();
+      t.term.dispose();
+      t.el.remove();
+      if (t.host) emit("ktty", { id, exit: code });
+      if (active === t) {
+        const ids = [...ttys.values()].filter((x) => !x.host && x.id < id).map((x) => x.id);
+        active = ttys.get(ids.length ? Math.max(...ids) : 1);
+        active.el.classList.remove("off");
+        layout();
+        focusInput();
+      }
+    }
     function agentLine(line) {
       if (line.startsWith("RESULT ")) {
         const [, id, code, olen, elen] = line.split(" ");
@@ -631,7 +834,7 @@
       const t = setInterval(() => {
         if (Date.now() - lastOutput < 800) return;
         clearInterval(t);
-        send(cmd + "\r");
+        serial(cmd + "\r");
       }, 200);
     }
 
@@ -648,6 +851,7 @@
         agentReady = true;
         markReady();
         hello();
+        if (!ttyLink) ttyConnect();
         if (onReady) { const f = onReady; onReady = null; f(); }
         if (startCmd) typeWhenIdle(startCmd);
         startCmd = null;
@@ -1062,7 +1266,7 @@
       exec,
       read: readFile,
       write: writeFile,
-      type: (text) => { send(String(text)); },
+      type: (text) => { serial(String(text)); },
       emit,
       save: () => saveState(),
       fit: () => layout(),
@@ -1080,6 +1284,33 @@
         return r.value;
       },
       get term() { return term; },
+      // виртуальные консоли: kt tty и окна tk-term
+      tty: {
+        list: () => [...ttys.values()].sort((a, b) => a.id - b.id).map((t) => ({ id: t.id, title: t.title, active: t === active, window: !!t.host })),
+        open: (cmd = "", host = null, keys = null) => ttyNew(cmd, host, 0, keys),
+        go: (id) => ttyGo(+id),
+        kill: (id) => { ttyKill(+id); return true; },
+        input: (id, s) => { ttyIn(+id, String(s)); return true; },
+        focus: (id) => { const t = ttys.get(+id); if (t) t.term.focus(); return !!t; },
+        font: (id, d) => { const t = ttys.get(+id); return t ? ttyFont(t, t.term.options.fontSize + +d) : 0; },
+        // консоль после восстановления страницы: снова в окне tk-term
+        attach: (id, host, keys = null) => {
+          const t = ttys.get(+id);
+          if (!t || !host) return false;
+          if (active === t) ttyGo(1);
+          t.host = host;
+          t.el.className = "tty";
+          t.el.style.cssText = "position:absolute;inset:0";
+          host.style.position = "relative";
+          host.append(t.el);
+          t.term.textarea.removeAttribute("inputmode");
+          ttyHost(t, host);
+          t.keys = keys;
+          kbar(t);
+          return true;
+        },
+        get active() { return active.id; },
+      },
       get emulator() { return emulator; },
     };
     window.kt = api;
@@ -1099,11 +1330,11 @@
     ready.then(() => { if (window.parent !== window) window.parent.postMessage({ kt: "ready" }, "*"); });
 
     const mods = { ctrl: 0, alt: 0 };
-    const modBtn = {};
+    const modBtn = { ctrl: [], alt: [] }; // кнопки CTRL и ALT всех рядов: страницы и окон tk-term
     function setMod(name, v) {
       mods[name] = v;
-      const b = modBtn[name];
-      if (b) {
+      modBtn[name] = modBtn[name].filter((b) => b.isConnected || b.closest("#keys"));
+      for (const b of modBtn[name]) {
         b.classList.toggle("on", v === 1);
         b.classList.toggle("lock", v === 2);
       }
@@ -1134,8 +1365,8 @@
       return first + chars.join("");
     }
 
-    function special(name) {
-      const app = term.modes.applicationCursorKeysMode;
+    function special(name, to = target()) {
+      const app = to.term.modes.applicationCursorKeysMode;
       const m = (mods.ctrl ? 4 : 0) + (mods.alt ? 2 : 0);
       const arrow = { up: "A", down: "B", right: "C", left: "D", home: "H", end: "F" }[name];
       let seq;
@@ -1145,16 +1376,25 @@
       return seq;
     }
 
-    term.onData((d) => send(withMods(d)));
+    term.onData((d) => serial(withMods(d)));
 
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
-        copyText(term.getSelection());
+    const copyKeys = (x) => (e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.code === "KeyC" && x.hasSelection()) {
+        copyText(x.getSelection());
         return false;
       }
       if (e.ctrlKey && e.shiftKey && e.code === "KeyV") return false;
       return true;
-    });
+    };
+    term.attachCustomKeyEventHandler(copyKeys(term));
+
+    window.addEventListener("keydown", (e) => {
+      const f = e.altKey && !e.ctrlKey && !e.metaKey && /^F([1-9])$/.exec(e.key);
+      if (!f) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ttyKey(+f[1]);
+    }, true);
 
     window.addEventListener("keydown", (e) => {
       if (e.key !== "End" || !e.ctrlKey || !e.altKey) return;
@@ -1195,10 +1435,10 @@
 
     function focusInput() {
       if (mobile) kbd.focus({ preventScroll: true });
-      else term.focus();
+      else active.term.focus();
     }
     $("#term").addEventListener("click", () => {
-      if (!term.hasSelection()) focusInput();
+      if (!active.term.hasSelection()) focusInput();
     });
 
     const NAMED = {
@@ -1225,10 +1465,16 @@
     }
 
     const lastTap = { ctrl: 0, alt: 0 };
-    function pressKey(v) {
-      if (v === "@more") { cfg.set("keys.open", $("#more").classList.contains("open") ? "off" : "on"); return; }
+    // t - консоль окна tk-term для его ряда клавиш; без t - ряд страницы, консоль на виду
+    function pressKey(v, t) {
+      if (v === "@more") {
+        if (t) t.kmore();
+        else cfg.set("keys.open", $("#more").classList.contains("open") ? "off" : "on");
+        return;
+      }
       if (v === "@kbd") {
-        if (document.activeElement === kbd) kbd.blur(); else kbd.focus({ preventScroll: true });
+        const ta = t ? t.term.textarea : kbd;
+        if (document.activeElement === ta) ta.blur(); else ta.focus({ preventScroll: true });
         return;
       }
       if (v === "@ctrl" || v === "@alt") {
@@ -1238,11 +1484,14 @@
         return;
       }
       if (v === "@end" && mods.ctrl && mods.alt) { releaseMods(); wipe(); return; }
-      if (v[0] === "@") { send(special(v.slice(1))); return; }
-      send(v.length === 1 ? withMods(v) : (releaseMods(), v));
+      const fk = v[0] === "\x1b" ? FKEYS.indexOf(v.slice(1)) : -1;
+      if (!t && mods.alt && fk >= 0 && fk < 9) { releaseMods(); ttyKey(fk + 1); return; }
+      const to = t || target();
+      if (v[0] === "@") { sendTo(to, special(v.slice(1), to)); return; }
+      sendTo(to, v.length === 1 ? withMods(v) : (releaseMods(), v));
     }
 
-    function makeRow(parent, keys) {
+    function makeRow(parent, keys, t) {
       const row = document.createElement("div");
       row.className = "row";
       row.style.gridTemplateColumns = `repeat(${keys.length}, 1fr)`;
@@ -1251,15 +1500,15 @@
         b.textContent = label;
         b.tabIndex = -1;
         if (keys.length > 9) b.style.fontSize = `calc(var(--keys, 16px) * ${(9 / keys.length).toFixed(3)})`;
-        if (value === "@ctrl" || value === "@alt") modBtn[value.slice(1)] = b;
-        if (value === "@more") moreBtn = b;
+        if (value === "@ctrl" || value === "@alt") modBtn[value.slice(1)].push(b);
+        if (value === "@more") { if (t) t.kmoreBtn = b; else moreBtn = b; }
         let timer = 0;
         const stop = () => { clearTimeout(timer); clearInterval(timer); b.classList.remove("down"); };
         b.addEventListener("pointerdown", (e) => {
           e.preventDefault();
           b.classList.add("down");
-          pressKey(value);
-          if (repeat) timer = setTimeout(() => { timer = setInterval(() => pressKey(value), 60); }, 380);
+          pressKey(value, t);
+          if (repeat) timer = setTimeout(() => { timer = setInterval(() => pressKey(value, t), 60); }, 380);
         });
         b.addEventListener("pointerup", stop);
         b.addEventListener("pointercancel", stop);
@@ -1270,15 +1519,38 @@
       parent.append(row);
     }
     function buildKeys() {
-      for (const k in modBtn) delete modBtn[k];
+      modBtn.ctrl = [];
+      modBtn.alt = [];
       moreBtn = null;
       $("#base").replaceChildren();
       $("#more").replaceChildren();
       for (const r of parseKeys(cfg.get("keys.main"))) makeRow($("#base"), r);
       for (const r of parseKeys(cfg.get("keys.more"))) makeRow($("#more"), r);
+      for (const t of ttys.values()) kbar(t);
       setMod("ctrl", mods.ctrl);
       setMod("alt", mods.alt);
       setMore(mobile && cfg.get("keys.open") === "on");
+    }
+    // ряд клавиш в окне tk-term: те же keys.main и keys.more, только на телефоне (как ряд страницы)
+    function kbar(t) {
+      if (!t.keys || !t.keys.isConnected) return;
+      t.keys.replaceChildren();
+      if (!mobile) return;
+      const bar = document.createElement("div"), more = document.createElement("div"), base = document.createElement("div");
+      bar.className = "kbar";
+      more.className = "more";
+      bar.append(more, base);
+      for (const r of parseKeys(cfg.get("keys.more"))) makeRow(more, r, t);
+      for (const r of parseKeys(cfg.get("keys.main"))) makeRow(base, r, t);
+      t.kmore = () => {
+        const open = more.classList.toggle("open");
+        if (t.kmoreBtn) t.kmoreBtn.classList.toggle("on", open);
+      };
+      bar.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+      bar.addEventListener("mousedown", (e) => e.preventDefault());
+      t.keys.append(bar);
+      setMod("ctrl", mods.ctrl);
+      setMod("alt", mods.alt);
     }
     function setKeySize(v) {
       document.documentElement.style.setProperty("--keys", v + "px");
@@ -1291,8 +1563,12 @@
     function setMobile(on) {
       mobile = on;
       document.body.classList.toggle("mobile", on);
-      if (on) term.textarea.setAttribute("inputmode", "none");
-      else term.textarea.removeAttribute("inputmode");
+      for (const t of ttys.values()) {
+        kbar(t);
+        if (t.host) continue;
+        if (on) t.term.textarea.setAttribute("inputmode", "none");
+        else t.term.textarea.removeAttribute("inputmode");
+      }
       setMore(on && cfg.get("keys.open") === "on");
       focusInput();
     }

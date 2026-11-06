@@ -1,3 +1,4 @@
 #!/bin/sh
-# tk-term [-T заголовок] [--cd папка] [-e команда...]: терминал в окне
-exec python3 -m ktterm "$@"
+# tk-term [-T заголовок] [--cd папка] [-e команда...]: терминал в окне - консоль kt tty в окне tkinter
+if command -v python3 > /dev/null; then exec python3 -m ktterm "$@"; fi
+exec micropython -X heapsize=8M -m ktterm "$@"

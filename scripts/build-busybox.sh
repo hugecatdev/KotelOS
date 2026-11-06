@@ -62,6 +62,10 @@ i686-linux-musl-gcc -static -no-pie -Os -s -ffunction-sections -fdata-sections -
   -Wl,-z,norelro -Wl,--build-id=none -o overlay/usr/sbin/kt-net src/kt-net.c
 ln -sf kt-net overlay/usr/sbin/kt-netd
 echo "kt-net -> overlay/usr/sbin/kt-net ($(du -h overlay/usr/sbin/kt-net | cut -f1))"
+mkdir -p packages/kt-ttyd/usr/sbin
+i686-linux-musl-gcc -static -no-pie -Os -s -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -Wl,-z,norelro -Wl,--build-id=none -o packages/kt-ttyd/usr/sbin/kt-ttyd src/kt-ttyd.c
+echo "kt-ttyd -> packages/kt-ttyd/usr/sbin/kt-ttyd ($(du -h packages/kt-ttyd/usr/sbin/kt-ttyd | cut -f1))"
 mkdir -p packages/pyzygote/usr/local/bin
 i686-linux-musl-gcc -static -no-pie -Os -s -ffunction-sections -fdata-sections -Wl,--gc-sections \
   -Wl,-z,norelro -Wl,--build-id=none -o packages/pyzygote/usr/local/bin/python3 src/pyzygote.c
