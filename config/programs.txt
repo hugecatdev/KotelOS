@@ -13,7 +13,7 @@ python-turtle черепашья графика turtle
 python-turtledemo примеры turtle (команда turtledemo)
 python-matplotlib-tk окна matplotlib через tkinter
 python-matplotlib-demo примеры matplotlib (команда mpldemo)
-kt-ttyd виртуальные консоли (Alt+F1..F9, kt tty)
+kt-ttyd виртуальные консоли (Alt+1..9, kt tty)
 tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
 python-mpy команда python для micropython

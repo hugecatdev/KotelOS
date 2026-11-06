@@ -525,7 +525,7 @@
     }
 
     // виртуальные консоли, как tty1..N в Linux: 1 - ttyS0 (терминал выше), 2.. - шеллы в pty у kt-ttyd в госте
-    // (порт 7702). Полосы нет: Alt+F1..F9 (на телефоне ALT и F-клавиша из ⋯) и kt tty. Экран каждой рисует свой
+    // (порт 7702). Полосы нет: Alt+1..9 (на телефоне ALT и цифра или F-клавиша из ⋯) и kt tty. Экран каждой рисует свой
     // xterm здесь, гость только переносит байты; без страницы шеллы живут, а kt-ttyd держит хвост вывода и после
     // перезагрузки страницы присылает его заново. Консоль может жить и в чужом элементе - окне tk-term,
     // тогда у неё там свой ряд клавиш
@@ -694,10 +694,13 @@
       focusInput();
       return true;
     }
-    // Alt+Fn: консоль n; нет такой - открыть, как getty на tty n
+    // Alt+n: консоль n; нет такой - открыть, как getty на tty n
     function ttyKey(n) {
       if (!ttyGo(n) && n > 1) ttyNew("", null, n);
     }
+    // сочетание - консолям, пока они на экране: в окне tk-term оно программе этого окна, а под рабочим
+    // столом (окно tk во весь экран) переключение шло бы невидимо
+    const ttySwitch = () => !target().host && !document.querySelector(".tk-layer > .tk-desk:not([hidden])");
     function ttyKill(id) {
       if (id > 1 && ttys.has(id)) ttyWrite(`KILL ${id}\n`);
     }
@@ -1389,8 +1392,10 @@
     term.attachCustomKeyEventHandler(copyKeys(term));
 
     window.addEventListener("keydown", (e) => {
-      const f = e.altKey && !e.ctrlKey && !e.metaKey && /^F([1-9])$/.exec(e.key);
-      if (!f) return;
+      // Alt+1..9 - консоль (как вкладки терминалов; Alt+F4 браузер не отдаёт). По коду клавиши: на Mac
+      // Option+1 даёт «¡»
+      const f = e.altKey && !e.ctrlKey && !e.metaKey && /^Digit([1-9])$/.exec(e.code);
+      if (!f || !ttySwitch()) return;
       e.preventDefault();
       e.stopPropagation();
       ttyKey(+f[1]);
@@ -1411,6 +1416,7 @@
       while (i < a.length && i < b.length && a[i] === b[i]) i++;
       const out = "\x7f".repeat(a.length - i) + b.slice(i).join("");
       sent = kbd.value;
+      if (mods.alt && /^[1-9]$/.test(out) && ttySwitch()) { releaseMods(); ttyKey(+out); return; } // ALT и цифра на телефоне
       if (out) send(withMods(out).replace(/\n/g, "\r"));
     }
     function resetKbd() { kbd.value = ""; sent = ""; }
@@ -1485,7 +1491,9 @@
       }
       if (v === "@end" && mods.ctrl && mods.alt) { releaseMods(); wipe(); return; }
       const fk = v[0] === "\x1b" ? FKEYS.indexOf(v.slice(1)) : -1;
-      if (!t && mods.alt && fk >= 0 && fk < 9) { releaseMods(); ttyKey(fk + 1); return; }
+      // ряд страницы: ALT и цифра (если она есть в keys.main) или F-клавиша из ⋯ - консоль
+      const dk = /^[1-9]$/.test(v) ? +v : fk >= 0 && fk < 9 ? fk + 1 : 0;
+      if (!t && mods.alt && dk && ttySwitch()) { releaseMods(); ttyKey(dk); return; }
       const to = t || target();
       if (v[0] === "@") { sendTo(to, special(v.slice(1), to)); return; }
       sendTo(to, v.length === 1 ? withMods(v) : (releaseMods(), v));
