@@ -78,7 +78,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
     страницы, видеопамять выделяется обнулённой (раньше обе вещи делала
     `page.html`, в Web Worker ей до них не дотянуться);
   - `08-worker.patch` - опция `worker`: процессор и устройства в Web Worker,
-    адаптеры на странице (`boot.worker`, см. [internals.md](internals.md));
+    адаптеры и экран на странице (`boot.worker`, см. [internals.md](internals.md));
   - `09-tcp-fin-with-data.patch` - TCP страницы не теряет данные, пришедшие
     в одном сегменте с FIN (с воркером так было на каждом длинном `kt js`).
 
@@ -95,7 +95,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   сборки с устройствами восстанавливаются: лишнее v86 пропускает.
 
   После смены `REV` или патчей: `scripts/build-v86.sh`, `python3 tests/run.py`
-  и `KT_WORKER=1 python3 tests/run.py` (бандлы без экрана с `--worker`),
+  и `KT_WORKER=1 python3 tests/run.py` (все тестовые бандлы с `--worker`),
   `python3 tests/bench.py СТАРАЯ_ПАПКА vendor/v86`; правки JIT ещё и в
   debug-сборке: там срабатывают `dbg_assert`.
   Что пробовали и не взяли (2026-11-06, `tests/bench.py`): `wasm-opt` -O2..-O4

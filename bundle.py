@@ -356,7 +356,7 @@ def options(argv=None):
     ap.add_argument("--bare", action="store_true", help="без пакетов: только busybox и kt")
     ap.add_argument("--mem", type=int, help="память машины по умолчанию, МБ (иначе 128)")
     ap.add_argument("--worker", action="store_true",
-                    help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker (без экрана)")
+                    help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker")
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
     ap.add_argument("--phone-scale", type=float, metavar="CSS",

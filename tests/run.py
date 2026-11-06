@@ -23,7 +23,7 @@ sys.path.insert(0, ROOT)
 import bundle
 
 PKGS = ["fun", "micropython", "python3", "python-requests", "pip", "curl", "pack", "sync", "notify", "ai"]
-# KT_WORKER=1: бандлы без экрана - с boot.worker on (v86 в Web Worker)
+# KT_WORKER=1: бандлы с boot.worker on (v86 в Web Worker)
 WORKER = os.environ.get("KT_WORKER") == "1"
 AGENTS = r"""n=0
 for d in /proc/[0-9]*; do
@@ -288,6 +288,11 @@ class Suite:
             print("FAIL  %-34s %5.1f с  %s" % (name, time.time() - t, str(e).strip().replace("\n", " | ")[:300]))
             if os.environ.get("TRACE"):
                 traceback.print_exc()
+                # падения процессов в госте: адрес и код из ядра
+                try:
+                    print(self.sh("dmesg | grep -i -E 'segfault|trap|protection|oops|bug:' | tail -n 20", 10)[1])
+                except Exception as e2:
+                    print("dmesg не получить: %s" % e2)
 
 
 def md5(data):
@@ -375,7 +380,7 @@ def main():
     worker = ["--worker"] if WORKER else []
     for args in (["-o", www + "/t.html", "-n", "test"] + worker + PKGS,
                  ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"] + worker,
-                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg"]):
+                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg"] + worker):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -992,6 +997,7 @@ def main():
 
     def screen_doom():
         t = s.open(base + "vga.html")
+        assert s.ev("!!emulator.worker") == WORKER, "boot.worker не тот: ждали %s" % WORKER
         s.ok("test -c /dev/fb0 && test -c /dev/dri/card0")
         assert "vga: 8.0 МБ, спрятан" in s.ok("kt info")
         s.ok("kt screen on")
@@ -1037,9 +1043,9 @@ def main():
         assert not s.ev("document.querySelector('#screen').classList.contains('on')")
         assert not s.ev("emulator.keyboard_adapter.emu_enabled")
 
-        # хеш показанного кадра: буфер doom (KMS) лежит в видеопамяти за буфером /dev/fb0
-        frame = """(() => { const v = emulator.v86.cpu.devices.vga, m = v.svga_memory; let h = 0;
-          for (let i = v.svga_offset; i < v.svga_offset + 1228800; i += 997) h = (h * 31 + m[i]) | 0; return h; })()"""
+        # хеш показанного кадра - по пикселям холста: и без воркера, и с ним (кадр пришёл копией)
+        frame = """(() => { const c = document.querySelector('#screen canvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          let h = 0; for (let i = 0; i < d.length; i += 997) h = (h * 31 + d[i]) | 0; return h; })()"""
         s.start("doom")
         t0 = time.time()
         while not s.ev("document.querySelector('#screen').classList.contains('on')"):

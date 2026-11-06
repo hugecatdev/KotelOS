@@ -2026,9 +2026,9 @@
         opts.disable_keyboard = false;
       }
       /* #endif */
-      // boot.worker: процессор и устройства v86 в Web Worker, страница (терминал, мост kt) - в своём
-      // потоке. Экрана в воркере пока нет: с видеопамятью под экран машина идёт на странице, как раньше
-      if (cfg.get("boot.worker") === "on" && vgaSize < VGA_MIN && typeof Worker === "function") {
+      // boot.worker: процессор и устройства v86 в Web Worker, страница (терминал, экран, мост kt) - в
+      // своём потоке; кадры экрана воркер присылает копиями изменившихся прямоугольников
+      if (cfg.get("boot.worker") === "on" && typeof Worker === "function") {
         try {
           emulator = new V86({ ...opts, worker: { source: $("#kt-v86").textContent, wasm } });
         } catch (e) {

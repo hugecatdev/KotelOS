@@ -22,7 +22,11 @@ v86 в Web Worker: опция worker = { source, wasm }
 - В воркере yield - MessageChannel и setTimeout (его таймеры в фоновой
   вкладке не душатся), без вложенного воркера: ветка с Worker - только при
   window.
-- Экрана в воркере пока нет: screen_container с worker - ошибка.
+- Экран: ScreenAdapter остаётся на странице, VGA в воркере рисует через
+  WorkerScreenAdapter - вызовы пересылаются, кадр - копией изменившихся
+  прямоугольников (буфер передаётся, не копируется ещё раз). Кадр страница
+  просит раз в свой requestAnimationFrame и не больше одного сразу: если
+  воркер не успевает, кадры не копятся.
 
 --- a/src/browser/starter.js
 +++ b/src/browser/starter.js
@@ -173,7 +177,25 @@ v86 в Web Worker: опция worker = { source, wasm }
  V86.prototype.continue_init = async function(emulator, options)
  {
      this.bus.register("emulator-stopped", function()
-@@ -579,7 +599,14 @@
+@@ -316,7 +336,16 @@
+ 
+     if(screen_options.container)
+     {
+-        this.screen_adapter = new ScreenAdapter(screen_options, () => this.v86.cpu.devices.vga && this.v86.cpu.devices.vga.screen_fill_buffer());
++        this.screen_adapter = new ScreenAdapter(screen_options, () => {
++            if(this.worker)
++            {
++                this.worker_fill();
++            }
++            else
++            {
++                this.v86.cpu.devices.vga && this.v86.cpu.devices.vga.screen_fill_buffer();
++            }
++        });
+     }
+     else if(screen_options.ansi)
+     {
+@@ -579,7 +608,14 @@
                      if(f.url.endsWith(".zst") && f.name !== "initial_state")
                      {
                          dbg_assert(f.size, "A size must be provided for compressed images");
@@ -189,7 +211,7 @@ v86 в Web Worker: опция worker = { source, wasm }
                      }
  
                      put_on_settings.call(this, f.name, f.as_json ? result : new SyncBuffer(result));
-@@ -673,6 +700,12 @@
+@@ -673,6 +709,12 @@
              }
          }
  
@@ -202,7 +224,7 @@ v86 в Web Worker: опция worker = { source, wasm }
          this.v86.init(settings);
  
          this.modem && this.modem.initialize();
-@@ -839,6 +872,11 @@
+@@ -839,6 +881,11 @@
   */
  V86.prototype.run = async function()
  {
@@ -214,7 +236,7 @@ v86 в Web Worker: опция worker = { source, wasm }
      this.v86.run();
  };
  
-@@ -858,6 +896,11 @@
+@@ -858,6 +905,11 @@
              resolve();
          };
          this.add_listener("emulator-stopped", listener);
@@ -226,7 +248,7 @@ v86 в Web Worker: опция worker = { source, wasm }
          this.v86.stop();
      });
  };
-@@ -869,7 +912,15 @@
+@@ -869,7 +921,15 @@
  {
      await this.stop();
  
@@ -243,7 +265,7 @@ v86 в Web Worker: опция worker = { source, wasm }
      this.keyboard_adapter && this.keyboard_adapter.destroy();
      this.network_adapter && this.network_adapter.destroy();
      this.mouse_adapter && this.mouse_adapter.destroy();
-@@ -929,6 +980,11 @@
+@@ -929,6 +989,11 @@
  V86.prototype.restore_state = async function(state)
  {
      dbg_assert(arguments.length === 1);
@@ -255,7 +277,7 @@ v86 в Web Worker: опция worker = { source, wasm }
      this.v86.restore_state(state);
  };
  
-@@ -940,6 +996,10 @@
+@@ -940,6 +1005,10 @@
  V86.prototype.save_state = async function()
  {
      dbg_assert(arguments.length === 0);
@@ -266,7 +288,7 @@ v86 в Web Worker: опция worker = { source, wasm }
      return this.v86.save_state();
  };
  
-@@ -1632,6 +1692,271 @@
+@@ -1632,6 +1701,444 @@
  }
  FileNotFoundError.prototype = Error.prototype;
  
@@ -275,9 +297,16 @@ v86 в Web Worker: опция worker = { source, wasm }
 + * created from the source of this library, the adapters (network, serial, keyboard, mouse) stay
 + * on the page. Both ends of the bus are bridged with postMessage: messages are batched and sent
 + * once per microtask, so per-byte events (serial0-output-byte) don't become one message each.
-+ * The screen is not supported in this mode yet. Errors in the worker come as the bus event
-+ * "worker-error" (and in the console of the page).
++ * The screen: the ScreenAdapter stays on the page, the VGA in the worker draws through a
++ * WorkerScreenAdapter, which sends the calls over and the changed rectangles of a frame as
++ * copies; a frame is asked for once per animation frame of the page, one at a time. Errors in
++ * the worker come as the bus event "worker-error" (and in the console of the page).
 + */
++
++// Messages of the worker bridge that are not bus events
++const WORKER_SCREEN = "\u0000screen";
++const WORKER_FRAME = "\u0000frame";
++const WORKER_FILLED = "\u0000filled";
 +
 +/**
 + * Messages are sent in batches, later: a view on memory that gets reused (a packet in the buffer
@@ -296,17 +325,16 @@ v86 в Web Worker: опция worker = { source, wasm }
 + */
 +V86.prototype.worker_init = function(options)
 +{
-+    if(options.screen_container)
-+    {
-+        throw new Error("v86 worker: no screen yet");
-+    }
-+
 +    const blob = new Blob([options.worker.source, "\n;self['V86']['worker_main']();\n"], { type: "text/javascript" });
 +    const url = URL.createObjectURL(blob);
 +    this.worker = new Worker(url);
 +    URL.revokeObjectURL(url);
 +
 +    this.worker_calls = new Map();
++    this.worker_fill_pending = false;
++    // buffers of drawn frames, go back to the worker with the next request: no new allocations
++    // per frame (they made the garbage collector of the page stop it for 10-30 ms now and then)
++    this.worker_frames_back = [];
 +    // compressed files that the worker unpacks (it has the wasm with zstd): name -> size
 +    this.worker_zst = {};
 +    this.worker_call_id = 0;
@@ -331,7 +359,30 @@ v86 в Web Worker: опция worker = { source, wasm }
 +            // devices -> adapters (and the page)
 +            for(const [name, value] of data.m)
 +            {
-+                this.emulator_bus.send(name, value);
++                if(name === WORKER_SCREEN)
++                {
++                    const fn = this.screen_adapter[value[0]];
++                    if(fn) fn.apply(this.screen_adapter, value[1]);
++                }
++                else if(name === WORKER_FRAME)
++                {
++                    const [x, y, w, h, pixels] = value;
++                    this.screen_adapter.update_buffer([{
++                        image_data: new ImageData(pixels, w, h),
++                        screen_x: x, screen_y: y,
++                        buffer_x: 0, buffer_y: 0,
++                        buffer_width: w, buffer_height: h,
++                    }]);
++                    this.worker_frames_back.push(pixels.buffer);
++                }
++                else if(name === WORKER_FILLED)
++                {
++                    this.worker_fill_pending = false;
++                }
++                else
++                {
++                    this.emulator_bus.send(name, value);
++                }
 +            }
 +        }
 +        else if(data.t === "result")
@@ -354,6 +405,21 @@ v86 в Web Worker: опция worker = { source, wasm }
 +    };
 +
 +    this.continue_init(null, options);
++};
++
++/**
++ * A frame for the screen adapter: one at a time, the next one when this one arrived
++ */
++V86.prototype.worker_fill = function()
++{
++    if(this.worker && !this.worker_fill_pending)
++    {
++        this.worker_fill_pending = true;
++        this.worker_flush();
++        const back = this.worker_frames_back;
++        this.worker_frames_back = [];
++        this.worker.postMessage({ t: "fill", back }, back);
++    }
 +};
 +
 +V86.prototype.worker_flush = function()
@@ -412,9 +478,100 @@ v86 в Web Worker: опция worker = { source, wasm }
 +        settings: send,
 +        wasm: options.worker.wasm,
 +        zst: this.worker_zst,
++        screen: !!options.screen_container,
 +        autostart: !!options.autostart,
 +    }, [...transfer]);
 +};
++
++/**
++ * Screen of the VGA in the worker: the calls go to the ScreenAdapter of the page, a frame as
++ * copies of its changed rectangles (transferred, not copied again)
++ *
++ * @constructor
++ * @param {function(string, *, Array=)} send
++ */
++function WorkerScreenAdapter(send)
++{
++    this.FLAG_BLINKING = 0x01;
++    this.FLAG_FONT_PAGE_B = 0x02;
++
++    /**
++     * @param {string} name
++     * @param {!Array} args
++     */
++    const call = (name, args) => send(WORKER_SCREEN, [name, args]);
++
++    this.put_char = function(row, col, chr, flags, bg_color, fg_color)
++    {
++        call("put_char", [row, col, chr, flags, bg_color, fg_color]);
++    };
++    this.update_cursor = function(row, col) { call("update_cursor", [row, col]); };
++    this.update_cursor_scanline = function(start, end, enabled) { call("update_cursor_scanline", [start, end, enabled]); };
++    this.set_mode = function(graphical) { call("set_mode", [graphical]); };
++    this.clear_text_state = function() { call("clear_text_state", []); };
++    this.set_size_text = function(cols, rows) { call("set_size_text", [cols, rows]); };
++    this.set_size_graphical = function(width, height, buffer_width, buffer_height)
++    {
++        call("set_size_graphical", [width, height, buffer_width, buffer_height]);
++    };
++    this.clear_screen = function() { call("clear_screen", []); };
++    this.set_font_bitmap = function(height, width_9px, width_dbl, copy_8th_col, vga_bitmap, vga_bitmap_changed)
++    {
++        // a view on the video memory: copy
++        call("set_font_bitmap", [height, width_9px, width_dbl, copy_8th_col, vga_bitmap.slice(), vga_bitmap_changed]);
++    };
++    this.set_font_page = function(page_a, page_b) { call("set_font_page", [page_a, page_b]); };
++    this.set_scale = function(s_x, s_y) {};
++    this.destroy = function() {};
++    this.pause = function() {};
++    this.continue = function() {};
++
++    // buffers of frames back from the page; each the size of the whole frame, so it fits any
++    // changed rectangle of this mode (svga sends one per frame: one buffer goes round)
++    /** @type {!Array<!ArrayBuffer>} */
++    this.pool = [];
++
++    /**
++     * @param {number} frame
++     * @param {number} bytes
++     * @return {!Uint8ClampedArray}
++     */
++    const take = (frame, bytes) => {
++        for(let buffer; (buffer = this.pool.pop()); )
++        {
++            // from an earlier mode: let it go
++            if(buffer.byteLength === frame) return new Uint8ClampedArray(buffer, 0, bytes);
++        }
++        return new Uint8ClampedArray(new ArrayBuffer(frame), 0, bytes);
++    };
++
++    this.update_buffer = function(layers)
++    {
++        for(const layer of layers)
++        {
++            const data = layer.image_data.data;
++            const stride = layer.image_data.width * 4;
++            const w = layer.buffer_width;
++            const h = layer.buffer_height;
++            if(w <= 0 || h <= 0) continue;
++            const pixels = take(data.length, w * h * 4);
++            if(layer.buffer_x === 0 && w === layer.image_data.width)
++            {
++                // whole rows: one copy
++                pixels.set(data.subarray(layer.buffer_y * stride, (layer.buffer_y + h) * stride));
++            }
++            else
++            {
++                for(let y = 0; y < h; y++)
++                {
++                    const from = (layer.buffer_y + y) * stride + layer.buffer_x * 4;
++                    pixels.set(data.subarray(from, from + w * 4), y * w * 4);
++                }
++            }
++            send(WORKER_FRAME, [layer.screen_x, layer.screen_y, w, h, pixels], [pixels.buffer]);
++        }
++    };
++}
 +
 +/**
 + * Entry of the worker: wasm, CPU and devices, the bus to the page
@@ -431,15 +588,20 @@ v86 в Web Worker: опция worker = { source, wasm }
 +    const device_bus = pair[1];
 +    /** @type {v86} */
 +    let emulator = null;
++    /** @type {WorkerScreenAdapter} */
++    let worker_screen = null;
 +    let queue = [];
++    let transfer = [];
 +    const flush = () => {
 +        if(queue.length)
 +        {
 +            const m = queue;
++            const t = transfer;
 +            queue = [];
++            transfer = [];
 +            try
 +            {
-+                post({ t: "bus", m });
++                post({ t: "bus", m }, t);
 +            }
 +            catch(err)
 +            {
@@ -459,6 +621,19 @@ v86 в Web Worker: опция worker = { source, wasm }
 +    device_bus.send = function(name, value)
 +    {
 +        if(queue.push([name, copy_view(value)]) === 1)
++        {
++            queueMicrotask(flush);
++        }
++    };
++    /**
++     * @param {string} name
++     * @param {*} value
++     * @param {Array=} with_transfer
++     */
++    const send_page = function(name, value, with_transfer)
++    {
++        if(with_transfer) transfer.push(...with_transfer);
++        if(queue.push([name, value]) === 1)
 +        {
 +            queueMicrotask(flush);
 +        }
@@ -496,7 +671,15 @@ v86 в Web Worker: опция worker = { source, wasm }
 +                const unpack = /** @type {V86} */ (/** @type {?} */ ({ v86: emulator, zstd_context: null }));
 +                settings[name] = V86.prototype.zstd_decompress.call(unpack, zst[name], new Uint8Array(settings[name]));
 +            }
-+            settings.screen = new DummyScreenAdapter({});
++            if(data.screen)
++            {
++                worker_screen = new WorkerScreenAdapter(send_page);
++                settings.screen = worker_screen;
++            }
++            else
++            {
++                settings.screen = new DummyScreenAdapter({});
++            }
 +            emulator.init(settings);
 +            if(settings.initial_state)
 +            {
@@ -508,6 +691,18 @@ v86 в Web Worker: опция worker = { source, wasm }
 +                emulator.run();
 +            }
 +            device_bus.send("emulator-loaded");
++        }
++        else if(data.t === "fill")
++        {
++            if(worker_screen && data.back)
++            {
++                // frames drawn by the page; two are enough (split screen of vga: two rectangles)
++                worker_screen.pool.push(...data.back);
++                if(worker_screen.pool.length > 2) worker_screen.pool.splice(0, worker_screen.pool.length - 2);
++            }
++            const vga = emulator && emulator.cpu.devices.vga;
++            if(vga) vga.screen_fill_buffer();
++            send_page(WORKER_FILLED, null);
 +        }
 +        else if(data.t === "call")
 +        {
