@@ -84,4 +84,12 @@ scripts/build-mesa.sh
 python3 alpine.py sqlitebrowser --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib \
   --skip mesa-egl --skip mesa-gbm --skip gtk+3.0 --skip libinput-libs --skip cups-libs --skip pango \
   --skip xdg-utils --skip libdrm --skip xkeyboard-config --skip icu-data-full
+# Qt Designer: из qt5-qttools-dev только designer (Qt5 - тот же, что у sqlitebrowser выше). Весь пакет -
+# 91 пакет и ~925 МБ: libclang (LLVM 18) нужен лишь qdoc, qt5-qttools (Qt Quick) - qdbus/qtdiag,
+# qt5-qtbase-dev (mesa-dev, perl, драйверы SQL) - заголовкам, libqt5help - qhelpgenerator
+python3 alpine.py qt5-qttools-dev --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib \
+  --skip qt5-qttools --skip libqt5help --skip qt5-qtbase-dev --skip clang18-libclang --skip pkgconfig \
+  --drop 'usr/include/*' --drop 'usr/lib/qt5/*' --drop 'usr/bin/*' --drop 'usr/lib/*.prl' \
+  --drop 'usr/lib/libQt5*.so' --drop 'usr/share/applications/linguist*' \
+  --keep 'usr/lib/qt5/bin/designer' --keep 'usr/bin/designer' --keep 'usr/bin/designer-qt5'
 python3 scripts/jdk8.py

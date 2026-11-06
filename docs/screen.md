@@ -162,7 +162,19 @@ X), темы GTK3, libinput, cups, pango, xdg-utils (тянет libmagic, 10 М�
 
 `kt pkg add sqlitebrowser` в бандле `vga` - ~1 мин (75 МБ в /usr/lib вместе с X),
 окно появляется через ~26 с, программа держит ~56 МБ: машине нужно 256 МБ
-памяти (у бандла `vga` столько и есть). Другие программы на Qt5 из Alpine (`cutecom`, `keepassxc`...) тоже
+памяти (у бандла `vga` столько и есть).
+
+Qt Designer - `kt pkg add qt5-qttools-dev`, запуск `designer`. В репозитории
+этот пакет урезан до одного `designer` (0.35 МБ) с `libqt5designer` и
+`libqt5designercomponents`: 3 пакета, 5 МБ скачать, 6.4 МБ в машине, остальное
+Qt5 - то же, что у `sqlitebrowser`. Целиком из Alpine он тянет 91 пакет и ~925 МБ:
+LLVM 18 через `libclang` (нужен только `qdoc`), Qt Quick через `qt5-qttools`
+(`qdbus`, `qtdiag`), `qt5-qtbase-dev` с mesa-dev и perl (заголовки). Без них в
+Designer нет «Просмотра кода» (`uic` - в `qt5-qtbase-dev`), справки (assistant)
+и QQuickWidget в палитре; `linguist`, `lupdate`, `lrelease` тоже выкинуты, хотя
+им хватило бы Qt5 (+2.2 МБ).
+
+Другие программы на Qt5 из Alpine (`cutecom`, `keepassxc`...) тоже
 возьмут `mesa-xlib`, если их зависимости - Qt5 и `libGL`. Qt6 (LXQt:
 `qterminal`, `pcmanfm-qt`) так не запустить: его `libQt6Gui` требует ещё
 `libEGL`, а EGL в mesa есть только вместе с DRI.
