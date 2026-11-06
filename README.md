@@ -20,7 +20,7 @@ MicroPython и на странице.
 ```sh
 scripts/build-busybox.sh   # busybox, kt-net, kt-seed, pyzygote
 scripts/build-kernel.sh    # ядро -> images/bzImage
-scripts/get-packages.sh    # пакеты из Alpine, свой CPython, openblas, jdk8, doom -> build/packages/
+scripts/get-packages.sh    # пакеты из Alpine, свой CPython, openblas, jdk8, doom, Xorg -> build/packages/
 ./build.sh                 # rootfs -> images/, репозиторий пакетов -> site/repo/
 python3 bundle.py          # бандл -> site/index.html
 ```
@@ -37,7 +37,7 @@ python3 bundle.py          # бандл -> site/index.html
 - [Пакеты](docs/packages.md) - `kt pkg`, репозиторий, свои пакеты, пакеты Alpine
 - [Python](docs/python.md) - свой CPython, `pyzygote`, pip, Telegram-боты
 - [Окна](docs/gui.md) - tkinter, IDLE, turtle, matplotlib, рабочий стол
-- [Экран](docs/screen.md) - `/dev/fb0`, `kt screen`, Doom
+- [Экран](docs/screen.md) - `/dev/fb0`, `kt screen`, Doom, X без OpenGL
 - [Файлы](docs/files.md) - `kt sync` и `kt pack`
 - [ИИ-ассистент](docs/ai.md) - `ai`
 - [Сборка и тесты](docs/build.md)

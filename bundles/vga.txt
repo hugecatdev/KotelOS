@@ -1,0 +1,3 @@
+# экран: видеопамять 4 МБ, /dev/fb0 и kt screen; Doom (doom) и X без OpenGL (startx: twm и xterm)
+--snap --vga
+fun nano htop curl wget pack notify kt-ttyd doom xorg

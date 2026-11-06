@@ -75,4 +75,5 @@ rm -rf build/packages/qhull/usr/bin
 scripts/build-openblas.sh
 scripts/build-numpy.sh
 scripts/build-doom.sh
+scripts/build-xorg.sh
 python3 scripts/jdk8.py

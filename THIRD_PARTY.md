@@ -27,6 +27,8 @@
 | NumPy 2.2.4 | BSD-3-Clause (и лицензии вложенных частей, см. её `LICENSE.txt`) | `scripts/build-numpy.sh` (PyPI) |
 | Cython 3.1 | Apache-2.0 | `scripts/build-numpy.sh` (PyPI), только для сборки numpy |
 | doomgeneric (движок Doom от id Software через Chocolate Doom) | GPL-2.0 | `scripts/build-doom.sh` (GitHub, коммит закреплён), пакет `doom` |
+| X.Org Server 21.1.19 | MIT/X11 | `scripts/build-xorg.sh` (x.org), правка `patches/xorg-server-novt.patch` (работа без виртуальных консолей), пакет `xorg` |
+| libdrm, libpciaccess, xkeyboard-config (us и ru) из Alpine 3.22 | MIT | `scripts/build-xorg.sh` кладёт копии в пакет `xorg` |
 | DOOM shareware v1.9 (`doom1.wad`) | shareware id Software: раздавать можно только без изменений и бесплатно | `scripts/build-doom.sh`, пакет `doom-shareware` |
 | пакеты Alpine Linux 3.22 | у каждого своя | `scripts/get-packages.sh`, `alpine.py`; `kt pkg add` в машине - тоже |
 | xterm.js и аддоны | MIT | `bundle.py` (cdn.jsdelivr.net), встраивается в бандл |

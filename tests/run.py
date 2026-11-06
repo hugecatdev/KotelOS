@@ -371,7 +371,7 @@ def main():
     www = os.path.join(tmp, "www")
     os.makedirs(www)
     for args in (["-o", www + "/t.html", "-n", "test"] + PKGS, ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"],
-                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom"]):
+                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg"]):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -1023,6 +1023,37 @@ def main():
         assert s.ev("document.activeElement === term.textarea"), "фокус не вернулся в терминал"
         return "загрузка %.1f с" % t
 
+    def screen_x():
+        def typing(text):
+            for ch in text:
+                code = {" ": "Space", "/": "Slash", "-": "Minus", "\r": "Enter"}.get(ch, "Key" + ch.upper())
+                for t_ in ("rawKeyDown", "keyUp"):
+                    s.c.call("Input.dispatchKeyEvent", type=t_, code=code, key=code, windowsVirtualKeyCode=ord(ch.upper()) if ch.isalpha() else 0)
+                time.sleep(0.1)
+
+        t0 = time.time()
+        s.ev("send('startx\\r')")
+        # окно xterm нарисовано: белый фон внутри него (+20+20 на экране 800x600)
+        white = """(() => { const d = document.querySelector('#screen canvas').getContext('2d').getImageData(200, 150, 1, 1).data;
+          return d[0] === 255 && d[1] === 255 && d[2] === 255; })()"""
+        while not s.ev(white):
+            assert time.time() - t0 < 60, "окно xterm не появилось: %s" % s.sh("tail -5 /var/log/Xorg.0.log")[1]
+            time.sleep(0.5)
+        ready = time.time() - t0
+        assert s.ev("[document.querySelector('#screen canvas').width, document.querySelector('#screen canvas').height]") == [800, 600]
+        typing("touch /tmp/x-ok\r")
+        t1 = time.time()
+        while s.sh("test -e /tmp/x-ok")[0]:
+            assert time.time() - t1 < 10, "набранное в xterm не выполнилось"
+            time.sleep(0.5)
+        typing("exit\r")
+        t1 = time.time()
+        while s.ev("document.querySelector('#screen').classList.contains('on')"):
+            assert time.time() - t1 < 15, "экран не спрятался после выхода из сессии"
+            time.sleep(0.3)
+        assert s.sh("pgrep Xorg")[0] != 0, "Xorg остался"
+        return "окно xterm через %.1f с" % ready
+
     def snap_bundle():
         t = s.open(base + "snap.html")
         tz = s.ok("date +%z").strip()
@@ -1049,7 +1080,7 @@ def main():
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("kt reset", reset),
-        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("бандл со снимком", snap_bundle),
+        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]
     try:

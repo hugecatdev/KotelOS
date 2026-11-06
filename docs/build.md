@@ -8,7 +8,7 @@
 ```sh
 scripts/build-busybox.sh  # тулчейн musl.cc, статический busybox с юникодом -> overlay/bin/busybox, kt-seed, kt-net, pyzygote
 scripts/build-kernel.sh   # ядро по config/linux.config + config/kernel.fragment -> images/bzImage
-scripts/get-packages.sh   # пакеты из Alpine x86, свой CPython, openblas, numpy, jdk8, doom -> build/packages/
+scripts/get-packages.sh   # пакеты из Alpine x86, свой CPython, openblas, numpy, jdk8, doom, Xorg -> build/packages/
 ./build.sh                # base/ + overlay/ -> images/rootfs.cpio, packages/ + build/packages/ -> site/repo/ (без sudo)
 python3 bundle.py         # images/ + vendor/v86/ + site/repo/ + page.html -> site/index.html
 ```
@@ -20,6 +20,7 @@ scripts/build-python.sh         # свой CPython -> build/packages/minipython,
 scripts/build-openblas.sh       # openblas под SSE2, LAPACK на C -> build/packages/openblas (его зовёт get-packages.sh)
 scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> build/packages/python-numpy (его зовёт get-packages.sh)
 scripts/build-doom.sh           # doom -> packages/doom, doom1.wad -> build/packages/doom-shareware (его зовёт get-packages.sh)
+scripts/build-xorg.sh           # Xorg без OpenGL -> packages/xorg (его зовёт get-packages.sh)
 scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)
 scripts/build-v86.sh            # v86 из исходников + patches/v86/ -> vendor/v86/ (Rust с wasm32 и Closure Compiler качает в .cache/)
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)

@@ -20,6 +20,7 @@ tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
 doom Doom на экране
 doom-shareware первый эпизод Doom (shareware)
+xorg X на экране: Xorg без OpenGL, twm и xterm (startx)
 python-mpy команда python для micropython
 minipython лёгкий CPython 3.12
 python3 полный CPython 3.12

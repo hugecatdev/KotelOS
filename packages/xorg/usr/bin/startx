@@ -1,0 +1,87 @@
+#!/bin/sh
+# X на экране: Xorg без OpenGL (KMS /dev/dri/card0), клавиатура и мышь - evdev; сессия -
+# ~/.xinitrc, без него twm и xterm. Выход из сессии - обратно в терминал.
+# Размер экрана: startx 1024x768 (по умолчанию 800x600)
+size=${1:-800x600}
+case $size in
+  *[!0-9x]*|x*|*x) echo "startx: размер как 800x600" >&2; exit 1 ;;
+esac
+[ -e /tmp/.X0-lock ] && { echo "startx: X уже запущен (/tmp/.X0-lock)" >&2; exit 1; }
+mkdir -p /tmp/.X11-unix /var/lib/xkb /var/log
+rm -f /tmp/.X11-unix/X0  # от прошлого сервера: по нему ждём готовности нового
+
+# клавиатура - устройство с клавишей A (бит 30 младшего слова), мышь - с абсолютными
+# координатами (мышь VMware)
+kbd= ptr=
+for e in /sys/class/input/event*; do
+  [ -e "$e" ] || continue
+  keys=$(cat "$e/device/capabilities/key")
+  if [ "$(cat "$e/device/capabilities/abs")" != 0 ]; then
+    ptr=${ptr:-/dev/input/${e##*/}}
+  elif [ $((0x${keys##* } >> 30 & 1)) = 1 ]; then
+    kbd=${kbd:-/dev/input/${e##*/}}
+  fi
+done
+
+conf=/tmp/xorg.conf
+cat > $conf <<EOF
+Section "ServerFlags"
+  Option "AutoAddDevices" "false"
+  Option "DontVTSwitch" "true"
+  Option "BlankTime" "0"
+  Option "StandbyTime" "0"
+  Option "SuspendTime" "0"
+  Option "OffTime" "0"
+EndSection
+Section "Device"
+  Identifier "card"
+  Driver "modesetting"
+  Option "kmsdev" "/dev/dri/card0"
+EndSection
+Section "Screen"
+  Identifier "screen"
+  Device "card"
+  DefaultDepth 24
+  SubSection "Display"
+    Modes "$size"
+  EndSubSection
+EndSection
+Section "InputDevice"
+  Identifier "keyboard"
+  Driver "evdev"
+  Option "Device" "$kbd"
+  Option "XkbLayout" "us,ru"
+  Option "XkbOptions" "grp:alt_shift_toggle"
+EndSection
+Section "InputDevice"
+  Identifier "mouse"
+  Driver "evdev"
+  Option "Device" "$ptr"
+EndSection
+Section "ServerLayout"
+  Identifier "layout"
+  Screen "screen"
+  InputDevice "keyboard" "CoreKeyboard"
+  InputDevice "mouse" "CorePointer"
+EndSection
+EOF
+
+kt screen on || exit 1
+Xorg :0 -config $conf -nolisten tcp -noreset > /dev/null 2>&1 &
+xpid=$!
+trap 'kill $xpid 2>/dev/null; wait $xpid 2>/dev/null; kt screen off' EXIT
+trap 'exit 130' INT TERM HUP
+i=0
+until [ -S /tmp/.X11-unix/X0 ]; do
+  kill -0 $xpid 2>/dev/null || { echo "startx: Xorg не запустился, см. /var/log/Xorg.0.log" >&2; exit 1; }
+  i=$((i + 1))
+  [ $i -lt 600 ] || { echo "startx: Xorg не ответил за 60 с" >&2; exit 1; }
+  usleep 100000
+done
+export DISPLAY=:0
+if [ -f "$HOME/.xinitrc" ]; then
+  sh "$HOME/.xinitrc"
+else
+  twm &
+  xterm -geometry 80x24+20+20
+fi
