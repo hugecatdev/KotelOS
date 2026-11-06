@@ -54,8 +54,8 @@ src/                              свои бинарники на C: kt-net, kt
 base/rootfs.base.cpio             базовый rootfs из Buildroot
 config/                           конфиги ядра и busybox, base.exclude, описания пакетов, Buildroot
 scripts/                          сборка ядра, busybox, CPython, openblas, загрузка пакетов
-patches/                          правки сторонних пакетов (matplotlib)
-vendor/v86/                       libv86.js, v86.wasm, BIOS
+patches/                          правки сторонних пакетов (matplotlib, v86)
+vendor/v86/                       libv86.js, v86.wasm, BIOS - собирает scripts/build-v86.sh
 bundles/                          описания бандлов сайта для release.py
 docs/                             документация
 tests/                            тесты в headless Chromium

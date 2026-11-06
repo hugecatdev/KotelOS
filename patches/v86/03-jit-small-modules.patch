@@ -1,0 +1,34 @@
+JIT: модули поменьше - MAX_PAGES 3 -> 1, MAX_EXTRA_BASIC_BLOCKS 250 -> 100
+
+JIT v86 переводит горячую страницу x86 целиком в один модуль wasm с одной
+функцией. С MAX_PAGES=3 туда шли ещё две соседние страницы, а с
+MAX_EXTRA_BASIC_BLOCKS=250 тела циклов с несколькими входами копировались
+под каждый вход. Выходили функции в среднем по ~290 КБ wasm (python3 -c pass:
+28 модулей на 8 МБ), и V8 сначала компилирует их Liftoff, а потом горячие -
+ещё раз TurboFan в фоновых потоках: на запуске python3 фоновая компиляция
+съедала 10-16 с процессора на 1-3 с работы самой машины. На телефоне это
+батарея, нагрев и малые ядра, которые отнимают время у основного потока.
+
+tests/bench.py, headless Chromium, медианы трёх кругов против исходных
+значений: основной поток 0.87-0.96, весь процессор вкладки 0.62-0.70 (загрузка
+ядра 9.5 с вместо 16.7, python3 -c pass 7.5 с вместо 17.8), по часам 0.86-0.95,
+запуск python3 на 25-35% быстрее. MAX_EXTRA_BASIC_BLOCKS=50 вышел чуть лучше,
+но на 30 горячие циклы sh и python уже идут через диспетчер (+30-40%), так
+что 100 - с запасом от этого края.
+
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -67,11 +67,11 @@
+ // - v8 poorly handles large br_table elements and OOMs on modules much smaller than the above limit
+ //   See https://bugs.chromium.org/p/v8/issues/detail?id=9697 and https://bugs.chromium.org/p/v8/issues/detail?id=9141
+ //   Will hopefully be fixed in the near future by generating direct control flow
+-static mut MAX_PAGES: u32 = 3;
++static mut MAX_PAGES: u32 = 1;
+ 
+ static mut JIT_USE_LOOP_SAFETY: bool = true;
+ 
+-pub static mut MAX_EXTRA_BASIC_BLOCKS: u32 = 250;
++pub static mut MAX_EXTRA_BASIC_BLOCKS: u32 = 100;
+ 
+ pub const JIT_THRESHOLD: u32 = 200 * 1000;
+ 

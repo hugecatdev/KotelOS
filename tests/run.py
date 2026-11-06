@@ -939,21 +939,24 @@ def main():
         assert s.ok("kt js 4+4").strip() == "8"
 
     def tcp_resend():
-        def drops():
+        # Читатель в госте встаёт, окно закрывается. Отправитель TCP в v86
+        # (patches/v86/01-tcp-window.patch) ждёт окна, а не шлёт в никуда, и
+        # повторяет то, что гость отбросил; поток должен дойти целиком.
+        def closed():
             names, values = (line.split() for line in s.ok("grep TcpExt /proc/net/netstat").splitlines()[:2])
-            return int(values[names.index("TCPZeroWindowDrop")])
+            return sum(int(values[names.index(k)]) for k in ("TCPToZeroWindowAdv", "TCPZeroWindowDrop"))
 
-        n = drops()
+        n = closed()
         s.ok("(sleep 1; kill -STOP $(cat /run/kt/agent.pid); sleep 7; kill -CONT $(cat /run/kt/agent.pid)) > /dev/null 2>&1 &")
         time.sleep(2)
         s.ev("(() => { const line = 'NOP ' + 'x'.repeat(995); for (let i = 0; i < 160; i++) ctl(line); return 0 })()")
         assert s.ok("echo жив", 60).strip() == "жив"
-        assert drops() > n, "агент: окно гостя не закрывалось, повтор не проверен"
+        assert closed() > n, "агент: окно гостя не закрывалось, проверять нечего"
         s.ev("kt.write('/tmp/slow.py', %s)" % json.dumps(SLOW))
-        n = drops()
+        n = closed()
         out = s.ok("python3 /tmp/slow.py", 60)
         assert out.strip() == "600002", out
-        assert drops() > n, "ответ: окно гостя не закрывалось, повтор не проверен"
+        assert closed() > n, "ответ: окно гостя не закрывалось, проверять нечего"
 
     def snap_bundle():
         t = s.open(base + "snap.html")

@@ -440,23 +440,6 @@
     const send1 = (s) => { if (link) link.write(typeof s === "string" ? enc.encode(s) : s); };
     const ctl = (line) => send1(line + "\n");
 
-    function resend(c) {
-      const pump = c.pump;
-      let timer = 0, ackn, wait = 200;
-      const check = () => {
-        timer = 0;
-        if (c.state === "closed") return;
-        const stuck = c.pending && c.last_received_ackn === ackn;
-        wait = stuck ? Math.min(wait * 2, 1600) : 200;
-        if (stuck) c.pending = false;
-        c.pump();
-      };
-      c.pump = () => {
-        pump.call(c);
-        if (c.pending && !timer) { ackn = c.last_received_ackn; timer = setTimeout(check, wait); }
-      };
-    }
-
     function reader(onLine) {
       const chunks = [];
       let len = 0, want = 0, raw = null;
@@ -509,7 +492,6 @@
       const gen = ++linkGen;
       let c, gone = false;
       try { c = net.connect(AGENT_PORT); } catch { setTimeout(() => gen === linkGen && connectAgent(), 1000); return; }
-      resend(c);
       const lost = () => {
         if (gone) return;
         gone = true;
@@ -571,7 +553,6 @@
           done(ok);
         };
         try { c = net.connect(TTY_PORT); } catch { finish(false); return; }
-        resend(c);
         const lost = () => {
           clearTimeout(timer);
           if (ttyLink === c) ttyLink = null;
@@ -775,7 +756,6 @@
         if (size >= 0 && got - start >= size) run();
       });
       c.on("shutdown", () => { if (head !== null) run(); else c.close(); });
-      resend(c);
       c.accept();
     }
 

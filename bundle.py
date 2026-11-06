@@ -15,7 +15,8 @@ import urllib.request
 import alpine
 
 IMG = "images"  # собирают build.sh и scripts/build-kernel.sh
-V86 = "vendor/v86"  # libv86.js, v86.wasm и BIOS из проекта v86
+V86 = "vendor/v86"  # libv86.js, v86.wasm и BIOS из проекта v86 (scripts/build-v86.sh)
+v86_dir = V86  # откуда их брать на самом деле: --v86
 REPO = "site/repo"
 PAGE = "page.html"
 CACHE = ".cache/cdn"
@@ -179,12 +180,19 @@ def script(js):
     return "<script>%s</script>" % js.replace("</script", "<\\/script")
 
 
+def local(src):
+    """src из page.html: vendor/v86/* берётся из --v86"""
+    if src.startswith(V86 + "/"):
+        src = os.path.join(v86_dir, src[len(V86) + 1:])
+    return open(src).read()
+
+
 def template():
     html = open(PAGE).read()
     html = re.sub(r'<link (?:rel="stylesheet" )?href="(https://[^"]+)"(?: rel="stylesheet")?>',
                   lambda m: "<style>%s</style>" % fetch(m.group(1)).decode(), html)
     html = re.sub(r'<script src="([^"]+)"></script>',
-                  lambda m: script(fetch(m.group(1)).decode() if m.group(1).startswith("https://") else open(m.group(1)).read()), html)
+                  lambda m: script(fetch(m.group(1)).decode() if m.group(1).startswith("https://") else local(m.group(1))), html)
     return html
 
 
@@ -336,6 +344,7 @@ def options(argv=None):
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/)")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
+    ap.add_argument("--v86", default=V86, metavar="ПАПКА", help="libv86.js, v86.wasm и BIOS (по умолчанию %s)" % V86)
     a = ap.parse_args(argv)
     if a.bare:
         a.packages = []
@@ -346,7 +355,9 @@ def options(argv=None):
 
 
 def main():
+    global v86_dir
     a = options()
+    v86_dir = a.v86
     snap = a.snap or bool(a.run) or bool(a.prep)
     if os.path.exists(a.out) and "window.KT_BUNDLE" not in open(a.out, errors="replace").read():
         sys.exit("%s есть и это не бандл, не перезаписываю" % a.out)
@@ -354,9 +365,9 @@ def main():
     names = closure(a.packages)
     initrd = open(IMG + "/rootfs.cpio", "rb").read() + packages_cpio(names, a.packages, a.file)
     files = {
-        "wasm": blob(open(V86 + "/v86.wasm", "rb").read()),
-        "bios": blob(open(V86 + "/seabios.bin", "rb").read()),
-        "vgabios": blob(open(V86 + "/vgabios.bin", "rb").read()),
+        "wasm": blob(open(v86_dir + "/v86.wasm", "rb").read()),
+        "bios": blob(open(v86_dir + "/seabios.bin", "rb").read()),
+        "vgabios": blob(open(v86_dir + "/vgabios.bin", "rb").read()),
     }
     boot = {
         "bzimage": blob(open(IMG + "/bzImage", "rb").read(), gz=False),

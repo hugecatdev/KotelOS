@@ -7,7 +7,8 @@
 
 | что | где | лицензия | откуда |
 |---|---|---|---|
-| v86 | `vendor/v86/libv86.js`, `vendor/v86/v86.wasm` | BSD-2-Clause | https://github.com/copy/v86 |
+| v86 | `vendor/v86/libv86.js`, `vendor/v86/v86.wasm` | BSD-2-Clause | https://github.com/copy/v86, собран `scripts/build-v86.sh`, изменён: `patches/v86/` |
+| правки v86 | `patches/v86/` | BSD-2-Clause | патчи к исходникам v86 |
 | SeaBIOS | `vendor/v86/seabios.bin`, `vendor/v86/vgabios.bin` | LGPL-3.0 | сборка из проекта v86, https://www.seabios.org |
 | tkinter из CPython 3.12.15 | `packages/python-tkinter/usr/lib/kt-python/tkinter` | PSF-2.0 | изменён: окна рисует страница через `kt-tk.js` |
 | бэкенд tk из matplotlib | `packages/python-matplotlib-tk/usr/lib/python3.12/site-packages/matplotlib/backends` | Matplotlib License (PSF-based) | https://matplotlib.org, изменён |
@@ -28,6 +29,8 @@
 | пакеты Alpine Linux 3.22 | у каждого своя | `scripts/get-packages.sh`, `alpine.py`; `kt pkg add` в машине - тоже |
 | xterm.js и аддоны | MIT | `bundle.py` (cdn.jsdelivr.net), встраивается в бандл |
 | тулчейн musl.cc | - | `scripts/build-*.sh`, только для сборки, в бандлы не попадает |
+| исходники v86 (коммит в `scripts/build-v86.sh`) | BSD-2-Clause | `scripts/build-v86.sh` (GitHub), в бандл попадает собранный v86 |
+| Rust (rustup, wasm32) и Closure Compiler | MIT или Apache-2.0 (Rust), Apache-2.0 (Closure) | `scripts/build-v86.sh`, только для сборки, в бандлы не попадают |
 
 Бандл (`site/*/index.html`) - это v86, BIOS, ядро, busybox и пакеты в одном
 файле, поэтому, раздавая бандлы, раздаёшь и всё перечисленное.

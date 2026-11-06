@@ -1,0 +1,61 @@
+yield без задержки - сообщением самому себе, а не кругом через воркер
+
+Пока гость считает, main_loop отдаёт управление браузеру примерно раз в
+1 мс (TIME_PER_FRAME), и каждый раз v86 ждал круг сообщений через воркер:
+основной поток -> воркер -> основной поток. Для t < 1 теперь MessageChannel
+на основном потоке, воркер остался для задержек (простой гостя до таймера):
+его setTimeout не душится в фоновых вкладках.
+
+Замер в headless Chromium, gzip в госте: вне main_loop 10-12% времени
+вместо 15-45%.
+
+--- a/src/main.js
++++ b/src/main.js
+@@ -19,6 +19,7 @@
+ 
+     this.tick_counter = 0;
+     this.worker = null;
++    this.yield_channel = null;
+ 
+     /** @type {CPU} */
+     this.cpu = new CPU(bus, wasm, () => { this.idle && this.next_tick(0); });
+@@ -146,17 +147,38 @@
+         this.worker = new Worker(url);
+         this.worker.onmessage = e => this.yield_callback(e.data);
+         URL.revokeObjectURL(url);
++
++        // Without a delay a message to ourselves is enough and is cheaper than
++        // the round trip through the worker. The worker stays for delays: its
++        // timers are not throttled in background tabs.
++        if(typeof MessageChannel !== "undefined")
++        {
++            this.yield_channel = new MessageChannel();
++            this.yield_channel.port1.onmessage = e => this.yield_callback(e.data);
++        }
+     };
+ 
+     v86.prototype.yield = function(t, tick)
+     {
+-        this.worker.postMessage({ t, tick });
++        if(t < 1 && this.yield_channel)
++        {
++            this.yield_channel.port2.postMessage(tick);
++        }
++        else
++        {
++            this.worker.postMessage({ t, tick });
++        }
+     };
+ 
+     v86.prototype.unregister_yield = function()
+     {
+         this.worker && this.worker.terminate();
+         this.worker = null;
++        if(this.yield_channel)
++        {
++            this.yield_channel.port1.close();
++            this.yield_channel = null;
++        }
+     };
+ }
+ //else if(typeof window !== "undefined" && typeof postMessage !== "undefined")

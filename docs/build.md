@@ -20,11 +20,13 @@ scripts/build-python.sh         # свой CPython -> build/packages/minipython,
 scripts/build-openblas.sh       # openblas под SSE2, LAPACK на C -> build/packages/openblas (его зовёт get-packages.sh)
 scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> build/packages/python-numpy (его зовёт get-packages.sh)
 scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)
+scripts/build-v86.sh            # v86 из исходников + patches/v86/ -> vendor/v86/ (Rust с wasm32 и Closure Compiler качает в .cache/)
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
 python3 tests/run.py            # тесты моста в headless Chromium (--build - сначала собрать, -k имя - выборочно)
 python3 tests/mpl.py            # matplotlib с patches/matplotlib.patch против исходного: те же картинки (--time - время кадров на хосте)
 ./release.py                    # бандлы сайта из bundles/ (standard, micro, python) -> site/ИМЯ/index.html
 python3 tests/mem.py site/standard/index.html  # память вкладки с бандлом (--save - всплеск при kt save, --profile папка - возврат из сохранения)
+python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сборок v86: одни нагрузки в госте, время и процессор вкладки (-k имя, -n кругов)
 ```
 
 - `build.sh` собирает репозиторий в `site/repo.new` и подменяет `site/repo` в
@@ -41,7 +43,33 @@ python3 tests/mem.py site/standard/index.html  # память вкладки с 
   него chawan не запускает процессы страниц.
 - `overlay/` - всё своё: `kt`, модули, агент, init-скрипты, `kt.py`.
 - `images/` - собранные bzImage, rootfs.cpio, build.json; `vendor/v86/` -
-  libv86.js, v86.wasm и BIOS из проекта v86. Из них и собирается бандл.
+  libv86.js, v86.wasm и BIOS из проекта v86. Из них и собирается бандл
+  (`bundle.py --v86 ПАПКА` - взять другую сборку).
+- `vendor/v86/` собирает `scripts/build-v86.sh`: архив copy/v86 на
+  закреплённом коммите (`REV` в скрипте, `REV=... scripts/build-v86.sh` -
+  другой), сверху `patches/v86/*.patch` по порядку, `make build/libv86.js
+  build/v86.wasm` без отладки и секции имён. Rust 1.99.1 с wasm32 (rustup) и
+  Closure Compiler скрипт кладёт в `.cache/`; clang с целью wasm32 нужен свой,
+  той же мажорной версии LLVM, что у Rust (сейчас 23): softfloat и zstd
+  собираются в LTO-биткод, и чужой версии rust-lld его не прочтёт. Готовые
+  файлы лежат в git, так что для `bundle.py` Rust не нужен. Патчи (что и
+  почему - в шапке каждого):
+  - `01-tcp-window.patch` - окно и повтор сегментов в TCP страница -> гость,
+    см. [internals.md](internals.md);
+  - `02-yield-channel.patch` - отдавать управление браузеру сообщением самому
+    себе, без круга через воркер;
+  - `03-jit-small-modules.patch` - модули JIT по одной странице: в разы меньше
+    фоновой компиляции в V8.
+
+  После смены `REV` или патчей: `scripts/build-v86.sh`, `python3 tests/run.py`
+  и `python3 tests/bench.py СТАРАЯ_ПАПКА vendor/v86`.
+- `tests/bench.py` собирает бандл с каждой сборкой v86 (загрузка с ядра) и
+  гоняет в свежем headless Chromium одни и те же нагрузки в госте: fork,
+  арифметика шелла, sha256, gzip, lua, micropython, запуск и импорт CPython,
+  мост в обе стороны. Варианты идут вперемешку по кругам, в конце медианы и
+  отношения. Три числа: время по часам, процессор основного потока (сам v86)
+  и всей вкладки (с фоновой компиляцией wasm в V8) - последние два почти не
+  зависят от занятости хоста, поэтому при соседях по хосту смотреть на них.
 - `src/kt-seed.c`, `src/kt-net.c` - свои бинарники (4 и 11 КБ, собираются в
   `scripts/build-busybox.sh`), см. [internals.md](internals.md).
 - Минификация при сборке, на копии во временной папке: исходники в `overlay/` и

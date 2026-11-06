@@ -1,0 +1,162 @@
+TCP в fake_network: окно и повтор сегментов
+
+Отправитель TCPConnection слал по одному сегменту и ждал ACK (stop-and-wait),
+окно получателя не смотрел и ничего не повторял: сегмент, который гость
+отбросил (полное кольцо ne2k или буфер сокета при нулевом окне), не
+подтверждался никогда, и поток вставал навсегда.
+
+Теперь в полёте до TCP_MAX_SEGMENTS_IN_FLIGHT сегментов в пределах окна
+гостя, неподтверждённое повторяется с первого байта (go-back-N) через
+200 мс с удвоением до 3.2 с, при нулевом окне так же уходит проба. Счёт ACK
+через 32-битный перенос номеров. Поле pending осталось: true, пока есть
+неподтверждённые байты.
+
+--- a/src/browser/fake_network.js
++++ b/src/browser/fake_network.js
+@@ -57,6 +57,15 @@
+ 
+ const DEFAULT_DOH_SERVER = "cloudflare-dns.com";
+ 
++// Sending side of TCPConnection: how many segments may be in flight at once.
++// The window of the peer is honoured too, but for a guest it is not the limit
++// that matters: the ne2k receive ring of a Linux guest holds ~9 full frames and
++// drops the rest silently, so more segments in flight only cause retransmits.
++const TCP_MAX_SEGMENTS_IN_FLIGHT = 8;
++// Retransmission timeout in ms, doubled after every timeout without progress
++const TCP_RTO_INITIAL = 200;
++const TCP_RTO_MAX = 3200;
++
+ function a2ethaddr(bytes) {
+     return [0,1,2,3,4,5].map((i) => bytes[i].toString(16)).map(x => x.length === 1 ? "0" + x : x).join(":");
+ }
+@@ -120,22 +129,24 @@
+ 
+     /**
+      * @param {Uint8Array} dst_array
++     * @param {number=} offset skip this many bytes after the tail
+      */
+-    peek(dst_array)
++    peek(dst_array, offset = 0)
+     {
+-        const length = Math.min(this.length, dst_array.length);
++        const length = Math.max(0, Math.min(this.length - offset, dst_array.length));
+         if(length) {
+             const buffer = this.buffer;
+             const capacity = buffer.length;
+-            const new_tail = this.tail + length;
++            const tail = (this.tail + offset) % capacity;
++            const new_tail = tail + length;
+             if(new_tail > capacity) {
+                 const buf_len_left = new_tail % capacity;
+-                const buf_len_right = capacity - this.tail;
+-                dst_array.set(buffer.subarray(this.tail));
++                const buf_len_right = capacity - tail;
++                dst_array.set(buffer.subarray(tail));
+                 dst_array.set(buffer.subarray(0, buf_len_left), buf_len_right);
+             }
+             else {
+-                dst_array.set(buffer.subarray(this.tail, new_tail));
++                dst_array.set(buffer.subarray(tail, new_tail));
+             }
+         }
+         return length;
+@@ -1068,6 +1079,12 @@
+     this.net = adapter; // The adapter is stored here
+     this.send_buffer = new GrowableRingbuffer(2048, 0);
+     this.send_chunk_buf = new Uint8Array(TCP_PAYLOAD_SIZE);
++    // bytes at the start of send_buffer that were sent, but not acked yet
++    this.in_flight = 0;
++    // receive window of the peer, counted from this.seq
++    this.peer_window = 0xFFFF;
++    this.rto = TCP_RTO_INITIAL;
++    this.rto_timer = 0;
+     this.in_active_close = false;
+     this.delayed_send_fin = false;
+     this.delayed_state = undefined;
+@@ -1236,17 +1253,23 @@
+         }
+     }
+ 
++    this.peer_window = packet.tcp.winsize;
++
+     if(this.last_received_ackn === undefined) {
+         this.last_received_ackn = packet.tcp.ackn;
+     }
+     else {
+-        const n_ack = packet.tcp.ackn - this.last_received_ackn;
++        // sequence numbers are 32 bit and wrap around
++        const n_ack = (packet.tcp.ackn - this.last_received_ackn) | 0;
+         //console.log("Read ", n_ack, "(", this.last_received_ackn, ") ", packet.tcp.ackn, packet.tcp.winsize)
+         if(n_ack > 0) {
+             this.last_received_ackn = packet.tcp.ackn;
+             this.send_buffer.remove(n_ack);
+             this.seq += n_ack;
+-            this.pending = false;
++            this.in_flight = Math.max(0, this.in_flight - n_ack);
++            this.pending = this.in_flight > 0;
++            this.rto = TCP_RTO_INITIAL;
++            this.stop_rto_timer();
+ 
+             if(this.delayed_send_fin && !this.send_buffer.length) {
+                 // dbg_log(`TCP[${this.tuple}]: sending delayed FIN from active close in state "${this.state}", next "${this.delayed_state}"`, LOG_FETCH);
+@@ -1396,6 +1419,7 @@
+ };
+ 
+ TCPConnection.prototype.release = function() {
++    this.stop_rto_timer();
+     if(this.net.tcp_conn[this.tuple]) {
+         // dbg_log(`TCP[${this.tuple}]: connection closed in state "${this.state}"`, LOG_FETCH);
+         this.state = TCP_STATE_CLOSED;
+@@ -1404,17 +1428,48 @@
+ };
+ 
+ TCPConnection.prototype.pump = function() {
+-    if(this.send_buffer.length && !this.pending) {
+-        const data = this.send_chunk_buf;
+-        const n_ready = this.send_buffer.peek(data);
++    if(this.state === TCP_STATE_CLOSED) {
++        return;
++    }
++    const data = this.send_chunk_buf;
++    const limit = Math.min(this.send_buffer.length, this.peer_window, TCP_MAX_SEGMENTS_IN_FLIGHT * data.length);
++    while(this.in_flight < limit) {
++        const n_ready = this.send_buffer.peek(data.subarray(0, limit - this.in_flight), this.in_flight);
+         const reply = this.ipv4_reply();
++        reply.tcp.seq = this.seq + this.in_flight;
+         reply.tcp.psh = true;
+         reply.tcp_data = data.subarray(0, n_ready);
+         this.net.receive(make_packet(this.net.eth_encoder_buf, reply));
+-        this.pending = true;
++        this.in_flight += n_ready;
++    }
++    this.pending = this.in_flight > 0;
++    // data not acked yet, or no room for it at the peer (zero window): look again later
++    if(this.send_buffer.length && !this.rto_timer) {
++        this.rto_timer = setTimeout(() => this.on_rto(), this.rto);
++    }
++};
++
++TCPConnection.prototype.stop_rto_timer = function() {
++    if(this.rto_timer) {
++        clearTimeout(this.rto_timer);
++        this.rto_timer = 0;
+     }
+ };
+ 
++TCPConnection.prototype.on_rto = function() {
++    this.rto_timer = 0;
++    if(this.state === TCP_STATE_CLOSED || !this.send_buffer.length) {
++        return;
++    }
++    // Go back to the first unacked byte: a segment the guest dropped (full
++    // receive ring or socket buffer) is never acked. A lost window update would
++    // leave the window at zero forever, so send at least one segment as a probe.
++    this.rto = Math.min(this.rto * 2, TCP_RTO_MAX);
++    this.in_flight = 0;
++    this.peer_window = Math.max(this.peer_window, 1);
++    this.pump();
++};
++
+ 
+ function arp_whohas(packet, adapter) {
+     let packet_subnet = iptolong(packet.arp.tpa) & 0xFFFFFF00;
