@@ -6,9 +6,9 @@
  static const int topbar             = 1;        /* 0 means bottom bar */
 -static const char *fonts[]          = { "monospace:size=10" };
 -static const char dmenufont[]       = "monospace:size=10";
-+/* KotelOS: растровый fixed из пакета xorg (6x13, в Юникоде - с кириллицей), других шрифтов в машине нет */
-+static const char *fonts[]          = { "fixed:pixelsize=13" };
-+static const char dmenufont[]       = "fixed:pixelsize=13";
++/* KotelOS: растровый fixed 6x13 из пакета xorg (в Юникоде - с кириллицей); семейство - Misc Fixed, «fixed» fontconfig не знает */
++static const char *fonts[]          = { "Misc Fixed:pixelsize=13" };
++static const char dmenufont[]       = "Misc Fixed:pixelsize=13";
  static const char col_gray1[]       = "#222222";
  static const char col_gray2[]       = "#444444";
  static const char col_gray3[]       = "#bbbbbb";
