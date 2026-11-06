@@ -1,0 +1,6 @@
+# сессия бандла qt (startx): справа форма ~/form на PyQt5 с её кодом (pyqt-studio), слева - Designer с
+# ней же (его запускает pyqt-studio, когда покажет своё окно, и dwm ставит его главным); их вывод -
+# в ~/.cache/pyqt-studio.log; терминал - Alt+Shift+Enter, выход из X - Alt+Shift+Q
+mkdir -p ~/.cache
+pyqt-studio > ~/.cache/pyqt-studio.log 2>&1 &
+exec dwm

@@ -92,4 +92,20 @@ python3 alpine.py qt5-qttools-dev --keep-existing --max-age 168 --alias mesa-gl=
   --drop 'usr/include/*' --drop 'usr/lib/qt5/*' --drop 'usr/bin/*' --drop 'usr/lib/*.prl' \
   --drop 'usr/lib/libQt5*.so' --drop 'usr/share/applications/linguist*' \
   --keep 'usr/lib/qt5/bin/designer' --keep 'usr/bin/designer' --keep 'usr/bin/designer-qt5'
+# PyQt5 для форм из Designer (uic.loadUi): модули на нашем Qt5 и QtSvg (0.3 МБ). Целиком py3-qt5 - ~490 МБ:
+# мультимедиа (gstreamer, 370 МБ), карты, Bluetooth/NFC, QML, WebChannel/WebSockets, справка, X11Extras -
+# их модулей в пакете нет, как и PyQt5.Qt (грузит всё сразу), .sip для сборки, OpenGL-функций (GL-контекста
+# в нашем X нет), плагинов Designer и QML и dbus.mainloop (ему нужен dbus-python)
+Q=$P/site-packages/PyQt5
+D=
+for m in Qt QtBluetooth QtNfc QtLocation QtPositioning QtMultimedia QtMultimediaWidgets QtQml QtQuick QtQuickWidgets \
+  QtWebChannel QtWebSockets QtHelp QtSerialPort QtX11Extras _QOpenGLFunctions_2_0 _QOpenGLFunctions_2_1 \
+  _QOpenGLFunctions_4_1_Core; do
+  D="$D --drop $Q/$m.abi3.so"
+done
+python3 alpine.py py3-qt5 --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib --rename py3-:python- \
+  --skip qt5-qtconnectivity --skip qt5-qtlocation --skip qt5-qtmultimedia --skip qt5-qtdeclarative \
+  --skip qt5-qtwebchannel --skip qt5-qtwebsockets-libs --skip libqt5help --skip qt5-qtserialport \
+  --skip qt5-qtx11extras $D --drop "$Q/bindings/*" --drop 'usr/lib/qt5/plugins/designer/*' \
+  --drop 'usr/lib/qt5/plugins/PyQt5/*' --drop 'usr/share/qt5/*' --drop "$P/site-packages/dbus/*"
 python3 scripts/jdk8.py

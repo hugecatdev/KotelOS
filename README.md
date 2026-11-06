@@ -37,7 +37,7 @@ python3 bundle.py          # бандл -> site/index.html
 - [Пакеты](docs/packages.md) - `kt pkg`, репозиторий, свои пакеты, пакеты Alpine
 - [Python](docs/python.md) - свой CPython, `pyzygote`, pip, Telegram-боты
 - [Окна](docs/gui.md) - tkinter, IDLE, turtle, matplotlib, рабочий стол
-- [Экран](docs/screen.md) - `/dev/fb0`, `kt screen`, Doom, X, OpenGL без LLVM и Qt5
+- [Экран](docs/screen.md) - `/dev/fb0`, `kt screen`, Doom, X, OpenGL без LLVM, Qt5, PyQt5 и `pyqt-studio`
 - [Файлы](docs/files.md) - `kt sync` и `kt pack`
 - [ИИ-ассистент](docs/ai.md) - `ai`
 - [Сборка и тесты](docs/build.md)

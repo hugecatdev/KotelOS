@@ -1069,7 +1069,17 @@ def main():
             assert time.time() - t1 < 20, "X не пошёл за размером страницы: %s, а надо %s" % (s.ev(canvas), s.ev("screenSize()"))
             time.sleep(0.5)
         resized = s.ev(canvas)
+        # сохранение с запущенным X: после перезагрузки экран снова на виду, а X идёт за новым местом
+        s.ok("kt save", 120)
         s.c.call("Emulation.clearDeviceMetricsOverride")
+        s.c.call("Page.reload")
+        time.sleep(1)
+        s.wait_ready()
+        assert s.ev("document.querySelector('#screen').classList.contains('on')"), "после kt save экран не показан"
+        t1 = time.time()
+        while s.ev(canvas) != s.ev("screenSize()"):
+            assert time.time() - t1 < 20, "после kt save X не пошёл за размером: %s, а надо %s" % (s.ev(canvas), s.ev("screenSize()"))
+            time.sleep(0.5)
         typing("exit\r")
         t1 = time.time()
         while s.ev("document.querySelector('#screen').classList.contains('on')"):

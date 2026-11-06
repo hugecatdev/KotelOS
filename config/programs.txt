@@ -18,6 +18,9 @@ python-matplotlib-demo примеры matplotlib (команда mpldemo)
 kt-ttyd виртуальные консоли (Alt+1..9, kt tty)
 kt-screen экран поверх терминала (kt screen) для doom и startx
 mesa-xlib OpenGL без LLVM: программно (softpipe) через обычный X
+qt5-qttools-dev Qt Designer: формы для Qt5 (только designer)
+python-qt5 PyQt5: Qt5 из питона (без мультимедиа, карт и QML)
+pyqt-studio форма из Designer и её код на PyQt5 рядом, перезапуск при сохранении
 tk-desktop рабочий стол, файлы и блокнот на tkinter
 tk-term терминал в окне (xterm.js)
 doom Doom на экране

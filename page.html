@@ -478,6 +478,7 @@
     vgaSize = vgaBytes(cfg.get("boot.vga"));
     /* #endif */
     let screenOn = false;
+    let screenSent = "";  // размер X, о котором знает гость (kt screen size, событие screen-size); помнят сохранения
     let agentReady = false;
     let markReady;
     let ready = new Promise((r) => { markReady = r; });
@@ -1059,7 +1060,8 @@
         const screenDump = serializer.serialize({ scrollback: 300 });
         const blob = await gzip(raw);
         await kv.set(name ? SNAP + name : SLOT, {
-          blob, screen: screenDump, memory_size: memSize, vga_memory_size: vgaSize, screen_on: screenOn, replyId: id || null,
+          blob, screen: screenDump, memory_size: memSize, vga_memory_size: vgaSize, screen_on: screenOn,
+          screen_size: screenSent, replyId: id || null,
           created: Date.now(), build: build && build.build, bundle: NAME,
         });
         lastSave = Date.now();
@@ -1587,7 +1589,7 @@
     }
     // перемена размера - событием screen-size (его слушает startx и меняет режим X); на телефоне высоту
     // меняет и экранная клавиатура - её не слушаем, только поворот и смену ширины
-    let screenSent = "", screenW = 0, screenTimer = 0;
+    let screenW = 0, screenTimer = 0;
     function screenResized(force) {
       clearTimeout(screenTimer);
       screenTimer = setTimeout(() => {
@@ -1967,10 +1969,19 @@
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
         if (saved) startCmd = null;
-        /* #if vga */ if (saved && saved.screen_on && vgaSize >= VGA_MIN) setScreen(true); /* #endif */
+        /* #if vga */
+        // экран на виду в сохранении или во встроенном снимке (бандл с --run startx) - показать; размер X -
+        // тот, что был у страницы тогда: если сейчас место другое, X получит screen-size и перейдёт
+        const was = saved || image;
+        if (was.screen_on && vgaSize >= VGA_MIN) {
+          screenSent = was.screen_size || "";
+          setScreen(true);
+        }
+        /* #endif */
         onReady = () => {
           ctl("REDRAW");
           emit("restore");
+          /* #if vga */ if (screenOn) screenResized(true); /* #endif */
           if (saved) say(saved.replyId, `восстановлено сохранение от ${when(saved.created)}`);
         };
       });

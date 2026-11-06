@@ -295,7 +295,8 @@ SETTLE = """(async (quiet, max) => {
 SNAP = """(async () => {
   const raw = await emulator.save_state();
   const gz = await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
-  return { state: toB64(new Uint8Array(gz)), screen: serializer.serialize({ scrollback: 300 }), mem: memSize, vga: vgaSize };
+  return { state: toB64(new Uint8Array(gz)), screen: serializer.serialize({ scrollback: 300 }), mem: memSize, vga: vgaSize,
+           screen_on: screenOn, screen_size: screenSent };
 })()"""
 
 
@@ -331,7 +332,10 @@ def snapshot(html, cmds, timeout, prep=()):
             r = chrome.eval(SNAP)
         finally:
             chrome.close()
-    return {"data": b64(zstd(gzip.decompress(base64.b64decode(r["state"])))), "mem": r["mem"], "vga": r["vga"], "screen": r["screen"]}
+    out = {"data": b64(zstd(gzip.decompress(base64.b64decode(r["state"])))), "mem": r["mem"], "vga": r["vga"], "screen": r["screen"]}
+    if r.get("screen_on"):  # снимок с запущенным X (--run startx): страница сразу покажет экран
+        out.update(screen_on=True, screen_size=r["screen_size"])
+    return out
 
 
 def options(argv=None):
