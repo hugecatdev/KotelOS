@@ -1,0 +1,927 @@
+--- a/Makefile
++++ b/Makefile
+@@ -81,7 +81,7 @@
+ CORE_FILES=cjs.js const.js io.js main.js lib.js buffer.js ide.js pci.js floppy.js \
+ 	   dma.js pit.js vga.js ps2.js rtc.js uart.js parallel.js vmware.js \
+ 	   acpi.js iso9660.js \
+-	   state.js ne2k.js sb16.js virtio.js virtio_console.js virtio_net.js virtio_balloon.js \
++	   state.js ne2k.js sb16.js virtio.js virtio_console.js virtio_net.js virtio_balloon.js virtio_gpu.js \
+ 	   bus.js log.js cpu.js \
+ 	   elf.js kernel.js
+ LIB_FILES=9p.js filesystem.js marshall.js
+--- a/src/browser/starter.js
++++ b/src/browser/starter.js
+@@ -277,6 +277,10 @@
+     settings.cpuid_level = options.cpuid_level;
+     settings.virtio_balloon = options.virtio_balloon;
+     settings.virtio_console = !!options.virtio_console;
++    /* #if virtio_gpu */
++    // { source, wasm, canvas, width, height }: see src/virtio_gpu.js
++    settings.virtio_gpu = options.virtio_gpu;
++    /* #endif */
+ 
+     const relay_url = options.network_relay_url || options.net_device && options.net_device.relay_url;
+     if(relay_url)
+@@ -1881,6 +1885,17 @@
+     {
+         if(send[name] instanceof ArrayBuffer) transfer.add(send[name]);
+     }
++    /* #if virtio_gpu */
++    if(send.virtio_gpu)
++    {
++        // the canvas goes to the worker: virglrenderer draws there
++        if(typeof OffscreenCanvas !== "undefined" && send.virtio_gpu.canvas instanceof OffscreenCanvas)
++        {
++            transfer.add(send.virtio_gpu.canvas);
++        }
++        if(send.virtio_gpu.wasm instanceof ArrayBuffer) transfer.add(send.virtio_gpu.wasm);
++    }
++    /* #endif */
+     settings.initial_state = undefined;
+     this.worker.postMessage({
+         t: "init",
+--- a/src/cpu.js
++++ b/src/cpu.js
+@@ -53,6 +53,9 @@
+ /* #if virtio */
+ import { VirtioBalloon } from "./virtio_balloon.js";
+ /* #endif */
++/* #if virtio_gpu */
++import { VirtioGPU } from "./virtio_gpu.js";
++/* #endif */
+ /* #if 9p */
+ import { Virtio9p, Virtio9pHandler, Virtio9pProxy } from "../lib/9p.js";
+ /* #endif */
+@@ -596,6 +599,9 @@
+     state[91] = this.devices.parallel1;
+     state[92] = this.efer;
+     state[93] = this.pat;
++    /* #if virtio_gpu */
++    state[94] = this.devices.virtio_gpu;
++    /* #endif */
+ 
+     return state;
+ };
+@@ -768,6 +774,9 @@
+     this.devices.virtio_console && this.devices.virtio_console.set_state(state[82]);
+     this.devices.virtio_net && this.devices.virtio_net.set_state(state[83]);
+     this.devices.virtio_balloon && this.devices.virtio_balloon.set_state(state[84]);
++    /* #if virtio_gpu */
++    this.devices.virtio_gpu && state[94] && this.devices.virtio_gpu.set_state(state[94]);
++    /* #endif */
+     this.devices.vmware && state[89] && this.devices.vmware.set_state(state[89]);
+     this.devices.parallel0 && state[90] && this.devices.parallel0.set_state(state[90]);
+     this.devices.parallel1 && state[91] && this.devices.parallel1.set_state(state[91]);
+@@ -978,6 +987,12 @@
+     {
+         this.devices.virtio_net.reset();
+     }
++    /* #if virtio_gpu */
++    if(this.devices.virtio_gpu)
++    {
++        this.devices.virtio_gpu.reset();
++    }
++    /* #endif */
+     if(this.devices.ps2)
+     {
+         this.devices.ps2.reset();
+@@ -1332,6 +1347,12 @@
+             throw new Error("v86 built without virtio");
+         }
+         /* #endif */
++        /* #if virtio_gpu */
++        if(settings.virtio_gpu)
++        {
++            this.devices.virtio_gpu = new VirtioGPU(this, device_bus, settings.virtio_gpu);
++        }
++        /* #endif */
+ 
+         /* #if sound */
+         if(true)
+--- a/src/virtio_gpu.js
++++ b/src/virtio_gpu.js
+@@ -0,0 +1,824 @@
++import { dbg_assert, dbg_log } from "./log.js";
++import { LOG_VIRTIO } from "./const.js";
++import { VirtIO, VIRTIO_F_VERSION_1 } from "./virtio.js";
++
++// For Types Only
++import { CPU } from "./cpu.js";
++import { BusConnector } from "./bus.js";
++
++// VirtIO GPU device, rendered by virglrenderer (compiled to wasm with emscripten) into WebGL2.
++// https://docs.oasis-open.org/virtio/virtio/v1.2/csd01/virtio-v1.2-csd01.html#x1-3650007
++//
++// settings.virtio_gpu = {
++//     source: text of the emscripten module (defines createVirgl),
++//     wasm: its wasm binary (ArrayBuffer),
++//     canvas: HTMLCanvasElement or OffscreenCanvas (transferred when v86 runs in a worker),
++//     width, height: initial size of the scanout,
++// }
++//
++// The guest memory lives in v86's wasm memory, virglrenderer has its own: resources don't get
++// their backing attached in virglrenderer. Transfers gather the needed span of guest pages into a
++// temporary buffer of the renderer (and scatter it back when reading). The capsets don't advertise
++// features where the host reads guest memory by itself (COPY_TRANSFER); resources the host writes
++// into (VIRGL_BIND_CUSTOM: query results) get a shadow backing synced around the commands.
++// Scanouts are drawn from the resource textures onto the canvas: no readback.
++
++const VIRTIO_GPU_F_VIRGL = 0;
++
++const CMD_GET_DISPLAY_INFO = 0x0100;
++const CMD_RESOURCE_CREATE_2D = 0x0101;
++const CMD_RESOURCE_UNREF = 0x0102;
++const CMD_SET_SCANOUT = 0x0103;
++const CMD_RESOURCE_FLUSH = 0x0104;
++const CMD_TRANSFER_TO_HOST_2D = 0x0105;
++const CMD_RESOURCE_ATTACH_BACKING = 0x0106;
++const CMD_RESOURCE_DETACH_BACKING = 0x0107;
++const CMD_GET_CAPSET_INFO = 0x0108;
++const CMD_GET_CAPSET = 0x0109;
++const CMD_CTX_CREATE = 0x0200;
++const CMD_CTX_DESTROY = 0x0201;
++const CMD_CTX_ATTACH_RESOURCE = 0x0202;
++const CMD_CTX_DETACH_RESOURCE = 0x0203;
++const CMD_RESOURCE_CREATE_3D = 0x0204;
++const CMD_TRANSFER_TO_HOST_3D = 0x0205;
++const CMD_TRANSFER_FROM_HOST_3D = 0x0206;
++const CMD_SUBMIT_3D = 0x0207;
++const CMD_UPDATE_CURSOR = 0x0300;
++const CMD_MOVE_CURSOR = 0x0301;
++
++const RESP_OK_NODATA = 0x1100;
++const RESP_OK_DISPLAY_INFO = 0x1101;
++const RESP_OK_CAPSET_INFO = 0x1102;
++const RESP_OK_CAPSET = 0x1103;
++const RESP_ERR_UNSPEC = 0x1200;
++const RESP_ERR_OUT_OF_MEMORY = 0x1201;
++const RESP_ERR_INVALID_SCANOUT_ID = 0x1202;
++const RESP_ERR_INVALID_RESOURCE_ID = 0x1203;
++const RESP_ERR_INVALID_CONTEXT_ID = 0x1204;
++const RESP_ERR_INVALID_PARAMETER = 0x1205;
++
++const FLAG_FENCE = 1;
++const EVENT_DISPLAY = 1;
++
++const HDR_SIZE = 24;
++const MAX_SCANOUTS = 16;
++// capset ids: VIRGL (v1 caps) and VIRGL2 (v2 caps)
++const CAPSETS = [1, 2];
++
++const PIPE_TEXTURE_2D = 2;
++const VIRGL_BIND_RENDER_TARGET = 1 << 1;
++const VIRGL_BIND_CUSTOM = 1 << 17;
++const VIRGL_RESOURCE_Y_0_TOP = 1 << 0;
++
++/**
++ * @constructor
++ * @param {CPU} cpu
++ * @param {BusConnector} bus
++ * @param {Object} settings
++ */
++export function VirtioGPU(cpu, bus, settings)
++{
++    /** @const @type {CPU} */
++    this.cpu = cpu;
++    /** @const @type {BusConnector} */
++    this.bus = bus;
++
++    this.width = settings.width || 1024;
++    this.height = settings.height || 768;
++    this.canvas = settings.canvas;
++    this.events_read = 0;
++
++    // id -> { id, width, height, format, bind, flags, is_3d, backing: [[addr, len], ...], shadow, shadow_size }
++    this.resources = new Map();
++    // scanout 0: resource shown on the canvas
++    this.scanout_resource = 0;
++    // hardware cursor: resource (0 - none), hot spot and position on the scanout
++    this.cursor = { id: 0, hot_x: 0, hot_y: 0, x: 0, y: 0 };
++    this.scanout_rect = [0, 0, 0, 0];
++    // contexts: id -> capset (3D state is not saved in state images)
++    this.contexts = new Map();
++
++    // requests waiting for a fence: [fence_id, queue_id, bufchain, response]
++    this.fenced = [];
++    this.fence_done = 0;
++    this.fence_poll = 0;
++
++    // commands by type and responses by type (hex): for debugging from the page
++    this.stats = {};
++    this.load_ms = 0;
++
++    /** @type {Object} the emscripten module, once loaded */
++    this.gl = null;
++    this.ready = false;
++    this.pending_notify = false;
++    this.restore_2d = null;
++
++    this.virtio = new VirtIO(cpu,
++    {
++        name: "virtio-gpu",
++        pci_id: 0x0D << 3,
++        device_id: 0x1050,
++        subsystem_device_id: 16,
++        common:
++        {
++            initial_port: 0xE800,
++            queues:
++            [
++                { size_supported: 64, notify_offset: 0 },
++                { size_supported: 16, notify_offset: 1 },
++            ],
++            features:
++            [
++                VIRTIO_GPU_F_VIRGL,
++                VIRTIO_F_VERSION_1,
++            ],
++            on_driver_ok: () => {},
++        },
++        notification:
++        {
++            initial_port: 0xE900,
++            single_handler: false,
++            handlers:
++            [
++                (queue_id) => this.notify(queue_id),
++                (queue_id) => this.notify(queue_id),
++            ],
++        },
++        isr_status:
++        {
++            initial_port: 0xE700,
++        },
++        device_specific:
++        {
++            initial_port: 0xE600,
++            struct:
++            [
++                {
++                    bytes: 4,
++                    name: "events_read",
++                    read: () => this.events_read,
++                    write: data => { /* read only */ },
++                },
++                {
++                    bytes: 4,
++                    name: "events_clear",
++                    read: () => 0,
++                    write: data => { this.events_read &= ~data; },
++                },
++                {
++                    bytes: 4,
++                    name: "num_scanouts",
++                    read: () => 1,
++                    write: data => { /* read only */ },
++                },
++                {
++                    bytes: 4,
++                    name: "num_capsets",
++                    read: () => CAPSETS.length,
++                    write: data => { /* read only */ },
++                },
++            ]
++        },
++    });
++
++    bus.register("virtio-gpu-resize", function(size)
++    {
++        this.resize(size[0], size[1]);
++    }, this);
++
++    this.load(settings);
++}
++
++/**
++ * The renderer loads asynchronously: requests that come earlier wait for it
++ */
++VirtioGPU.prototype.load = function(settings)
++{
++    const start = Date.now();
++    const factory = new Function(settings.source + "\n;return createVirgl;")();
++    factory({
++        "wasmBinary": settings.wasm,
++        "print": (text) => console.log("virgl:", text),
++        "printErr": (text) => console.warn("virgl:", text),
++    }).then(gl => {
++        gl["startGPU"](this.canvas);
++        gl["onFence"] = (fence) => this.fence_signaled(fence);
++        this.gl = gl;
++        this.ready = true;
++        this.load_ms = Date.now() - start;
++        if(this.restore_2d)
++        {
++            this.restore_resources(this.restore_2d);
++            this.restore_2d = null;
++        }
++        this.canvas_size(this.width, this.height);
++        if(this.pending_notify)
++        {
++            this.pending_notify = false;
++            this.notify(0);
++            this.notify(1);
++        }
++        console.log("virtio-gpu: renderer ready in " + this.load_ms + " ms");
++    }).catch(err => {
++        console.error("virtio-gpu: virglrenderer did not start: " + (err && err.stack || err));
++    });
++};
++
++VirtioGPU.prototype.canvas_size = function(width, height)
++{
++    if(this.canvas.width !== width || this.canvas.height !== height)
++    {
++        this.canvas.width = width;
++        this.canvas.height = height;
++    }
++    this.bus.send("virtio-gpu-screen-size", [width, height]);
++};
++
++/**
++ * New size of the display (the page changed): the guest reads the display info again
++ */
++VirtioGPU.prototype.resize = function(width, height)
++{
++    if(width === this.width && height === this.height) return;
++    this.width = width;
++    this.height = height;
++    this.events_read |= EVENT_DISPLAY;
++    this.virtio.notify_config_changes();
++};
++
++VirtioGPU.prototype.notify = function(queue_id)
++{
++    if(!this.ready)
++    {
++        this.pending_notify = true;
++        return;
++    }
++    const queue = this.virtio.queues[queue_id];
++    let replied = false;
++    while(queue.has_request())
++    {
++        const bufchain = queue.pop_request();
++        const request = new Uint8Array(bufchain.length_readable);
++        bufchain.get_next_blob(request);
++        const view = new DataView(request.buffer);
++        const type = view.getUint32(0, true);
++        const flags = view.getUint32(4, true);
++        const fence_id = view.getUint32(8, true);
++        const ctx_id = view.getUint32(16, true);
++
++        const response = this.command(type, view, request, ctx_id);
++        const key = type.toString(16) + ">" + new DataView(response.buffer).getUint32(0, true).toString(16);
++        this.stats[key] = (this.stats[key] || 0) + 1;
++        // response header: type, flags, fence_id and ctx_id of the request
++        const out = new DataView(response.buffer);
++        out.setUint32(4, flags & FLAG_FENCE, true);
++        out.setUint32(8, fence_id, true);
++        out.setUint32(12, view.getUint32(12, true), true);
++        out.setUint32(16, ctx_id, true);
++
++        if(flags & FLAG_FENCE)
++        {
++            // the guest waits for its fence ids in order: answer after the renderer's fence,
++            // fences of the renderer complete in order too
++            this.fenced.push([fence_id, queue_id, bufchain, response]);
++            this.gl["_vgw_fence"](fence_id, 0);
++            this.poll_fences();
++        }
++        else
++        {
++            bufchain.set_next_blob(response);
++            queue.push_reply(bufchain);
++            replied = true;
++        }
++    }
++    if(replied)
++    {
++        queue.flush_replies();
++    }
++};
++
++/**
++ * WebGL2 shows sync objects as signaled only once the task returned to the event loop: poll from
++ * there while fences are open
++ */
++VirtioGPU.prototype.poll_fences = function()
++{
++    if(this.fence_poll || !this.fenced.length) return;
++    this.fence_poll = setTimeout(() => {
++        this.fence_poll = 0;
++        this.gl["_vgw_poll"]();
++        this.poll_fences();
++    }, 0);
++};
++
++VirtioGPU.prototype.fence_signaled = function(fence)
++{
++    this.fence_done = fence;
++    const done = new Set();
++    while(this.fenced.length && this.fenced[0][0] <= fence)
++    {
++        const [, queue_id, bufchain, response] = this.fenced.shift();
++        this.sync_shadows_to_guest();
++        bufchain.set_next_blob(response);
++        this.virtio.queues[queue_id].push_reply(bufchain);
++        done.add(queue_id);
++    }
++    for(const queue_id of done)
++    {
++        this.virtio.queues[queue_id].flush_replies();
++    }
++};
++
++function response_nodata(type)
++{
++    const r = new Uint8Array(HDR_SIZE);
++    new DataView(r.buffer).setUint32(0, type, true);
++    return r;
++}
++
++/**
++ * @param {number} type
++ * @param {DataView} view
++ * @param {Uint8Array} request
++ * @param {number} ctx_id
++ * @return {Uint8Array}
++ */
++VirtioGPU.prototype.command = function(type, view, request, ctx_id)
++{
++    const u32 = (offset) => view.getUint32(offset, true);
++    const gl = this.gl;
++
++    switch(type)
++    {
++        case CMD_GET_DISPLAY_INFO:
++        {
++            const r = new Uint8Array(HDR_SIZE + MAX_SCANOUTS * 24);
++            const out = new DataView(r.buffer);
++            out.setUint32(0, RESP_OK_DISPLAY_INFO, true);
++            out.setUint32(HDR_SIZE + 8, this.width, true);
++            out.setUint32(HDR_SIZE + 12, this.height, true);
++            out.setUint32(HDR_SIZE + 16, 1, true); // enabled
++            return r;
++        }
++
++        case CMD_RESOURCE_CREATE_2D:
++        {
++            const id = u32(24), format = u32(28), width = u32(32), height = u32(36);
++            if(!id || this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            const res = {
++                id, format, width, height, bind: VIRGL_BIND_RENDER_TARGET, flags: VIRGL_RESOURCE_Y_0_TOP,
++                is_3d: false, backing: [], shadow: 0, shadow_size: 0,
++            };
++            if(gl["_vgw_resource_create"](id, PIPE_TEXTURE_2D, format, res.bind, width, height, 1, 1, 0, 0, res.flags))
++            {
++                return response_nodata(RESP_ERR_UNSPEC);
++            }
++            this.resources.set(id, res);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_RESOURCE_CREATE_3D:
++        {
++            const id = u32(24);
++            if(!id || this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            const res = {
++                id, format: u32(32), width: u32(40), height: u32(44), bind: u32(36), flags: u32(64),
++                is_3d: true, backing: [], shadow: 0, shadow_size: 0,
++            };
++            if(gl["_vgw_resource_create"](id, u32(28), res.format, res.bind, res.width, res.height,
++                                          u32(48), u32(52), u32(56), u32(60), res.flags))
++            {
++                return response_nodata(RESP_ERR_UNSPEC);
++            }
++            this.resources.set(id, res);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_RESOURCE_UNREF:
++        {
++            const res = this.resources.get(u32(24));
++            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            this.drop_shadow(res);
++            gl["_vgw_resource_unref"](res.id);
++            this.resources.delete(res.id);
++            if(this.scanout_resource === res.id) this.scanout_resource = 0;
++            if(this.cursor.id === res.id) this.cursor.id = 0;
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_RESOURCE_ATTACH_BACKING:
++        {
++            const res = this.resources.get(u32(24));
++            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            const n = u32(28);
++            const backing = [];
++            for(let i = 0; i < n; i++)
++            {
++                const at = 32 + i * 16;
++                // 64 bit address: guest memory is below 4 GiB
++                if(view.getUint32(at + 4, true)) return response_nodata(RESP_ERR_INVALID_PARAMETER);
++                backing.push([view.getUint32(at, true), view.getUint32(at + 8, true)]);
++            }
++            res.backing = backing;
++            if(res.bind & VIRGL_BIND_CUSTOM) this.make_shadow(res);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_RESOURCE_DETACH_BACKING:
++        {
++            const res = this.resources.get(u32(24));
++            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            this.drop_shadow(res);
++            res.backing = [];
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_TRANSFER_TO_HOST_2D:
++        {
++            const x = u32(24), y = u32(28), w = u32(32), h = u32(36);
++            const offset = u32(40), res = this.resources.get(u32(48));
++            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            if(!w || !h) return response_nodata(RESP_OK_NODATA);
++            const stride = res.width * 4;
++            const span = (h - 1) * stride + w * 4;
++            const r = this.transfer(res, 0, 0, stride, 0, [x, y, 0, w, h, 1], offset, span, false);
++            return response_nodata(r ? RESP_ERR_INVALID_PARAMETER : RESP_OK_NODATA);
++        }
++
++        case CMD_TRANSFER_TO_HOST_3D:
++        case CMD_TRANSFER_FROM_HOST_3D:
++        {
++            const box = [u32(24), u32(28), u32(32), u32(36), u32(40), u32(44)];
++            const offset = u32(48), res = this.resources.get(u32(56));
++            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            const level = u32(60), stride = u32(64), layer_stride = u32(68);
++            const span = this.span(res, box, offset, stride, layer_stride);
++            const r = this.transfer(res, ctx_id, level, stride, layer_stride, box, offset, span,
++                                    type === CMD_TRANSFER_FROM_HOST_3D);
++            return response_nodata(r ? RESP_ERR_INVALID_PARAMETER : RESP_OK_NODATA);
++        }
++
++        case CMD_SET_SCANOUT:
++        {
++            const rect = [u32(24), u32(28), u32(32), u32(36)];
++            const scanout_id = u32(40), id = u32(44);
++            if(scanout_id !== 0) return response_nodata(RESP_ERR_INVALID_SCANOUT_ID);
++            if(id && !this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            this.scanout_resource = id;
++            this.scanout_rect = rect;
++            if(id)
++            {
++                this.canvas_size(rect[2], rect[3]);
++                this.present();
++            }
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_RESOURCE_FLUSH:
++        {
++            const id = u32(40);
++            if(!this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            if(id === this.scanout_resource) this.present();
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_GET_CAPSET_INFO:
++        {
++            const index = u32(24);
++            if(index >= CAPSETS.length) return response_nodata(RESP_ERR_INVALID_PARAMETER);
++            const info = this.call_out(8, p => gl["_vgw_capset_info"](CAPSETS[index], p));
++            const r = new Uint8Array(HDR_SIZE + 16);
++            const out = new DataView(r.buffer);
++            out.setUint32(0, RESP_OK_CAPSET_INFO, true);
++            out.setUint32(24, CAPSETS[index], true);
++            out.setUint32(28, info.getUint32(0, true), true);
++            out.setUint32(32, info.getUint32(4, true), true);
++            return r;
++        }
++
++        case CMD_GET_CAPSET:
++        {
++            const id = u32(24), version = u32(28);
++            if(!CAPSETS.includes(id)) return response_nodata(RESP_ERR_INVALID_PARAMETER);
++            const info = this.call_out(8, p => gl["_vgw_capset_info"](id, p));
++            const size = info.getUint32(4, true);
++            const caps = this.call_out(size, p => gl["_vgw_capset_fill"](id, version, p));
++            const r = new Uint8Array(HDR_SIZE + size);
++            new DataView(r.buffer).setUint32(0, RESP_OK_CAPSET, true);
++            r.set(new Uint8Array(caps.buffer, caps.byteOffset, size), HDR_SIZE);
++            return r;
++        }
++
++        case CMD_CTX_CREATE:
++        {
++            if(!ctx_id || this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
++            const nlen = Math.min(u32(24), 64);
++            const capset = u32(28) & 0xFF;
++            const name = this.alloc(nlen + 1);
++            this.heap().set(request.subarray(32, 32 + nlen), name);
++            this.heap()[name + nlen] = 0;
++            const r = gl["_vgw_ctx_create"](ctx_id, capset, name, nlen);
++            gl["_free"](name);
++            if(r) return response_nodata(RESP_ERR_UNSPEC);
++            this.contexts.set(ctx_id, capset);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_CTX_DESTROY:
++        {
++            if(!this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
++            gl["_vgw_ctx_destroy"](ctx_id);
++            this.contexts.delete(ctx_id);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_CTX_ATTACH_RESOURCE:
++        case CMD_CTX_DETACH_RESOURCE:
++        {
++            if(!this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
++            const id = u32(24);
++            if(!this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
++            gl[type === CMD_CTX_ATTACH_RESOURCE ? "_vgw_ctx_attach" : "_vgw_ctx_detach"](ctx_id, id);
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        case CMD_SUBMIT_3D:
++        {
++            if(!this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
++            const size = u32(24);
++            if(32 + size > request.length || size & 3) return response_nodata(RESP_ERR_INVALID_PARAMETER);
++            this.sync_shadows_to_host();
++            const p = this.alloc(size);
++            this.heap().set(request.subarray(32, 32 + size), p);
++            const r = gl["_vgw_submit"](p, ctx_id, size >> 2);
++            gl["_free"](p);
++            this.sync_shadows_to_guest();
++            return response_nodata(r ? RESP_ERR_INVALID_PARAMETER : RESP_OK_NODATA);
++        }
++
++        case CMD_UPDATE_CURSOR:
++        case CMD_MOVE_CURSOR:
++        {
++            // pos: scanout_id, x, y; resource_id, hot_x, hot_y (update only)
++            const c = this.cursor;
++            c.x = view.getInt32(28, true);
++            c.y = view.getInt32(32, true);
++            if(type === CMD_UPDATE_CURSOR)
++            {
++                c.id = this.resources.has(u32(40)) ? u32(40) : 0;
++                c.hot_x = u32(44);
++                c.hot_y = u32(48);
++            }
++            this.present();
++            return response_nodata(RESP_OK_NODATA);
++        }
++
++        default:
++            dbg_log("virtio-gpu: unknown command " + type.toString(16), LOG_VIRTIO);
++            return response_nodata(RESP_ERR_UNSPEC);
++    }
++};
++
++VirtioGPU.prototype.heap = function()
++{
++    return this.gl["heapU8"]();
++};
++
++VirtioGPU.prototype.alloc = function(size)
++{
++    const p = this.gl["_malloc"](Math.max(size, 1));
++    dbg_assert(p, "virtio-gpu: renderer out of memory");
++    return p;
++};
++
++/**
++ * Call fn(pointer) with a temporary buffer of the renderer, return a copy of the buffer
++ */
++VirtioGPU.prototype.call_out = function(size, fn)
++{
++    const p = this.alloc(size);
++    this.heap().fill(0, p, p + size);
++    fn(p);
++    const copy = this.heap().slice(p, p + size);
++    this.gl["_free"](p);
++    return new DataView(copy.buffer);
++};
++
++VirtioGPU.prototype.backing_size = function(res)
++{
++    let size = 0;
++    for(const [, len] of res.backing) size += len;
++    return size;
++};
++
++/**
++ * Bytes of the backing covered by a 3D transfer starting at offset: rows of stride and layers of
++ * layer_stride; without strides (buffers, single rows) up to the end of the backing
++ */
++VirtioGPU.prototype.span = function(res, box, offset, stride, layer_stride)
++{
++    const rest = this.backing_size(res) - offset;
++    const [, , , w, h, d] = box;
++    let span = rest;
++    if(stride && h)
++    {
++        span = (d > 1 ? (d - 1) * layer_stride : 0) + h * stride;
++    }
++    else if(res.format === 0 || !res.height || res.height === 1)
++    {
++        // buffers: box.w bytes
++        span = w;
++    }
++    return Math.max(0, Math.min(span, rest));
++};
++
++/**
++ * Guest pages <-> renderer memory: copy `length` bytes of the backing starting at `offset`
++ */
++VirtioGPU.prototype.copy_backing = function(res, offset, length, ptr, to_guest)
++{
++    const mem = this.cpu.mem8;
++    const heap = this.heap();
++    let pos = 0, done = 0;
++    for(const [addr, len] of res.backing)
++    {
++        if(done >= length) break;
++        if(pos + len <= offset)
++        {
++            pos += len;
++            continue;
++        }
++        const start = Math.max(0, offset - pos);
++        const n = Math.min(len - start, length - done);
++        if(addr + start + n > mem.length) break;
++        if(to_guest)
++        {
++            mem.set(heap.subarray(ptr + done, ptr + done + n), addr + start);
++        }
++        else
++        {
++            heap.set(mem.subarray(addr + start, addr + start + n), ptr + done);
++        }
++        done += n;
++        pos += len;
++    }
++    return done;
++};
++
++VirtioGPU.prototype.transfer = function(res, ctx_id, level, stride, layer_stride, box, offset, span, from_host)
++{
++    if(!res.backing.length || span <= 0) return -1;
++    const gl = this.gl;
++    const p = this.alloc(span);
++    const b = this.alloc(24);
++    const heap32 = this.gl["heapU32"]();
++    for(let i = 0; i < 6; i++) heap32[(b >> 2) + i] = box[i];
++    // reads too start from the guest's bytes: gaps between the rows stay as they were
++    this.copy_backing(res, offset, span, p, false);
++    let r;
++    if(from_host)
++    {
++        r = gl["_vgw_transfer_read"](res.id, ctx_id, level, stride, layer_stride, b, p, span);
++        if(!r) this.copy_backing(res, offset, span, p, true);
++    }
++    else
++    {
++        r = gl["_vgw_transfer_write"](res.id, ctx_id, level, stride, layer_stride, b, p, span);
++    }
++    gl["_free"](b);
++    gl["_free"](p);
++    return r;
++};
++
++VirtioGPU.prototype.make_shadow = function(res)
++{
++    this.drop_shadow(res);
++    const size = this.backing_size(res);
++    if(!size) return;
++    res.shadow = this.gl["_vgw_shadow_attach"](res.id, size);
++    res.shadow_size = res.shadow ? size : 0;
++    if(res.shadow) this.copy_backing(res, 0, size, res.shadow, false);
++};
++
++VirtioGPU.prototype.drop_shadow = function(res)
++{
++    if(res.shadow)
++    {
++        this.gl["_vgw_shadow_detach"](res.id, res.shadow);
++        res.shadow = 0;
++        res.shadow_size = 0;
++    }
++};
++
++VirtioGPU.prototype.sync_shadows_to_host = function()
++{
++    for(const res of this.resources.values())
++    {
++        if(res.shadow) this.copy_backing(res, 0, res.shadow_size, res.shadow, false);
++    }
++};
++
++VirtioGPU.prototype.sync_shadows_to_guest = function()
++{
++    for(const res of this.resources.values())
++    {
++        if(res.shadow) this.copy_backing(res, 0, res.shadow_size, res.shadow, true);
++    }
++};
++
++VirtioGPU.prototype.present = function()
++{
++    if(!this.scanout_resource) return;
++    const c = this.cursor;
++    this.gl["_vgw_present"](this.scanout_resource, this.canvas.width, this.canvas.height,
++                            c.id, c.x - c.hot_x, c.y - c.hot_y);
++};
++
++/**
++ * 2D resources come back after a restored state image: created again, their backing is the guest
++ * memory that came with the image, the next transfers fill them. 3D state does not come back.
++ */
++VirtioGPU.prototype.restore_resources = function(list)
++{
++    for(const [id, format, width, height, backing] of list)
++    {
++        const res = {
++            id, format, width, height, bind: VIRGL_BIND_RENDER_TARGET, flags: VIRGL_RESOURCE_Y_0_TOP,
++            is_3d: false, backing, shadow: 0, shadow_size: 0,
++        };
++        if(this.gl["_vgw_resource_create"](id, PIPE_TEXTURE_2D, format, res.bind, width, height, 1, 1, 0, 0, res.flags))
++        {
++            continue;
++        }
++        this.resources.set(id, res);
++        const span = width * height * 4;
++        if(span <= this.backing_size(res))
++        {
++            this.transfer(res, 0, 0, width * 4, 0, [0, 0, 0, width, height, 1], 0, span, false);
++        }
++    }
++    if(this.scanout_resource && this.resources.has(this.scanout_resource))
++    {
++        this.canvas_size(this.scanout_rect[2], this.scanout_rect[3]);
++        this.present();
++    }
++};
++
++VirtioGPU.prototype.get_state = function()
++{
++    const state = [];
++    state[0] = this.virtio;
++    state[1] = this.width;
++    state[2] = this.height;
++    state[3] = this.events_read;
++    const list = [];
++    for(const res of this.resources.values())
++    {
++        if(!res.is_3d) list.push([res.id, res.format, res.width, res.height, res.backing]);
++    }
++    state[4] = JSON.stringify({ resources: list, scanout: this.scanout_resource, rect: this.scanout_rect,
++                                cursor: this.cursor });
++    return state;
++};
++
++VirtioGPU.prototype.set_state = function(state)
++{
++    this.virtio.set_state(state[0]);
++    this.width = state[1];
++    this.height = state[2];
++    this.events_read = state[3];
++    const saved = JSON.parse(state[4]);
++    this.scanout_resource = saved.scanout;
++    this.scanout_rect = saved.rect;
++    this.cursor = saved.cursor || { id: 0, hot_x: 0, hot_y: 0, x: 0, y: 0 };
++    this.contexts.clear();
++    if(this.ready)
++    {
++        for(const res of this.resources.values()) this.gl["_vgw_resource_unref"](res.id);
++        this.resources.clear();
++        this.restore_resources(saved.resources);
++    }
++    else
++    {
++        this.restore_2d = saved.resources;
++    }
++};
++
++VirtioGPU.prototype.reset = function()
++{
++    this.virtio.reset();
++    if(this.ready)
++    {
++        for(const id of this.contexts.keys()) this.gl["_vgw_ctx_destroy"](id);
++        for(const res of this.resources.values())
++        {
++            this.drop_shadow(res);
++            this.gl["_vgw_resource_unref"](res.id);
++        }
++    }
++    this.contexts.clear();
++    this.resources.clear();
++    this.fenced = [];
++    this.scanout_resource = 0;
++    this.events_read = 0;
++};

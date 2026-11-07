@@ -24,6 +24,10 @@
   #screen.kb canvas { height: var(--sh) !important; transform: translateY(var(--sy)); }
   #screen canvas.px { image-rendering: pixelated !important; }
   /* #endif */
+  /* #if virtio_gpu */
+  /* экран - холст virtio-gpu (WebGL2), холст VGA не нужен */
+  #screen canvas:not(.gpu) { display: none !important; }
+  /* #endif */
   #kbd {
     position: fixed; opacity: 0; height: 1px; width: 1px;
     border: 0; padding: 0; margin: 0; resize: none; left: -9999px; top: 0;
@@ -67,7 +71,7 @@
 <body>
   <div id="app">
     <div id="term"><div id="tty1" class="tty"></div></div>
-    <!-- #if vga --><div id="screen"><canvas></canvas><div></div></div><!-- #endif -->
+    <!-- #if vga --><div id="screen"><canvas></canvas><!-- #if virtio_gpu --><canvas class="gpu"></canvas><!-- #endif --><div></div></div><!-- #endif -->
     <div id="keys"><div id="more"></div><div id="base"></div></div>
     <div id="toast" class="box"><span></span><button>Копировать</button></div>
   </div>
@@ -91,7 +95,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js" data-lazy="kt-canvas"></script>
   <script src="vendor/v86/libv86.js" id="kt-v86"></script>
-  <!-- #if virgl --><script src="build/virgl/virgl.js" data-lazy="kt-virgljs"></script><!-- #endif -->
+  <!-- #if virgl_module --><script src="build/virgl/virgl.js" data-lazy="kt-virgljs"></script><!-- #endif -->
   <script>
     "use strict";
     const $ = (s) => document.querySelector(s);
@@ -493,12 +497,15 @@
     const sendTo = (t, s) => { if (t.id === 1) serial(s); else ttyIn(t.id, s); };
     const send = (s) => sendTo(target(), s);
     const AGENT_PORT = 7700, PAGE_PORT = 7771, PAGE_IP = "192.168.86.1";
+    /* #if virgl_module */
+    let virglGz = null;  // wasm virglrenderer (gzip): сервер vtest (virgl) и устройство virtio-gpu
+    /* #endif */
     /* #if virgl */
     // VirGL: Mesa в машине (GALLIUM_DRIVER=virpipe) через vtest-bridge подключается к PAGE_IP:7790,
     // страница отдаёт поток серверу vtest в wasm (virglrenderer -> WebGL2). Клиент один: новое
     // соединение закрывает прежнее. Состояние GPU живёт в WebGL и в сохранение не попадает
     const VIRGL_PORT = 7790;
-    let virglGz = null, virgl = null, virglConn = null;
+    let virgl = null, virglConn = null;
     function virglModule() {
       if (!virgl) {
         lazyScript("kt-virgljs");
@@ -1418,7 +1425,11 @@
         if (on === undefined || on === "") return screenOn ? "on" : "off";
         if (on === "size") {
           screenW = $("#app").clientWidth;
-          return (screenSent = screenSize());
+          screenSent = screenSize();
+          /* #if virtio_gpu */
+          gpuResize(screenSent);
+          /* #endif */
+          return screenSent;
         }
         if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("kt screen: on или off");
         setScreen(on === true || on === "on");
@@ -1709,9 +1720,25 @@
     // экран показывает и прячет гость (kt screen on/off): видеокарта v86 после графики в текст не
     // возвращается, и по ней не понять, что программа закончила. Пока экран на виду, клавиатура
     // (адаптер v86) и мышь идут в машину, а ряд клавиш - keys.screen
+    /* #if virtio_gpu */
+    // virtio-gpu: кадры рисует virglrenderer (WebGL2) на своём холсте; в воркере атрибуты холста не
+    // меняются, размер кадра присылает устройство (virtio-gpu-screen-size). Размер дисплея - от
+    // страницы, как для X (kt screen size): устройство отдаёт его гостю как предпочтительный режим
+    const gpuCanvas = $("#screen canvas.gpu");
+    let gpuSize = [0, 0];
+    function gpuResize(size) {
+      const [w, h] = size.split("x").map(Number);
+      if (emulator && w && h) emulator.bus.send("virtio-gpu-resize", [w, h]);
+    }
+    /* #endif */
+    const screenCanvas = () => /* #if virtio_gpu */ gpuCanvas || /* #endif */ $("#screen canvas");
+    const screenPixels = (cv) => /* #if virtio_gpu */ cv === gpuCanvas ? gpuSize : /* #endif */ [cv.width, cv.height];
+    // экран есть: VGA с видеопамятью или virtio-gpu (видеопамять у него - память WebGL)
+    const screenAvail = () => vgaSize >= VGA_MIN /* #if virtio_gpu */ || true /* #endif */;
+    const screenVram = () => /* #if virtio_gpu */ (64 << 20) || /* #endif */ vgaSize;
     function setScreen(on) {
       on = !!on;
-      if (on && vgaSize < VGA_MIN) throw new Error("экрана нет: boot.vga off");
+      if (on && !screenAvail()) throw new Error("экрана нет: boot.vga off");
       if (on === screenOn) return;
       if (!on) smodRelease();
       screenOn = on;
@@ -1733,7 +1760,7 @@
       // auto на телефоне - точка CSS, если бандл не задал свою (--phone-scale: в qt окна Designer мельче);
       // свою бандл задаёт, чтобы влезло больше, - и целое число точек экрана берётся меньшее, если влезает
       const phone = v === "auto" && mobile && BUNDLE && BUNDLE.phone_scale;
-      const fits = (x) => (W * d / x) * (H * d / x) * 8 <= vgaSize;
+      const fits = (x) => (W * d / x) * (H * d / x) * 8 <= screenVram();
       let s = (v === "auto" ? (mobile ? phone || 1 : 1 / d) : +v) * d;
       while (!fits(s)) s += 0.25;
       if (s > 2) s = phone && fits(Math.floor(s + 0.01)) ? Math.floor(s + 0.01) : Math.ceil(s - 0.01);
@@ -1745,12 +1772,15 @@
     function screenResized(force) {
       clearTimeout(screenTimer);
       screenTimer = setTimeout(() => {
-        if (vgaSize < VGA_MIN || !screenSent) return;
+        if (!screenAvail() || !screenSent) return;
         const w = $("#app").clientWidth;
         if (!force && mobile && w === screenW) return;
         screenW = w;
         const s = screenSize();
         if (s !== screenSent) emit("screen-size", (screenSent = s));
+        /* #if virtio_gpu */
+        gpuResize(screenSent);
+        /* #endif */
       }, 400);
     }
     // без размытия - при целом масштабе (пиксели ровные) и от 2 точек на пиксель; дробный масштаб
@@ -1770,23 +1800,22 @@
       sc.style.setProperty("--sy", -Math.max(0, Math.min(tapY + 48 - seen, box - seen)) + "px");
     }
     function fitScreen() {
-      const cv = $("#screen canvas"), r = cv.getBoundingClientRect();
-      const s = cv.width > 0 ? Math.min(r.width / cv.width, r.height / cv.height) * (window.devicePixelRatio || 1) : 0;
+      const cv = screenCanvas(), r = cv.getBoundingClientRect(), [cw, ch] = screenPixels(cv);
+      const s = cw > 0 ? Math.min(r.width / cw, r.height / ch) * (window.devicePixelRatio || 1) : 0;
       cv.classList.toggle("px", s >= 2 || (s >= 1 && Math.abs(s - Math.round(s)) < 0.02));
     }
-    {
-      const cv = $("#screen canvas");
+    for (const cv of document.querySelectorAll("#screen canvas")) {
       new MutationObserver(fitScreen).observe(cv, { attributes: true, attributeFilter: ["width", "height"] });
       let lx = 0, ly = 0;
       const at = (e) => {
-        const r = cv.getBoundingClientRect(), s = Math.min(r.width / cv.width, r.height / cv.height);
-        const w = cv.width * s, h = cv.height * s;
+        const r = cv.getBoundingClientRect(), [cw, ch] = screenPixels(cv), s = Math.min(r.width / cw, r.height / ch);
+        const w = cw * s, h = ch * s;
         const x = Math.max(0, Math.min(w, e.clientX - r.left - (r.width - w) / 2));
         return [x, Math.max(0, Math.min(h, e.clientY - r.top - (r.height - h) / 2)), w, h];
       };
       // мышь VMware в ядре: точка уходит абсолютной, а обычный пакет PS/2 будит драйвер забрать её
       const move = (e) => {
-        if (!emulator || !cv.width) return;
+        if (!emulator || !screenPixels(cv)[0]) return;
         const p = at(e);
         emulator.bus.send("mouse-absolute", p);
         emulator.bus.send("mouse-delta", [Math.round(p[0] - lx) || 1, Math.round(ly - p[1])]);
@@ -2031,7 +2060,7 @@
       let wasm = await bundleFile("wasm"), state = null, initrd = null;
       opts.bios = { buffer: await bundleFile("bios") };
       /* #if vga */
-      opts.vga_bios = { buffer: await bundleFile("vgabios") };
+      if (BUNDLE.files.vgabios) opts.vga_bios = { buffer: await bundleFile("vgabios") };
       /* #endif */
 
       if (saved) {
@@ -2076,12 +2105,26 @@
           ...Object.entries(browserEnv()).map(([k, v]) => `${k}=${v}`),
         ].join(" ");
       }
-      /* #if virgl */
+      /* #if virgl_module */
       virglGz = take("virgl");
       /* #endif */
       for (const el of document.querySelectorAll(PARTS)) el.remove();
 
       opts.vga_memory_size = vgaSize;
+      /* #if virtio_gpu */
+      // virtio-gpu: virglrenderer работает внутри v86 (в воркере тоже), холст - его; клавиатура - в машину
+      {
+        const [w, h] = screenSize().split("x").map(Number);
+        const inWorker = cfg.get("boot.worker") === "on" && typeof Worker === "function";
+        opts.virtio_gpu = {
+          source: $("#kt-virgljs").textContent,
+          wasm: await new Response(new Blob([virglGz]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
+          canvas: inWorker && gpuCanvas.transferControlToOffscreen ? gpuCanvas.transferControlToOffscreen() : gpuCanvas,
+          width: w, height: h,
+        };
+        opts.disable_keyboard = false;
+      }
+      /* #endif */
       /* #if vga */
       if (vgaSize >= VGA_MIN) {
         opts.screen_container = $("#screen");
@@ -2123,6 +2166,12 @@
         });
       }
       emulator.keyboard_set_enabled(false);
+      /* #if virtio_gpu */
+      emulator.add_listener("virtio-gpu-screen-size", (size) => {
+        gpuSize = size;
+        fitScreen();
+      });
+      /* #endif */
       const outDec = new TextDecoder();
       let out = [];
       emulator.add_listener("serial0-output-byte", (b) => {
@@ -2156,7 +2205,7 @@
         // экран на виду в сохранении или во встроенном снимке (бандл с --run startx) - показать; размер X -
         // тот, что был у страницы тогда: если сейчас место другое, X получит screen-size и перейдёт
         const was = saved || image;
-        if (was.screen_on && vgaSize >= VGA_MIN) {
+        if (was.screen_on && screenAvail()) {
           screenSent = was.screen_size || "";
           setScreen(true);
         }

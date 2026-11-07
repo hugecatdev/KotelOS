@@ -41,15 +41,17 @@ EMSDK_QUIET=1 . "$EMSDK/emsdk_env.sh"
 link() {
   S=$B/virglrenderer-$VIRGL
   mkdir -p $OUT
-  emcc -O2 $VTW_CFLAGS -Wall -Wextra -Wno-unused-parameter -I$S/src -I$S/vtest -I$B/vrend/src \
-    -c virgl/vtest_web.c -o $B/vtest_web.o
-  emcc -O2 $VTW_LDFLAGS -o $OUT/virgl.js $B/vtest_web.o $B/vrend/vtest/libvtest.a $B/vrend/src/libvirglrenderer.a \
+  for f in vtest_web vgpu_web; do
+    emcc -O2 $VTW_CFLAGS -Wall -Wextra -Wno-unused-parameter -I$S/src -I$S/vtest -I$B/vrend/src -I$P/include \
+      -c virgl/$f.c -o $B/$f.o
+  done
+  emcc -O2 $VTW_LDFLAGS -o $OUT/virgl.js $B/vtest_web.o $B/vgpu_web.o $B/vrend/vtest/libvtest.a $B/vrend/src/libvirglrenderer.a \
     $P/lib/libepoxy.a \
     -sMODULARIZE=1 -sEXPORT_NAME=createVirgl -sENVIRONMENT=web,worker -sALLOW_MEMORY_GROWTH=1 \
     -sSTACK_SIZE=2MB -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sGL_ENABLE_GET_PROC_ADDRESS=1 \
     -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_malloc,_free \
     -sINCOMING_MODULE_JS_API=wasmBinary,preRun,print,printErr,onAbort \
-    --pre-js virgl/vgl.js --pre-js virgl/vtest_web.js
+    --pre-js virgl/vgl.js --pre-js virgl/vtest_web.js --pre-js virgl/vgpu_web.js
   ls -l $OUT/virgl.js $OUT/virgl.wasm
 }
 

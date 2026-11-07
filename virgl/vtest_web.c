@@ -49,7 +49,9 @@ static int make_current(void *cookie, int scanout, virgl_renderer_gl_context ctx
 static void log_message(enum virgl_log_level_flags level, const char *message, void *data)
 {
    (void)level; (void)data;
-   fputs(message, stderr);
+   /* stderr Emscripten выводит по переводу строки, а сообщения vrend бывают без него */
+   size_t n = strlen(message);
+   fprintf(stderr, "%s%s", message, n && message[n - 1] == '\n' ? "" : "\n");
 }
 
 static const struct virgl_renderer_callbacks context_cbs = {

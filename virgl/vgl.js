@@ -61,6 +61,7 @@ Module.createVGL = function (gl) {
   const contexts = new Map();
   let nextId = 1;
   let cur = fresh(); // состояние, которому сейчас равен настоящий WebGL
+  let curId = 0;
 
   // обёртка: те же методы и константы, состояние пишется в cur
   const W = {};
@@ -349,7 +350,9 @@ Module.createVGL = function (gl) {
     gl: W,
     create() {
       const id = nextId++;
-      contexts.set(id, contexts.size ? fresh() : cur); // первый получает уже настоящее состояние
+      const first = !contexts.size;
+      contexts.set(id, first ? cur : fresh()); // первый получает уже настоящее состояние
+      if (first) curId = id;
       return id;
     },
     destroy(id) {
@@ -363,7 +366,11 @@ Module.createVGL = function (gl) {
         apply(cur, s);
         cur = s;
       }
+      curId = id;
       return 0;
+    },
+    current() {
+      return curId;
     },
   };
 };
