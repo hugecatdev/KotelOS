@@ -23,10 +23,13 @@ $K olddefconfig > /dev/null
 for v in $(sed -n 's/^CONFIG_\(NET_VENDOR_[A-Z0-9_]*\)=y/\1/p' $SRC/.config); do
   $SRC/scripts/config --file $SRC/.config --disable "$v"
 done
-sed -n 's/^\(# \)\{0,1\}CONFIG_\([A-Z0-9_]*\)[= ].*/\2/p' config/kernel.fragment | while read -r k; do
-  sed -i "/^\(# \)\{0,1\}CONFIG_$k[= ]/d" $SRC/.config
+# EXTRA_FRAGMENT=файл - ещё опции поверх config/kernel.fragment (проба цены, частное ядро)
+for f in config/kernel.fragment $EXTRA_FRAGMENT; do
+  sed -n 's/^\(# \)\{0,1\}CONFIG_\([A-Z0-9_]*\)[= ].*/\2/p' $f | while read -r k; do
+    sed -i "/^\(# \)\{0,1\}CONFIG_$k[= ]/d" $SRC/.config
+  done
+  cat $f >> $SRC/.config
 done
-cat config/kernel.fragment >> $SRC/.config
 $K olddefconfig > /dev/null
 $K -j"$(nproc)" bzImage > $CACHE/kernel-build.log 2>&1 || { tail -30 $CACHE/kernel-build.log; exit 1; }
 
