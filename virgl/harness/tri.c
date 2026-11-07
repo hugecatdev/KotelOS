@@ -13,8 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define W 64
-#define H 64
+#define W 290
+#define H 290
 
 static GLuint shader(GLenum type, const char *src)
 {
@@ -115,7 +115,21 @@ draw:;
 
    const unsigned char *c = px + (H / 2 * W + W / 2) * 4, *k = px;
    printf("центр %d,%d,%d угол %d,%d,%d ошибка GL %#x\n", c[0], c[1], c[2], k[0], k[1], k[2], err);
-   int ok = c[0] > 200 && c[2] < 50 && k[0] < 50 && k[2] > 200 && !err;
+   /* каждый пиксель - синий фон или красный треугольник; чужие - по столбцам */
+   int bad = 0, bad_min = W, bad_max = -1;
+   for (int y = 0; y < H; y++)
+      for (int x = 0; x < W; x++) {
+         const unsigned char *q = px + (y * W + x) * 4;
+         int blue = q[0] < 8 && q[1] < 8 && q[2] > 247, red = q[0] > 247 && q[1] < 8 && q[2] < 8;
+         if (!blue && !red) {
+            bad++;
+            if (x < bad_min) bad_min = x;
+            if (x > bad_max) bad_max = x;
+         }
+      }
+   if (bad)
+      printf("чужих пикселей %d, столбцы %d..%d\n", bad, bad_min, bad_max);
+   int ok = c[0] > 200 && c[2] < 50 && k[0] < 50 && k[2] > 200 && !err && bad < W * H / 100;
 
    if (argc > 1) {
       FILE *f = fopen(argv[1], "wb");
