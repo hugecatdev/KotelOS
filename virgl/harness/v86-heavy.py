@@ -27,9 +27,9 @@ s.ev(HOOK)
 
 
 def shot(name):
-    url = s.ev("document.querySelector('#screen canvas').toDataURL('image/png')")
-    path = os.path.join(ROOT, "build/virgl", "heavy-%s.png" % name)
-    open(path, "wb").write(base64.b64decode(url.split(",", 1)[1]))
+    # снимок страницы (CDP): холст WebGL (virtio-gpu) через toDataURL не снять
+    png = s.c.call("Page.captureScreenshot", format="png")["data"]
+    open(os.path.join(ROOT, "build/virgl", "heavy-%s.png" % name), "wb").write(base64.b64decode(png))
 
 
 try:
@@ -38,11 +38,13 @@ try:
     while s.sh("test -S /tmp/.X11-unix/X0")[0]:
         assert time.time() - t < 90
         time.sleep(1)
-    time.sleep(2)
+    time.sleep(float(os.environ.get("X_SETTLE", "2")))
     for demo in demos:
+        # драйвер: virpipe/softpipe - libGL через Xlib (этап 0), virgl/soft - Mesa с DRI (virtio-gpu)
         for drv in os.environ.get("DRIVERS", "virpipe softpipe").split():
+            env = {"virgl": "", "soft": "LIBGL_ALWAYS_SOFTWARE=1"}.get(drv, "GALLIUM_DRIVER=" + drv)
             s.ev("window.__virglLog.length = 0")
-            s.start("cd /usr/share/mesa-demos 2>/dev/null; DISPLAY=:0 GALLIUM_DRIVER=%s timeout %d %s 2>&1; echo код $?" % (drv, secs, demo))
+            s.start("cd /usr/share/mesa-demos 2>/dev/null; DISPLAY=:0 %s timeout %d %s 2>&1; echo код $?" % (env, secs, demo))
             time.sleep(secs * 0.6)
             shot("%s-%s" % (demo, drv))
             code, out, err = s.finish()
@@ -50,6 +52,6 @@ try:
             tail = [line for line in out.splitlines() if line.strip()][-3:]
             log = [line for line in (s.ev("window.__virglLog") or []) if "Shared memory" not in line][:6]
             print("%-12s %-8s FPS %s | %s%s" % (demo, drv, fps[-4:], " / ".join(tail)[-160:],
-                  ("\n    vrend: " + "\n    vrend: ".join(x[:200] for x in log)) if log and drv == "virpipe" else ""), flush=True)
+                  ("\n    vrend: " + "\n    vrend: ".join(x[:200] for x in log)) if log and drv in ("virpipe", "virgl") else ""), flush=True)
 finally:
     s.c.close()

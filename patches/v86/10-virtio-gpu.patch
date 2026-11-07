@@ -100,7 +100,7 @@
          if(true)
 --- a/src/virtio_gpu.js
 +++ b/src/virtio_gpu.js
-@@ -0,0 +1,824 @@
+@@ -0,0 +1,835 @@
 +import { dbg_assert, dbg_log } from "./log.js";
 +import { LOG_VIRTIO } from "./const.js";
 +import { VirtIO, VIRTIO_F_VERSION_1 } from "./virtio.js";
@@ -168,6 +168,7 @@
 +// capset ids: VIRGL (v1 caps) and VIRGL2 (v2 caps)
 +const CAPSETS = [1, 2];
 +
++const PIPE_BUFFER = 0;
 +const PIPE_TEXTURE_2D = 2;
 +const VIRGL_BIND_RENDER_TARGET = 1 << 1;
 +const VIRGL_BIND_CUSTOM = 1 << 17;
@@ -191,7 +192,7 @@
 +    this.canvas = settings.canvas;
 +    this.events_read = 0;
 +
-+    // id -> { id, width, height, format, bind, flags, is_3d, backing: [[addr, len], ...], shadow, shadow_size }
++    // id -> { id, target, width, height, format, bind, flags, is_3d, backing: [[addr, len], ...], shadow, shadow_size }
 +    this.resources = new Map();
 +    // scanout 0: resource shown on the canvas
 +    this.scanout_resource = 0;
@@ -206,8 +207,9 @@
 +    this.fence_done = 0;
 +    this.fence_poll = 0;
 +
-+    // commands by type and responses by type (hex): for debugging from the page
++    // commands by type and responses by type (hex), last failed transfers: for debugging from the page
 +    this.stats = {};
++    this.failed = [];
 +    this.load_ms = 0;
 +
 +    /** @type {Object} the emscripten module, once loaded */
@@ -469,8 +471,8 @@
 +            const id = u32(24), format = u32(28), width = u32(32), height = u32(36);
 +            if(!id || this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
 +            const res = {
-+                id, format, width, height, bind: VIRGL_BIND_RENDER_TARGET, flags: VIRGL_RESOURCE_Y_0_TOP,
-+                is_3d: false, backing: [], shadow: 0, shadow_size: 0,
++                id, target: PIPE_TEXTURE_2D, format, width, height, bind: VIRGL_BIND_RENDER_TARGET,
++                flags: VIRGL_RESOURCE_Y_0_TOP, is_3d: false, backing: [], shadow: 0, shadow_size: 0,
 +            };
 +            if(gl["_vgw_resource_create"](id, PIPE_TEXTURE_2D, format, res.bind, width, height, 1, 1, 0, 0, res.flags))
 +            {
@@ -485,8 +487,8 @@
 +            const id = u32(24);
 +            if(!id || this.resources.has(id)) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
 +            const res = {
-+                id, format: u32(32), width: u32(40), height: u32(44), bind: u32(36), flags: u32(64),
-+                is_3d: true, backing: [], shadow: 0, shadow_size: 0,
++                id, target: u32(28), format: u32(32), width: u32(40), height: u32(44), bind: u32(36),
++                flags: u32(64), is_3d: true, backing: [], shadow: 0, shadow_size: 0,
 +            };
 +            if(gl["_vgw_resource_create"](id, u32(28), res.format, res.bind, res.width, res.height,
 +                                          u32(48), u32(52), u32(56), u32(60), res.flags))
@@ -715,24 +717,24 @@
 +};
 +
 +/**
-+ * Bytes of the backing covered by a 3D transfer starting at offset: rows of stride and layers of
-+ * layer_stride; without strides (buffers, single rows) up to the end of the backing
++ * Bytes a 3D transfer at offset needs: whole rows of stride and layers of layer_stride (the renderer
++ * checks the buffer for full rows, the last row in the guest's backing may be shorter); without
++ * strides - box.w bytes of a buffer, a texture up to the end of its backing (the renderer takes
++ * the stride of the level then)
 + */
 +VirtioGPU.prototype.span = function(res, box, offset, stride, layer_stride)
 +{
-+    const rest = this.backing_size(res) - offset;
++    const rest = Math.max(0, this.backing_size(res) - offset);
 +    const [, , , w, h, d] = box;
-+    let span = rest;
 +    if(stride && h)
 +    {
-+        span = (d > 1 ? (d - 1) * layer_stride : 0) + h * stride;
++        return (d > 1 ? (d - 1) * layer_stride : 0) + h * stride;
 +    }
-+    else if(res.format === 0 || !res.height || res.height === 1)
++    if(res.target === PIPE_BUFFER)
 +    {
-+        // buffers: box.w bytes
-+        span = w;
++        return w;
 +    }
-+    return Math.max(0, Math.min(span, rest));
++    return rest;
 +};
 +
 +/**
@@ -772,21 +774,30 @@
 +{
 +    if(!res.backing.length || span <= 0) return -1;
 +    const gl = this.gl;
++    // the buffer is as large as the renderer expects, the guest's bytes are only what its backing has
++    const copy = Math.min(span, Math.max(0, this.backing_size(res) - offset));
 +    const p = this.alloc(span);
++    this.heap().fill(0, p + copy, p + span);
 +    const b = this.alloc(24);
 +    const heap32 = this.gl["heapU32"]();
 +    for(let i = 0; i < 6; i++) heap32[(b >> 2) + i] = box[i];
 +    // reads too start from the guest's bytes: gaps between the rows stay as they were
-+    this.copy_backing(res, offset, span, p, false);
++    this.copy_backing(res, offset, copy, p, false);
 +    let r;
 +    if(from_host)
 +    {
 +        r = gl["_vgw_transfer_read"](res.id, ctx_id, level, stride, layer_stride, b, p, span);
-+        if(!r) this.copy_backing(res, offset, span, p, true);
++        if(!r) this.copy_backing(res, offset, copy, p, true);
 +    }
 +    else
 +    {
 +        r = gl["_vgw_transfer_write"](res.id, ctx_id, level, stride, layer_stride, b, p, span);
++    }
++    if(r)
++    {
++        this.failed.push({ res: [res.id, res.format, res.width, res.height, res.bind, this.backing_size(res)],
++                           ctx_id, level, stride, layer_stride, box, offset, span, from_host, r });
++        if(this.failed.length > 8) this.failed.pop();
 +    }
 +    gl["_free"](b);
 +    gl["_free"](p);
@@ -846,8 +857,8 @@
 +    for(const [id, format, width, height, backing] of list)
 +    {
 +        const res = {
-+            id, format, width, height, bind: VIRGL_BIND_RENDER_TARGET, flags: VIRGL_RESOURCE_Y_0_TOP,
-+            is_3d: false, backing, shadow: 0, shadow_size: 0,
++            id, target: PIPE_TEXTURE_2D, format, width, height, bind: VIRGL_BIND_RENDER_TARGET,
++            flags: VIRGL_RESOURCE_Y_0_TOP, is_3d: false, backing, shadow: 0, shadow_size: 0,
 +        };
 +        if(this.gl["_vgw_resource_create"](id, PIPE_TEXTURE_2D, format, res.bind, width, height, 1, 1, 0, 0, res.flags))
 +        {

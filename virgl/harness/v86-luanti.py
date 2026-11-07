@@ -28,14 +28,17 @@ try:
         assert time.time() - t < 90
         time.sleep(1)
     time.sleep(2)
-    s.ok("(cd /root && DISPLAY=:0 GALLIUM_DRIVER=%s timeout %d luanti --go --world /root/.minetest/worlds/w --name kt > /tmp/luanti.log 2>&1 &)" % (drv, secs))
+    # драйвер: virpipe/softpipe - libGL через Xlib (этап 0), virgl/soft - Mesa с DRI (virtio-gpu)
+    env = {"virgl": "", "soft": "LIBGL_ALWAYS_SOFTWARE=1"}.get(drv, "GALLIUM_DRIVER=" + drv)
+    s.ok("(cd /root && DISPLAY=:0 %s timeout %d luanti --go --world /root/.minetest/worlds/w --name kt > /tmp/luanti.log 2>&1 &)" % (env, secs))
     t0 = time.time()
     for at in (30, 60, 90, 120, 150, 180, 240, 300):
         if at > secs:
             break
         time.sleep(max(0, at - (time.time() - t0)))
-        url = s.ev("document.querySelector('#screen canvas').toDataURL('image/png')")
-        open(os.path.join(ROOT, "build/virgl", "luanti-%s-%03d.png" % (drv, at)), "wb").write(base64.b64decode(url.split(",", 1)[1]))
+        # снимок страницы (CDP): холст WebGL (virtio-gpu) через toDataURL не снять
+        png = s.c.call("Page.captureScreenshot", format="png")["data"]
+        open(os.path.join(ROOT, "build/virgl", "luanti-%s-%03d.png" % (drv, at)), "wb").write(base64.b64decode(png))
         alive = s.sh("pidof luanti")[1].strip()
         print("%3d с: luanti %s" % (at, "идёт" if alive else "закончился"), flush=True)
         if not alive:
