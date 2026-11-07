@@ -4,6 +4,10 @@
 # поэтому подходят её библиотеки и драйверы (ввод - xf86-input-evdev). Ядро без консолей (VT) -
 # patches/xorg-server-novt.patch. Результат -> packages/xorg (Xorg, модули, libpciaccess, раскладки и
 # шрифты; в git не идут)
+#   GLAMOR=1 MESA_INST=каталог - с glamor, DRI3 и GLX: 2D сервера и OpenGL программ рисует GPU
+#   (virtio-gpu); заголовки и библиотеки Mesa - из её сборки с DRI (scripts/build-mesa.sh API=dri,
+#   каталог сборки/inst), libepoxy - из Alpine. OUT=каталог, XORG_BUILD=каталог сборки - чтобы
+#   такой вариант не перезаписал пакет
 set -e
 cd "$(dirname "$0")/.."
 
@@ -11,9 +15,17 @@ VER=21.1.19
 CACHE=$PWD/.cache
 TC=$CACHE/i686-linux-musl-cross
 SRC=$CACHE/xorg-server-$VER
-SR=$CACHE/xsysroot
-B=$CACHE/xorg-build
-OUT=$PWD/packages/xorg
+B=${XORG_BUILD:-$CACHE/xorg-build}
+SR=${XORG_BUILD:+$XORG_BUILD-sysroot}
+SR=${SR:-$CACHE/xsysroot}
+OUT=${OUT:-$PWD/packages/xorg}
+GL_OPTS="-Dglx=false -Dglamor=false -Ddri1=false -Ddri2=false -Ddri3=false"
+GL_PKGS=
+if [ -n "$GLAMOR" ]; then
+  [ -f "$MESA_INST/usr/lib/pkgconfig/gbm.pc" ] || { echo "GLAMOR=1: нужен MESA_INST - inst сборки mesa с API=dri"; exit 1; }
+  GL_OPTS="-Dglx=true -Dglamor=true -Ddri1=false -Ddri2=true -Ddri3=true"
+  GL_PKGS="libepoxy-dev libxshmfence-dev"
+fi
 
 [ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
 [ -f $CACHE/xorg-server-$VER.tar.xz ] || curl -fsSL https://www.x.org/releases/individual/xserver/xorg-server-$VER.tar.xz -o $CACHE/xorg-server-$VER.tar.xz
@@ -28,16 +40,22 @@ mkdir -p $SRC/test/bugs
 # заголовки и .pc зависимостей сервера (python3 нужен только для генерации xcb-proto); индекс -
 # свой и свежий: старые версии с зеркала пропадают, а общий индекс трогать незачем
 rm -rf $SR
-python3 - "$SR" <<'EOF'
+python3 - "$SR" $GL_PKGS <<'EOF'
 import sys
 import alpine
 pkgs, provides = alpine.index(tag="xorg-", max_age=7 * 86400)
 want = ("xorgproto xtrans pixman-dev libxfont2-dev libxcvt-dev libdrm-dev libpciaccess-dev libmd-dev "
-        "libxau-dev libxkbfile-dev xkbcomp-dev").split()
+        "libxau-dev libxkbfile-dev xkbcomp-dev").split() + sys.argv[2:]
 for n in alpine.resolve(want, pkgs, provides, {"python3", "linux-headers"}) + ["xkeyboard-config", "font-misc-misc"]:
     f = f"{n}-{pkgs[n]['ver']}.apk"
     alpine.extract(alpine.fetch(f"{alpine.MIRROR}/{pkgs[n]['repo']}/x86/{f}", f"{alpine.CACHE}/apk/{f}"), sys.argv[1], [], [])
 EOF
+# Mesa - своя (без mesa-dev Alpine с LLVM): заголовки, .pc и библиотеки для ссылок
+if [ -n "$GLAMOR" ]; then
+  cp -a $MESA_INST/usr/include/. $SR/usr/include/
+  cp -a $MESA_INST/usr/lib/. $SR/usr/lib/
+  [ -d $MESA_INST/usr/share/pkgconfig ] && cp -a $MESA_INST/usr/share/pkgconfig/. $SR/usr/share/pkgconfig/
+fi
 
 rm -rf $B
 mkdir -p $B
@@ -65,7 +83,7 @@ EOF
 
 meson setup $B $SRC --cross-file $B.cross --prefix=/usr --buildtype=release -Dstrip=true \
   -Dxorg=true -Dxvfb=false -Dxnest=false -Dxephyr=false -Dxwin=false -Dxquartz=false \
-  -Dglx=false -Dglamor=false -Ddri1=false -Ddri2=false -Ddri3=false -Dxvmc=false -Ddga=false -Dagp=false \
+  $GL_OPTS -Dxvmc=false -Ddga=false -Dagp=false \
   -Dudev=false -Dudev_kms=false -Dhal=false -Dsystemd_logind=false -Dsuid_wrapper=false \
   -Dxdmcp=false -Dxdm-auth-1=false -Dsecure-rpc=false -Dlisten_tcp=false -Dxselinux=false \
   -Dpciaccess=true -Dint10=false -Dvgahw=false -Dlinux_acpi=false -Dlinux_apm=false \

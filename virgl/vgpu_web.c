@@ -70,7 +70,7 @@ static struct virgl_renderer_callbacks cbs = {
 static bool ready;
 static int present_ctx;
 static GLuint present_prog, present_vao, present_sampler;
-static GLint present_alpha;
+static GLint present_alpha, present_flip;
 
 EMSCRIPTEN_KEEPALIVE int vgw_init(void)
 {
@@ -185,9 +185,12 @@ EMSCRIPTEN_KEEPALIVE void vgw_capset_fill(uint32_t set, uint32_t version, void *
    /* хост не видит память гостя напрямую: без передач в потоке команд (TRANSFER, vrend читал бы
     * подложку сам), без промежуточных буферов (COPY_TRANSFER) и без постоянно отображённых
     * буферов - данные носит устройство командами TRANSFER_TO/FROM_HOST_3D */
-   if (set == 2)
-      ((union virgl_caps *)caps)->v2.capability_bits &=
-         ~(VIRGL_CAP_TRANSFER | VIRGL_CAP_COPY_TRANSFER | VIRGL_CAP_ARB_BUFFER_STORAGE);
+   if (set == 2) {
+      union virgl_caps *c = caps;
+      c->v2.capability_bits &= ~(VIRGL_CAP_TRANSFER | VIRGL_CAP_COPY_TRANSFER | VIRGL_CAP_ARB_BUFFER_STORAGE);
+      /* и чтение назад через промежуточный буфер (хост пишет в подложку), и ресурсы-блобы */
+      c->v2.capability_bits_v2 &= ~(VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS | VIRGL_CAP_V2_UNTYPED_RESOURCE);
+   }
 }
 
 /* ресурсы, в которые хост пишет сам (VIRGL_BIND_CUSTOM: результаты запросов), держат
@@ -243,14 +246,16 @@ static void present_setup(void)
 {
    present_ctx = vgl_create();
    vgl_make_current(present_ctx);
-   /* полноэкранный треугольник. Переворачивать не нужно: ресурсы 2D (Y_0_TOP) vrend при загрузке
-    * кладёт строками снизу вверх, как и то, что нарисовано GL */
+   /* полноэкранный треугольник. flip: строка 0 текстуры - верх экрана. Так у буферов GBM (glamor,
+    * kmscube: в памяти сверху вниз, как читает дисплей); ресурсы 2D (Y_0_TOP: dumb, fbdev, курсор)
+    * vrend при загрузке сам кладёт снизу вверх */
    static const char *vs =
       "#version 300 es\n"
+      "uniform bool flip;\n"
       "out vec2 tc;\n"
       "void main() {\n"
       "   vec2 p = vec2(float((gl_VertexID & 1) << 2) - 1.0, float((gl_VertexID & 2) << 1) - 1.0);\n"
-      "   tc = (p + 1.0) * 0.5;\n"
+      "   tc = vec2((p.x + 1.0) * 0.5, flip ? (1.0 - p.y) * 0.5 : (p.y + 1.0) * 0.5);\n"
       "   gl_Position = vec4(p, 0.0, 1.0);\n"
       "}\n";
    static const char *fs =
@@ -266,6 +271,7 @@ static void present_setup(void)
    glAttachShader(present_prog, compile(GL_FRAGMENT_SHADER, fs));
    glLinkProgram(present_prog);
    present_alpha = glGetUniformLocation(present_prog, "alpha");
+   present_flip = glGetUniformLocation(present_prog, "flip");
    glGenVertexArrays(1, &present_vao);
    glGenSamplers(1, &present_sampler);
    glSamplerParameteri(present_sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -289,6 +295,7 @@ EMSCRIPTEN_KEEPALIVE int vgw_present(uint32_t handle, int w, int h, uint32_t cur
    glViewport(0, 0, w, h);
    glUseProgram(present_prog);
    glUniform1i(present_alpha, 0);
+   glUniform1i(present_flip, !(info.flags & VIRGL_RESOURCE_Y_0_TOP));
    glBindVertexArray(present_vao);
    glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, info.tex_id);
@@ -302,6 +309,7 @@ EMSCRIPTEN_KEEPALIVE int vgw_present(uint32_t handle, int w, int h, uint32_t cur
       glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       glViewport(cx, h - cy - (int)ci.height, ci.width, ci.height);
       glUniform1i(present_alpha, 1);
+      glUniform1i(present_flip, !(ci.flags & VIRGL_RESOURCE_Y_0_TOP));
       glBindTexture(GL_TEXTURE_2D, ci.tex_id);
       glDrawArrays(GL_TRIANGLES, 0, 3);
       glDisable(GL_BLEND);
