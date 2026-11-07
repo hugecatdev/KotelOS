@@ -33,8 +33,8 @@ if [ "$(sha256sum $TAR 2>/dev/null | cut -d' ' -f1)" != $SUM ]; then
 fi
 rm -rf $SRC
 tar -xJf $TAR -C $CACHE
-# virgl (virpipe) под xlib GLX: показ кадра без контекста
-patch -d $SRC -p1 -s < patches/mesa-virgl-xlib-swap.patch
+# virgl (virpipe) под xlib GLX: показ кадра без контекста, чтение кадра в протоколе vtest 0
+for p in patches/mesa-*.patch; do patch -d $SRC -p1 -s < "$p"; done
 
 rm -rf $SR
 python3 - "$SR" $EXTRA <<'EOF'

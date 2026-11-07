@@ -19,7 +19,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 from run import Suite  # noqa: E402
 
-page = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "build/virgl/kt-virgl.html"))
+page = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "build/virgl-serve/index.html"))
 s = Suite(tempfile.mkdtemp(prefix="virgl-v86-"), None)
 print("машина готова за %.1f с" % s.open("file://" + page), flush=True)
 

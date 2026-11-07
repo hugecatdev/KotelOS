@@ -1,0 +1,21 @@
+virgl/vtest: no busy wait before inline readback (protocol < 2)
+
+flush_frontbuffer sent TRANSFER_GET, then BUSY_WAIT, and read the busy-wait reply
+first - but with protocol 0 the server answers TRANSFER_GET with the pixels at once.
+The first 12 bytes of the image were taken as the reply: the frame was shifted 3
+pixels left and the last columns showed stale row padding (xlib GLX + virpipe).
+
+--- a/src/gallium/winsys/virgl/vtest/virgl_vtest_winsys.c
++++ b/src/gallium/winsys/virgl/vtest/virgl_vtest_winsys.c
+@@ -123,7 +123,10 @@
+                                  level, stride, layer_stride,
+                                  box, size, buf_offset);
+ 
+-   if (flush_front_buffer || vtws->protocol_version >= 2)
++   /* Protocol < 2 returns the data inline, right after TRANSFER_GET, and the
++    * server reads it back synchronously: a busy wait here would read the
++    * first bytes of the pixels as its reply and shift the image. */
++   if (vtws->protocol_version >= 2)
+       virgl_vtest_busy_wait(vtws, res->res_handle, VCMD_BUSY_WAIT_FLAG_WAIT);
+ 
+    if (vtws->protocol_version >= 2) {
