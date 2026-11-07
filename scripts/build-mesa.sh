@@ -1,10 +1,12 @@
 #!/bin/sh
 # OpenGL без LLVM: mesa с GLX через Xlib (рисует картинкой через обычный X, расширение GLX серверу не
-# нужно) и программным softpipe - libGL.so.1 для Qt5 и простых OpenGL-программ. mesa из Alpine
-# тянет LLVM (llvmpipe) - вместе ~480 МБ. Версия - та же, что в Alpine. Собирается тулчейном musl
-# против заголовков Alpine x86 -> packages/mesa-xlib (в git не идёт)
-#   GALLIUM=softpipe,virgl - ещё драйвер virgl: GALLIUM_DRIVER=virpipe рисует через VirGL по
-#   протоколу vtest (сокет VTEST_SOCKET_NAME); libGL тогда требует libdrm.so.2
+# нужно) - libGL.so.1 для Qt5 и OpenGL-программ. Драйверы: virgl - 3D на странице (virtio-gpu,
+# /dev/dri/renderD128: кадр рисует WebGL2, Mesa читает его назад и показывает картинкой,
+# patches/mesa-virgl-drm-sw.patch), без устройства - программный softpipe (LIBGL_ALWAYS_SOFTWARE=1 -
+# всегда он). mesa из Alpine тянет LLVM (llvmpipe) - вместе ~480 МБ. Версия - та же, что в Alpine.
+# Собирается тулчейном musl против заголовков Alpine x86 -> packages/mesa-xlib (в git не идёт)
+#   GALLIUM=softpipe - без virgl (и без libdrm.so.2); с virgl есть и GALLIUM_DRIVER=virpipe: VirGL
+#   по протоколу vtest (сокет VTEST_SOCKET_NAME)
 #   OUT=каталог, MESA_BUILD=каталог сборки - чтобы такой вариант не перезаписал пакет
 #   API=dri - вместо GLX через Xlib: DRI (GLX через сервер X с DRI3, EGL, GBM, GLES) - драйвер
 #   virgl рисует через /dev/dri (virtio-gpu); драйверы - libgallium и usr/lib/dri
@@ -18,7 +20,7 @@ SRC=$CACHE/mesa-$VER
 SR=$CACHE/msysroot
 B=${MESA_BUILD:-$CACHE/mesa-build}
 OUT=${OUT:-$PWD/packages/mesa-xlib}
-GALLIUM=${GALLIUM:-softpipe}
+GALLIUM=${GALLIUM:-softpipe,virgl}
 API=${API:-xlib}
 EXTRA=
 case ,$GALLIUM, in *,virgl,*) EXTRA=libdrm-dev ;; esac

@@ -18,6 +18,14 @@ CONFIG_DRM_BOCHS=y
 CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_FB=y
 CONFIG_FB_DEVICE=y
+# 3D для программ OpenGL: virtio-gpu (virglrenderer в wasm на странице). При экране VGA устройство
+# без своего экрана - ядро даёт только /dev/dri/renderD128 («KMS disabled»), Mesa рисует через него
+# и показывает кадры в X сама. virtio в v86 современный (VIRTIO_F_VERSION_1, без MSI-X) - legacy-часть
+# virtio_pci не нужна. +20 КиБ ядра
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO_PCI=y
+# CONFIG_VIRTIO_PCI_LEGACY is not set
+CONFIG_DRM_VIRTIO_GPU=y
 # клавиатура и мышь PS/2 для экрана; мышь VMware - абсолютная (касание и курсор точно в точку)
 CONFIG_INPUT=y
 CONFIG_INPUT_EVDEV=y

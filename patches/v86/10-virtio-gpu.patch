@@ -16,13 +16,13 @@
      settings.virtio_balloon = options.virtio_balloon;
      settings.virtio_console = !!options.virtio_console;
 +    /* #if virtio_gpu */
-+    // { source, wasm, canvas, width, height }: see src/virtio_gpu.js
++    // { source, wasm | wasm_gz, canvas, width, height, display }: see src/virtio_gpu.js
 +    settings.virtio_gpu = options.virtio_gpu;
 +    /* #endif */
  
      const relay_url = options.network_relay_url || options.net_device && options.net_device.relay_url;
      if(relay_url)
-@@ -1881,6 +1885,17 @@
+@@ -1881,6 +1885,18 @@
      {
          if(send[name] instanceof ArrayBuffer) transfer.add(send[name]);
      }
@@ -35,6 +35,7 @@
 +            transfer.add(send.virtio_gpu.canvas);
 +        }
 +        if(send.virtio_gpu.wasm instanceof ArrayBuffer) transfer.add(send.virtio_gpu.wasm);
++        if(send.virtio_gpu.wasm_gz instanceof Uint8Array) transfer.add(send.virtio_gpu.wasm_gz.buffer);
 +    }
 +    /* #endif */
      settings.initial_state = undefined;
@@ -100,7 +101,7 @@
          if(true)
 --- a/src/virtio_gpu.js
 +++ b/src/virtio_gpu.js
-@@ -0,0 +1,845 @@
+@@ -0,0 +1,890 @@
 +import { dbg_assert, dbg_log } from "./log.js";
 +import { LOG_VIRTIO } from "./const.js";
 +import { VirtIO, VIRTIO_F_VERSION_1 } from "./virtio.js";
@@ -114,9 +115,14 @@
 +//
 +// settings.virtio_gpu = {
 +//     source: text of the emscripten module (defines createVirgl),
-+//     wasm: its wasm binary (ArrayBuffer),
++//     wasm: its wasm binary (ArrayBuffer), or wasm_gz: the same gzipped (Uint8Array, unpacked when
++//         the renderer starts),
 +//     canvas: HTMLCanvasElement or OffscreenCanvas (transferred when v86 runs in a worker),
 +//     width, height: initial size of the scanout,
++//     display: false - no scanouts, only 3D (the screen is another adapter, e.g. VGA): the guest
++//         gets a render node, programs show their frames through it themselves (Mesa reads them
++//         back); the renderer and its WebGL2 context (on its own OffscreenCanvas) start with the
++//         first command that needs them, so a machine that runs no OpenGL pays nothing,
 +// }
 +//
 +// The guest memory lives in v86's wasm memory, virglrenderer has its own: resources don't get
@@ -167,6 +173,10 @@
 +const MAX_SCANOUTS = 16;
 +// capset ids: VIRGL (v1 caps) and VIRGL2 (v2 caps)
 +const CAPSETS = [1, 2];
++// their max version and size (struct virgl_caps_v1 / v2 of virglrenderer 1.3.0), as
++// virgl_renderer_get_cap_set gives them before virgl_renderer_init: the kernel asks at boot, the
++// renderer may not be loaded yet (checked once it is)
++const CAPSET_INFO = { 1: [1, 308], 2: [2, 1408] };
 +
 +const PIPE_BUFFER = 0;
 +const PIPE_TEXTURE_2D = 2;
@@ -189,7 +199,9 @@
 +
 +    this.width = settings.width || 1024;
 +    this.height = settings.height || 768;
-+    this.canvas = settings.canvas;
++    this.settings = settings;
++    this.display = settings.display !== false;
++    this.canvas = settings.canvas || null;
 +    this.events_read = 0;
 +
 +    // id -> { id, target, width, height, format, bind, flags, is_3d, backing: [[addr, len], ...], shadow, shadow_size }
@@ -217,7 +229,9 @@
 +    /** @type {Object} the emscripten module, once loaded */
 +    this.gl = null;
 +    this.ready = false;
-+    this.pending_notify = false;
++    this.loading = false;
++    // requests that wait for the renderer, in order: [queue_id, bufchain, request]
++    this.held = [];
 +    this.restore_2d = null;
 +
 +    this.virtio = new VirtIO(cpu,
@@ -275,7 +289,7 @@
 +                {
 +                    bytes: 4,
 +                    name: "num_scanouts",
-+                    read: () => 1,
++                    read: () => this.display ? 1 : 0,
 +                    write: data => { /* read only */ },
 +                },
 +                {
@@ -293,38 +307,60 @@
 +        this.resize(size[0], size[1]);
 +    }, this);
 +
-+    this.load(settings);
++    // with a display the renderer is needed at once (the console and X are drawn by it)
++    if(this.display) this.load();
 +}
 +
 +/**
-+ * The renderer loads asynchronously: requests that come earlier wait for it
++ * The renderer loads asynchronously, once: requests that come earlier wait for it
 + */
-+VirtioGPU.prototype.load = function(settings)
++VirtioGPU.prototype.load = function()
 +{
++    if(this.loading) return;
++    this.loading = true;
++    const settings = this.settings;
 +    const start = Date.now();
-+    const factory = new Function(settings.source + "\n;return createVirgl;")();
-+    factory({
-+        "wasmBinary": settings.wasm,
-+        "print": (text) => console.log("virgl:", text),
-+        "printErr": (text) => console.warn("virgl:", text),
++    const wasm = settings.wasm_gz ?
++        new Response(new Blob([settings.wasm_gz]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer() :
++        Promise.resolve(settings.wasm);
++    wasm.then(binary => {
++        settings.wasm = settings.wasm_gz = null;
++        const factory = new Function(settings.source + "\n;return createVirgl;")();
++        return factory({
++            "wasmBinary": binary,
++            "print": (text) => console.log("virgl:", text),
++            "printErr": (text) => console.warn("virgl:", text),
++        });
 +    }).then(gl => {
++        if(!this.canvas) this.canvas = new OffscreenCanvas(1, 1);
 +        gl["startGPU"](this.canvas);
 +        gl["onFence"] = (fence) => this.fence_signaled(fence);
 +        this.gl = gl;
 +        this.ready = true;
 +        this.load_ms = Date.now() - start;
++        for(const id of CAPSETS)
++        {
++            const info = this.call_out(8, p => gl["_vgw_capset_info"](id, p));
++            const v = [info.getUint32(0, true), info.getUint32(4, true)];
++            if(v[0] !== CAPSET_INFO[id][0] || v[1] !== CAPSET_INFO[id][1])
++                console.warn("virtio-gpu: capset " + id + " is " + v + ", not " + CAPSET_INFO[id] + " (CAPSET_INFO)");
++        }
 +        if(this.restore_2d)
 +        {
 +            this.restore_resources(this.restore_2d);
 +            this.restore_2d = null;
 +        }
-+        this.canvas_size(this.width, this.height);
-+        if(this.pending_notify)
++        if(this.display) this.canvas_size(this.width, this.height);
++        const held = this.held;
++        this.held = [];
++        const queues = new Set();
++        for(const [queue_id, bufchain, request] of held)
 +        {
-+            this.pending_notify = false;
-+            this.notify(0);
-+            this.notify(1);
++            if(this.handle(queue_id, bufchain, request)) queues.add(queue_id);
 +        }
++        for(const queue_id of queues) this.virtio.queues[queue_id].flush_replies();
++        this.notify(0);
++        this.notify(1);
 +        console.log("virtio-gpu: renderer ready in " + this.load_ms + " ms");
 +    }).catch(err => {
 +        console.error("virtio-gpu: virglrenderer did not start: " + (err && err.stack || err));
@@ -346,7 +382,7 @@
 + */
 +VirtioGPU.prototype.resize = function(width, height)
 +{
-+    if(width === this.width && height === this.height) return;
++    if(!this.display || width === this.width && height === this.height) return;
 +    this.width = width;
 +    this.height = height;
 +    this.events_read |= EVENT_DISPLAY;
@@ -355,11 +391,6 @@
 +
 +VirtioGPU.prototype.notify = function(queue_id)
 +{
-+    if(!this.ready)
-+    {
-+        this.pending_notify = true;
-+        return;
-+    }
 +    const queue = this.virtio.queues[queue_id];
 +    let replied = false;
 +    while(queue.has_request())
@@ -368,40 +399,56 @@
 +        const request = new Uint8Array(bufchain.length_readable);
 +        bufchain.get_next_blob(request);
 +        const view = new DataView(request.buffer);
-+        const type = view.getUint32(0, true);
-+        const flags = view.getUint32(4, true);
-+        const fence_id = view.getUint32(8, true);
-+        const ctx_id = view.getUint32(16, true);
-+
-+        const response = this.command(type, view, request, ctx_id);
-+        const key = type.toString(16) + ">" + new DataView(response.buffer).getUint32(0, true).toString(16);
-+        this.stats[key] = (this.stats[key] || 0) + 1;
-+        // response header: type, flags, fence_id and ctx_id of the request
-+        const out = new DataView(response.buffer);
-+        out.setUint32(4, flags & FLAG_FENCE, true);
-+        out.setUint32(8, fence_id, true);
-+        out.setUint32(12, view.getUint32(12, true), true);
-+        out.setUint32(16, ctx_id, true);
-+
-+        if(flags & FLAG_FENCE)
++        if(!this.ready && (this.held.length || view.getUint32(0, true) !== CMD_GET_CAPSET_INFO ||
++                           view.getUint32(4, true) & FLAG_FENCE))
 +        {
-+            // the guest waits for its fence ids in order: answer after the renderer's fence,
-+            // fences of the renderer complete in order too
-+            this.fenced.push([fence_id, queue_id, bufchain, response]);
-+            this.gl["_vgw_fence"](fence_id, 0);
-+            this.poll_fences();
++            // needs the renderer: waits for it (and everything after it, to keep the order)
++            this.held.push([queue_id, bufchain, request]);
++            this.load();
++            continue;
 +        }
-+        else
-+        {
-+            bufchain.set_next_blob(response);
-+            queue.push_reply(bufchain);
-+            replied = true;
-+        }
++        if(this.handle(queue_id, bufchain, request)) replied = true;
 +    }
 +    if(replied)
 +    {
 +        queue.flush_replies();
 +    }
++};
++
++/**
++ * One request: run it, answer at once or after its fence. True if the reply was pushed (the
++ * caller flushes the queue)
++ */
++VirtioGPU.prototype.handle = function(queue_id, bufchain, request)
++{
++    const view = new DataView(request.buffer);
++    const type = view.getUint32(0, true);
++    const flags = view.getUint32(4, true);
++    const fence_id = view.getUint32(8, true);
++    const ctx_id = view.getUint32(16, true);
++
++    const response = this.command(type, view, request, ctx_id);
++    const key = type.toString(16) + ">" + new DataView(response.buffer).getUint32(0, true).toString(16);
++    this.stats[key] = (this.stats[key] || 0) + 1;
++    // response header: type, flags, fence_id and ctx_id of the request
++    const out = new DataView(response.buffer);
++    out.setUint32(4, flags & FLAG_FENCE, true);
++    out.setUint32(8, fence_id, true);
++    out.setUint32(12, view.getUint32(12, true), true);
++    out.setUint32(16, ctx_id, true);
++
++    if(flags & FLAG_FENCE)
++    {
++        // the guest waits for its fence ids in order: answer after the renderer's fence,
++        // fences of the renderer complete in order too
++        this.fenced.push([fence_id, queue_id, bufchain, response]);
++        this.gl["_vgw_fence"](fence_id, 0);
++        this.poll_fences();
++        return false;
++    }
++    bufchain.set_next_blob(response);
++    this.virtio.queues[queue_id].push_reply(bufchain);
++    return true;
 +};
 +
 +/**
@@ -593,13 +640,12 @@
 +        {
 +            const index = u32(24);
 +            if(index >= CAPSETS.length) return response_nodata(RESP_ERR_INVALID_PARAMETER);
-+            const info = this.call_out(8, p => gl["_vgw_capset_info"](CAPSETS[index], p));
 +            const r = new Uint8Array(HDR_SIZE + 16);
 +            const out = new DataView(r.buffer);
 +            out.setUint32(0, RESP_OK_CAPSET_INFO, true);
 +            out.setUint32(24, CAPSETS[index], true);
-+            out.setUint32(28, info.getUint32(0, true), true);
-+            out.setUint32(32, info.getUint32(4, true), true);
++            out.setUint32(28, CAPSET_INFO[CAPSETS[index]][0], true);
++            out.setUint32(32, CAPSET_INFO[CAPSETS[index]][1], true);
 +            return r;
 +        }
 +

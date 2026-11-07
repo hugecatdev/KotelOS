@@ -1,0 +1,244 @@
+--- a/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
++++ b/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
+@@ -23,6 +23,7 @@
+ #ifdef GALLIUM_VIRGL
+ #include "virgl/virgl_public.h"
+ #include "virgl/vtest/virgl_vtest_public.h"
++#include "virgl/drm/virgl_drm_public.h"
+ #endif
+ 
+ #ifdef GALLIUM_D3D12
+@@ -45,6 +46,12 @@
+       vws = virgl_vtest_winsys_wrap(winsys);
+       screen = virgl_create_screen(vws, NULL);
+    }
++   /* virgl on the virtio-gpu render node, frames shown through this winsys */
++   if (screen == NULL && strcmp(driver, "virgl") == 0) {
++      struct virgl_winsys *vws = virgl_drm_winsys_wrap_sw(winsys);
++      if (vws)
++         screen = virgl_create_screen(vws, NULL);
++   }
+ #endif
+ 
+ #if defined(GALLIUM_SOFTPIPE)
+@@ -72,6 +79,10 @@
+    UNUSED bool only_sw = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+    const char *drivers[] = {
+       (sw_vk ? "" : debug_get_option("GALLIUM_DRIVER", "")),
++#if defined(GALLIUM_VIRGL)
++      /* a virtio-gpu with 3D, if there is one; otherwise on to the software ones */
++      (sw_vk || only_sw) ? "" : "virgl",
++#endif
+ #if defined(GALLIUM_D3D12)
+       (sw_vk || only_sw) ? "" : "d3d12",
+ #endif
+--- a/src/gallium/auxiliary/target-helpers/sw_helper.h
++++ b/src/gallium/auxiliary/target-helpers/sw_helper.h
+@@ -31,6 +31,7 @@
+ #ifdef GALLIUM_VIRGL
+ #include "virgl/virgl_public.h"
+ #include "virgl/vtest/virgl_vtest_public.h"
++#include "virgl/drm/virgl_drm_public.h"
+ #endif
+ 
+ static inline struct pipe_screen *
+@@ -49,6 +50,12 @@
+       vws = virgl_vtest_winsys_wrap(winsys);
+       screen = virgl_create_screen(vws, NULL);
+    }
++   /* virgl on the virtio-gpu render node, frames shown through this winsys */
++   if (screen == NULL && strcmp(driver, "virgl") == 0) {
++      struct virgl_winsys *vws = virgl_drm_winsys_wrap_sw(winsys);
++      if (vws)
++         screen = virgl_create_screen(vws, NULL);
++   }
+ #endif
+ 
+ #if defined(GALLIUM_SOFTPIPE)
+@@ -75,6 +82,10 @@
+    UNUSED bool only_sw = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+    const char *drivers[] = {
+       (sw_vk ? "" : debug_get_option("GALLIUM_DRIVER", "")),
++#if defined(GALLIUM_VIRGL)
++      /* a virtio-gpu with 3D, if there is one; otherwise on to the software ones */
++      (sw_vk || only_sw) ? "" : "virgl",
++#endif
+ #if defined(GALLIUM_D3D12)
+       (sw_vk || only_sw) ? "" : "d3d12",
+ #endif
+--- a/src/gallium/winsys/virgl/drm/virgl_drm_public.h
++++ b/src/gallium/winsys/virgl/drm/virgl_drm_public.h
+@@ -27,4 +27,12 @@
+ 
+ struct pipe_screen *virgl_drm_screen_create(int fd, const struct pipe_screen_config *config);
+ 
++struct sw_winsys;
++struct virgl_winsys;
++
++/* virgl on the virtio-gpu render node under a software winsys (xlib GLX,
++ * drisw): rendering on the host, frames read back and shown by the sw winsys,
++ * so the X server needs neither DRI3 nor GLX. NULL without such a device. */
++struct virgl_winsys *virgl_drm_winsys_wrap_sw(struct sw_winsys *sws);
++
+ #endif
+--- a/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c
++++ b/src/gallium/winsys/virgl/drm/virgl_drm_winsys.c
+@@ -37,7 +37,9 @@
+ #include "util/u_hash_table.h"
+ #include "util/u_inlines.h"
+ #include "util/u_pointer.h"
++#include "util/box.h"
+ #include "frontend/drm_driver.h"
++#include "frontend/sw_winsys.h"
+ #include "virgl/virgl_screen.h"
+ #include "virgl/virgl_public.h"
+ #include "virtio-gpu/virgl_protocol.h"
+@@ -89,6 +91,8 @@
+                                 (void *)(uintptr_t)res->flink_name);
+       if (res->ptr)
+          os_munmap(res->ptr, res->size);
++      if (res->dt)
++         qdws->sws->displaytarget_destroy(qdws->sws, res->dt);
+ 
+       drmCloseBufferHandle(qdws->fd, res->bo_handle);
+ 
+@@ -462,6 +466,18 @@
+                                              height, depth, array_size,
+                                              last_level, nr_samples, size,
+                                              need_sync);
++
++   /* under a sw winsys a display target also gets the picture it shows */
++   if (res && qdws->sws &&
++       (bind & (VIRGL_BIND_DISPLAY_TARGET | VIRGL_BIND_SCANOUT))) {
++      res->dt = qdws->sws->displaytarget_create(qdws->sws, bind, format,
++                                                width, height, 64,
++                                                map_front_private,
++                                                &res->dt_stride);
++      res->format = format;
++      res->width = width;
++      res->height = height;
++   }
+    return res;
+ }
+ 
+@@ -1285,6 +1301,86 @@
+ 
+ }
+ 
++/* Show a frame: read the box back from the host into the guest copy (the
++ * implicit stride is width * cpp), copy it into the display target, show it. */
++static void
++virgl_drm_sw_flush_frontbuffer(struct virgl_winsys *vws,
++                               UNUSED struct virgl_cmd_buf *cmdbuf,
++                               struct virgl_hw_res *res,
++                               unsigned level, unsigned layer,
++                               void *winsys_drawable_handle,
++                               struct pipe_box *sub_box)
++{
++   struct sw_winsys *sws = virgl_drm_winsys(vws)->sws;
++   uint32_t cpp = util_format_get_blocksize(res->format);
++   uint32_t stride = res->width * cpp;
++   struct pipe_box box;
++   uint8_t *src, *dst;
++
++   if (!res->dt)
++      return;
++   if (sub_box) {
++      box = *sub_box;
++      box.z = layer;
++      box.depth = 1;
++   } else {
++      u_box_3d(0, 0, layer, res->width, res->height, 1, &box);
++   }
++   if (box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 ||
++       box.x + box.width > (int)res->width || box.y + box.height > (int)res->height)
++      return;
++
++   uint32_t offset = box.y * stride + box.x * cpp;
++   virgl_bo_transfer_get(vws, res, &box, stride, 0, offset, level);
++   virgl_drm_resource_wait(vws, res);
++   src = virgl_drm_resource_map(vws, res);
++   dst = sws->displaytarget_map(sws, res->dt, PIPE_MAP_WRITE);
++   if (src && dst) {
++      for (int y = 0; y < box.height; y++)
++         memcpy(dst + (box.y + y) * res->dt_stride + box.x * cpp,
++                src + offset + y * stride, box.width * cpp);
++   }
++   if (dst)
++      sws->displaytarget_unmap(sws, res->dt);
++   sws->displaytarget_display(sws, res->dt, winsys_drawable_handle,
++                              !!sub_box, sub_box);
++}
++
++static void
++virgl_drm_sw_winsys_destroy(struct virgl_winsys *qws)
++{
++   int fd = virgl_drm_winsys(qws)->fd;
++
++   virgl_drm_winsys_destroy(qws);
++   close(fd);
++}
++
++struct virgl_winsys *
++virgl_drm_winsys_wrap_sw(struct sw_winsys *sws)
++{
++   for (int i = 0; i < 8; i++) {
++      char path[32];
++      snprintf(path, sizeof(path), "/dev/dri/renderD%d", 128 + i);
++      int fd = open(path, O_RDWR | O_CLOEXEC);
++      if (fd < 0)
++         continue;
++
++      drmVersionPtr v = drmGetVersion(fd);
++      bool virtio = v && v->name && !strcmp(v->name, "virtio_gpu");
++      drmFreeVersion(v);
++
++      struct virgl_winsys *vws = virtio ? virgl_drm_winsys_create(fd) : NULL;
++      if (vws) {
++         virgl_drm_winsys(vws)->sws = sws;
++         vws->destroy = virgl_drm_sw_winsys_destroy;
++         vws->flush_frontbuffer = virgl_drm_sw_flush_frontbuffer;
++         return vws;
++      }
++      close(fd);
++   }
++   return NULL;
++}
++
+ static struct hash_table *fd_tab = NULL;
+ static simple_mtx_t virgl_screen_mutex = SIMPLE_MTX_INITIALIZER;
+ 
+--- a/src/gallium/winsys/virgl/drm/virgl_drm_winsys.h
++++ b/src/gallium/winsys/virgl/drm/virgl_drm_winsys.h
+@@ -34,6 +34,9 @@
+ struct pipe_fence_handle;
+ struct hash_table;
+ 
++struct sw_winsys;
++struct sw_displaytarget;
++
+ struct virgl_hw_res {
+    struct pipe_reference reference;
+    enum pipe_texture_target target;
+@@ -57,6 +60,12 @@
+    /* false when the resource is known to be idle */
+    int maybe_busy;
+    uint32_t blob_mem;
++
++   /* virgl_drm_winsys_wrap_sw: the picture the sw winsys shows (a copy read
++    * back from the host on flush_frontbuffer) and what is needed to read it */
++   struct sw_displaytarget *dt;
++   uint32_t dt_stride;
++   uint32_t format, width, height;
+ };
+ 
+ 
+@@ -96,6 +105,8 @@
+    mtx_t mutex;
+ 
+    int32_t blob_id;
++   /* set by virgl_drm_winsys_wrap_sw: frames go out through it */
++   struct sw_winsys *sws;
+    struct hash_table *bo_handles;
+    struct hash_table *bo_names;
+    mtx_t bo_handles_mutex;

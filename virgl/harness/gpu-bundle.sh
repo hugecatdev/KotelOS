@@ -1,7 +1,7 @@
 #!/bin/sh
 # Пробный бандл с virtio-gpu (VirGL): v86 с устройством (DEVICES=virtio_gpu -> build/v86-gpu), ядро
-# с virtio-gpu (config/virtio-gpu.fragment -> build/kernel-virtio, собрать заранее:
-#   EXTRA_FRAGMENT=config/virtio-gpu.fragment scripts/build-kernel.sh build/kernel-virtio/bzImage),
+# с virtio-gpu (в config/kernel.fragment; ядро - build/kernel-virtio, собрать заранее:
+#   scripts/build-kernel.sh build/kernel-virtio/bzImage),
 # virglrenderer (scripts/build-virgl.sh -> build/virgl), дерево гостя build/virgl-guest/fs.
 # GUEST=дерево гостя (по умолчанию build/virgl-guest/fs), PKGS=пакеты. Общие images/ и site/ только
 # читаются.

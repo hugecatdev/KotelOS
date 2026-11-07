@@ -21,10 +21,11 @@ scripts/build-openblas.sh       # openblas под SSE2, LAPACK на C -> build/p
 scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> build/packages/python-numpy (его зовёт get-packages.sh)
 scripts/build-doom.sh           # doom -> packages/doom, doom1.wad -> build/packages/doom-shareware (его зовёт get-packages.sh)
 scripts/build-xorg.sh           # Xorg без OpenGL -> packages/xorg (его зовёт get-packages.sh)
-scripts/build-mesa.sh           # libGL без LLVM (softpipe через Xlib) -> packages/mesa-xlib (его зовёт get-packages.sh)
+scripts/build-mesa.sh           # libGL без LLVM (GLX через Xlib, драйверы virgl и softpipe) -> packages/mesa-xlib (его зовёт get-packages.sh)
 scripts/build-dwm.sh            # dwm, st, feh -> packages/..., dwm-studio -> bundles/qt (его зовёт get-packages.sh)
 scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)
 scripts/build-v86.sh            # v86 из исходников + patches/v86/ -> vendor/v86/ (Rust с wasm32 и Closure Compiler качает в .cache/)
+scripts/build-virgl.sh          # virglrenderer и libepoxy в wasm + patches/virgl/ -> vendor/virgl/ (Emscripten качает в .cache/), 3D для OpenGL
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
 python3 tests/run.py            # тесты моста в headless Chromium (--build - сначала собрать, -k имя - выборочно)
 python3 tests/mpl.py            # matplotlib с patches/matplotlib.patch против исходного: те же картинки (--time - время кадров на хосте)
@@ -80,12 +81,15 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   - `09-tcp-fin-with-data.patch` - TCP страницы не теряет данные, пришедшие
     в одном сегменте с FIN (с воркером так было на каждом длинном `kt js`).
 
-  Устройства, которые нашему ядру не нужны, в `libv86.js` не попадают: 192 КБ
-  вместо 361 (gzip 54 вместо 94). Вернуть - `DEVICES="ide sound"
+  Устройства, которые нашему ядру не нужны, в `libv86.js` не попадают: 224 КБ
+  вместо 361. По умолчанию из них есть только `virtio_gpu` (3D для программ
+  OpenGL, `10-virtio-gpu.patch`, см. [screen.md](screen.md)): без него было бы 192 КБ
+  (gzip 54 вместо 94), это `DEVICES= scripts/build-v86.sh`, и такая сборка побайтно
+  та же, что до virtio-gpu. Вернуть - `DEVICES="ide sound"
   scripts/build-v86.sh`, все - `DEVICES=all`. Имена: `floppy`, `ide` (диски и
   CD-ROM), `sound` (SB16 и звук в браузере), `virtio` (сеть, консоль, balloon),
   `9p` (файловая система), `parallel`, `acpi` (с ним и APIC), `modem`,
-  `multiboot` (загрузка ELF); DMA скрипт добавит сам для `floppy` и `sound`.
+  `multiboot` (загрузка ELF), `virtio_gpu`; DMA скрипт добавит сам для `floppy` и `sound`.
   Устройство, которого нет в сборке, но которое просят в настройках v86
   (`fda`, `cdrom`, `filesystem`, сеть `virtio`...), - ошибка «v86 built without
   ...». Ядру для них нужны и свои драйверы (`config/kernel.fragment`). Всегда

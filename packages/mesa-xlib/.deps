@@ -1,1 +1,1 @@
-libstdc++ libgcc libx11 libxext zlib
+libstdc++ libgcc libx11 libxext zlib libdrm

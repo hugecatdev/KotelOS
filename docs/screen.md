@@ -2,7 +2,8 @@
 
 Терминал машины - последовательный порт, а видеокарта v86 (Bochs VBE, PCI
 1234:1111) обычно лежит без дела с минимальной видеопамятью. Экран её
-включает: в машине появляются `/dev/fb0` и `/dev/dri/card0`, а страница
+включает: в машине появляются `/dev/fb0` и карта KMS в `/dev/dri` (`card1`, если
+есть virtio-gpu для 3D, см. «OpenGL»), а страница
 показывает картинку поверх терминала.
 
 ## Включить
@@ -168,10 +169,39 @@ ISO8859-1, как везде: xterm в UTF-8 сам берёт Юникод-ве
 
 В сервере OpenGL нет, но программам он доступен: `mesa-xlib` - mesa 25.1.9 из
 `scripts/build-mesa.sh`, GLX через Xlib (кадр уходит в X обычной картинкой,
-расширение GLX серверу не нужно) и программный softpipe, без LLVM.
-`glxinfo` - «Mesa, softpipe, OpenGL 3.3», `glxgears` в окне 300x300 - ~6
-кадров в секунду (ПК). mesa из Alpine - llvmpipe с LLVM, вместе ~480 МБ, а
-`mesa-xlib` - одна `libGL.so.1`: 17 МБ в машине, 3.5 МБ в репозитории.
+расширение GLX серверу не нужно), без LLVM. mesa из Alpine - llvmpipe с LLVM,
+вместе ~480 МБ, а `mesa-xlib` - одна `libGL.so.1`: 18 МБ в машине, 3.7 МБ в
+репозитории. Драйвер Mesa выбирает сама:
+
+- **virgl - 3D на странице.** В бандле с экраном (`--vga`) у машины есть ещё
+  virtio-gpu без своего экрана (`patches/v86/10-virtio-gpu.patch`): ядро даёт
+  только `/dev/dri/renderD128` («KMS disabled»), команды OpenGL уходят в
+  virglrenderer, собранный в wasm (`vendor/virgl`, `scripts/build-virgl.sh`), и
+  он рисует их через WebGL2 вкладки. Готовый кадр Mesa читает назад и
+  показывает в X картинкой (`patches/mesa-virgl-drm-sw.patch`). virglrenderer и
+  контекст WebGL2 поднимаются при первой программе OpenGL (~0.1 с), до того
+  памяти не стоят; бандл больше на 0.4 МБ. `glxinfo -B` - «virgl (... WebGL)»,
+  OpenGL 2.1: WebGL2 - это GLES 3.0, без буферных текстур и геометрических
+  шейдеров.
+- **softpipe - программный**: без virtio-gpu (бандл с `--no-3d`, ядро без
+  `DRM_VIRTIO_GPU`) или с `LIBGL_ALWAYS_SOFTWARE=1`. «Mesa, softpipe, OpenGL
+  3.3» - программам, которым нужен OpenGL 3.x, только он.
+
+Кадров в секунду, X на VGA, ПК (headless Chromium), mesa-demos:
+
+| | glxgears | gloss | teapot | terrain | fire | fbo_firecube | engine | ipers |
+|---|---|---|---|---|---|---|---|---|
+| virgl | 58 | 42 | 13.3 | 12.2 | 10.3 | 8.4 | 8.2 | 0.6 |
+| softpipe | 9.4 | 0.65 | 0.23 | 0.36 | 0.06 | 0.11 | 1.0 | 0.07 |
+
+Выигрывают программы, где много пикселей и текстур (в 20-170 раз); где упор
+в вершины, которые программа сама считает на процессоре (`ipers`, `engine`), -
+в 8-9 раз. Qt Widgets (Designer) рисует без OpenGL и так не ускорится: у него
+~94% времени - сам процесс, X - ~6% (`virgl/guest/xresize.c`).
+
+3D в сохранение не попадает (его состояние живёт в WebGL): `kt save` при
+запущенной программе OpenGL предупреждает, после восстановления её надо
+запустить заново.
 
 С ней работает Qt5 из Alpine: его `libQt5Gui` требует `libGL`. Индекс `kt pkg`
 (`build.sh`, `--alias mesa-gl=mesa-xlib`) подставляет `mesa-xlib` вместо mesa

@@ -1,7 +1,9 @@
 #!/bin/sh
 # VirGL в браузере: virglrenderer (vrend) и libepoxy, собранные Emscripten в wasm. vrend идёт по
 # своей ветке для хоста GLES, Emscripten переводит GLES 3.0 в WebGL2. Контексты GL даёт страница
-# (колбэки virgl_renderer_callbacks), EGL/GLX/GBM и libdrm не нужны. Результат -> build/virgl
+# (колбэки virgl_renderer_callbacks), EGL/GLX/GBM и libdrm не нужны. Результат -> vendor/virgl (лежит в
+# git, как vendor/v86: бандлам Emscripten не нужен; сборка воспроизводима - тот же sha256), OUT=каталог -
+# собрать в другое место
 set -e
 cd "$(dirname "$0")/.."
 
@@ -14,7 +16,7 @@ EPOXY=1.5.10
 EPOXY_SUM=a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15
 B=$CACHE/virgl-build
 P=$B/prefix
-OUT=$PWD/build/virgl
+OUT=${OUT:-$PWD/vendor/virgl}
 
 # через .tmp и с проверкой суммы: оборванная загрузка не остаётся в кэше «готовым» архивом
 fetch() {
@@ -37,7 +39,8 @@ if ! "$EMSDK/upstream/emscripten/emcc" --version 2>/dev/null | grep -q " $EMVER 
 fi
 EMSDK_QUIET=1 . "$EMSDK/emsdk_env.sh"
 
-# модуль страницы: сервер vtest (virgl/vtest_web.c) + vrend + epoxy -> build/virgl/virgl.{js,wasm}
+# модуль страницы: сервер vtest (virgl/vtest_web.c), устройство virtio-gpu (virgl/vgpu_web.c) + vrend +
+# epoxy -> $OUT/virgl.{js,wasm}
 link() {
   S=$B/virglrenderer-$VIRGL
   mkdir -p $OUT

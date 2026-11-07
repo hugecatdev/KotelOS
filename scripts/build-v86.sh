@@ -12,10 +12,11 @@ CLOSURE_VER=v20210601  # Makefile v86: новее не брать, google/closur
 CACHE=.cache
 SRC=$CACHE/v86-$REV
 OUT=${OUT:-vendor/v86}
-# устройства по выбору (patches/v86/06): floppy ide sound virtio 9p parallel acpi modem multiboot,
-# all - все; по умолчанию ни одного - ядру они не нужны. Пример: DEVICES="ide sound" scripts/build-v86.sh
-DEVICES=${DEVICES-}
-[ "$DEVICES" = all ] && DEVICES="floppy ide sound virtio 9p parallel acpi modem multiboot"
+# устройства по выбору (patches/v86/06): floppy ide sound virtio 9p parallel acpi modem multiboot
+# virtio_gpu, all - все; по умолчанию virtio_gpu (3D для программ OpenGL, patches/v86/10), остальные
+# ядру не нужны. Пример: DEVICES="virtio_gpu ide sound" scripts/build-v86.sh, без них - DEVICES=
+DEVICES=${DEVICES-virtio_gpu}
+[ "$DEVICES" = all ] && DEVICES="floppy ide sound virtio 9p parallel acpi modem multiboot virtio_gpu"
 case " $DEVICES " in *" floppy "* | *" sound "*) DEVICES="$DEVICES dma" ;; esac
 
 mkdir -p $CACHE

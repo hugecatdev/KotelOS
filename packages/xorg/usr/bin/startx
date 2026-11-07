@@ -1,5 +1,5 @@
 #!/bin/sh
-# X на экране: Xorg без OpenGL (KMS /dev/dri/card0), клавиатура и мышь - evdev; сессия -
+# X на экране: Xorg без OpenGL (KMS, карта с разъёмом), клавиатура и мышь - evdev; сессия -
 # ~/.xinitrc, без него twm и xterm. Выход из сессии - обратно в терминал.
 # Размер: startx 1024x768 - свой, постоянный; без него - тот, что даёт страница (kt screen size: место
 # под экран, видеопамять, kt cfg screen.scale), и он идёт за страницей: окно браузера поменяло размер
@@ -34,6 +34,17 @@ for e in /sys/class/input/event*; do
   fi
 done
 
+# экран - карта DRM с разъёмом (cardN-Virtual-1): у virtio-gpu без своего экрана (только 3D) их
+# нет, а номер у неё может быть меньше, чем у VGA
+card=
+for c in /sys/class/drm/card*-*; do
+  [ -e "$c" ] || continue
+  c=${c##*/}
+  card=/dev/dri/${c%%-*}
+  break
+done
+[ -n "$card" ] || { echo "startx: нет экрана (карты KMS в /sys/class/drm)" >&2; exit 1; }
+
 conf=/tmp/xorg.conf
 cat > $conf <<EOF
 Section "Files"
@@ -59,7 +70,7 @@ EndSection
 Section "Device"
   Identifier "card"
   Driver "modesetting"
-  Option "kmsdev" "/dev/dri/card0"
+  Option "kmsdev" "$card"
   Option "Monitor-Virtual-1" "monitor"
 EndSection
 Section "Screen"

@@ -1,7 +1,0 @@
-# VirGL, этап 2: virtio-gpu (3D через virglrenderer на странице). В v86 virtio современный
-# (VIRTIO_F_VERSION_1, без MSI-X) - legacy-часть virtio_pci не нужна.
-# Проба цены: EXTRA_FRAGMENT=config/virtio-gpu.fragment scripts/build-kernel.sh build/kernel-virtio/bzImage
-CONFIG_VIRTIO_MENU=y
-CONFIG_VIRTIO_PCI=y
-# CONFIG_VIRTIO_PCI_LEGACY is not set
-CONFIG_DRM_VIRTIO_GPU=y

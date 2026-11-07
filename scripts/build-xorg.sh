@@ -1,5 +1,5 @@
 #!/bin/sh
-# Xorg без OpenGL (без GLX, glamor, DRI): сервер и драйвер экрана modesetting (KMS, /dev/dri/card0)
+# Xorg без OpenGL (без GLX, glamor, DRI): сервер и драйвер экрана modesetting (KMS)
 # собираются тулчейном musl против заголовков и библиотек Alpine x86. Версия - та же, что в Alpine,
 # поэтому подходят её библиотеки и драйверы (ввод - xf86-input-evdev). Ядро без консолей (VT) -
 # patches/xorg-server-novt.patch. Результат -> packages/xorg (Xorg, модули, libpciaccess, раскладки и

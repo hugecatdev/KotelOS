@@ -360,9 +360,9 @@ def options(argv=None):
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
     ap.add_argument("--virtio-gpu", action="store_true",
-                    help="экран virtio-gpu с virglrenderer в wasm (build/virgl): OpenGL гостя через WebGL2; v86 - с этим устройством (--v86)")
+                    help="экран virtio-gpu (а не VGA) с virglrenderer в wasm (vendor/virgl): X с glamor, OpenGL гостя через WebGL2")
     ap.add_argument("--virgl", action="store_true",
-                    help="VirGL: сервер vtest с virglrenderer в wasm (build/virgl, scripts/build-virgl.sh) на 192.168.86.1:7790")
+                    help="VirGL: сервер vtest с virglrenderer в wasm (vendor/virgl) на 192.168.86.1:7790")
     ap.add_argument("--phone-scale", type=float, metavar="CSS",
                     help="экран на телефоне при screen.scale auto: точек страницы на точку X (иначе 1); на ПК не действует")
     ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
@@ -371,6 +371,9 @@ def options(argv=None):
                     help="положить файл в образ (по умолчанию в /root/); папку - её содержимое в ПУТЬ")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
     ap.add_argument("--kernel", metavar="ФАЙЛ", help="ядро (по умолчанию %s/bzImage): частное, для пробы" % IMG)
+    ap.add_argument("--no-3d", action="store_true",
+                    help="без 3D: бандл с --vga без virtio-gpu и virglrenderer (иначе программы OpenGL рисуют "
+                         "через WebGL2 страницы; модуль ~170 КБ, грузится при первой такой программе)")
     ap.add_argument("--v86", default=V86, metavar="ПАПКА", help="libv86.js, v86.wasm и BIOS (по умолчанию %s)" % V86)
     # --vga [МБ]: число - только если оно следом, иначе (--vga doom) 8; argparse с nargs="?" съел бы пакет
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -403,8 +406,14 @@ def main():
     # VGA BIOS нужен только экрану: ядро грузится через fw_cfg, консоль - ttyS0
     if a.vga:
         files["vgabios"] = blob(open(v86_dir + "/vgabios.bin", "rb").read())
-    if a.virgl or a.virtio_gpu:
-        files["virgl"] = blob(open("build/virgl/virgl.wasm", "rb").read())
+    # 3D для программ OpenGL при экране VGA: virtio-gpu без своего экрана (у --virgl и --virtio-gpu - свои пути)
+    gpu3d = a.vga and not (a.virtio_gpu or a.virgl or a.no_3d)
+    if gpu3d and b'"virtio-gpu"' not in open(v86_dir + "/libv86.js", "rb").read():
+        sys.exit("v86 в %s без устройства virtio_gpu: DEVICES=virtio_gpu scripts/build-v86.sh или --no-3d" % v86_dir)
+    if gpu3d and not os.path.exists("vendor/virgl/virgl.wasm"):
+        sys.exit("нет vendor/virgl/virgl.wasm: scripts/build-virgl.sh или --no-3d")
+    if a.virgl or a.virtio_gpu or gpu3d:
+        files["virgl"] = blob(open("vendor/virgl/virgl.wasm", "rb").read())
     boot = {
         "bzimage": blob(open(a.kernel or IMG + "/bzImage", "rb").read(), gz=False),
         "initrd": {"size": len(initrd), "data": b64(zstd(initrd))},
@@ -426,8 +435,12 @@ def main():
         bundle["version"] = a.version
     # функции бандла: блоки страницы /* #if имя */ без них вырезаются
     have = {x for x in ("vga", "virgl", "virtio_gpu") if getattr(a, x)}
-    if a.virgl or a.virtio_gpu:
+    if a.virgl or a.virtio_gpu or gpu3d:
         have.add("virgl_module")
+    if a.virtio_gpu or gpu3d:
+        have.add("gpu")
+    if gpu3d:
+        have.add("gpu3d")
     if a.virtio_gpu:
         have.add("vga")  # механика экрана страницы: показ, клавиши, мышь, размер
     page = template(have)

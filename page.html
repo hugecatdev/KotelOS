@@ -95,7 +95,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js" data-lazy="kt-canvas"></script>
   <script src="vendor/v86/libv86.js" id="kt-v86"></script>
-  <!-- #if virgl_module --><script src="build/virgl/virgl.js" data-lazy="kt-virgljs"></script><!-- #endif -->
+  <!-- #if virgl_module --><script src="vendor/virgl/virgl.js" data-lazy="kt-virgljs"></script><!-- #endif -->
   <script>
     "use strict";
     const $ = (s) => document.querySelector(s);
@@ -1136,10 +1136,9 @@
         /* #if virgl */
         if (virglConn) note = "\n3D (VirGL) не сохраняется: программы OpenGL после восстановления запустить заново";
         /* #endif */
-        /* #if virtio_gpu */
-        // состояние GPU (контексты 3D) живёт в WebGL и в сохранение не попадает; X с glamor держит
-        // свой контекст всё время
-        if (gpuContexts) note = "\n3D (virtio-gpu) не сохраняется: программы OpenGL и X с glamor после восстановления запустить заново";
+        /* #if gpu */
+        // X с glamor (экран virtio-gpu) держит свой контекст всё время
+        if (gpuContexts) note = "\n3D (virtio-gpu) не сохраняется: программы OpenGL" + /* #if virtio_gpu */ " и X с glamor" + /* #endif */ " после восстановления запустить заново";
         /* #endif */
         say(id, (name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`) + note);
         return blob.size;
@@ -1730,11 +1729,16 @@
     // меняются, размер кадра присылает устройство (virtio-gpu-screen-size). Размер дисплея - от
     // страницы, как для X (kt screen size): устройство отдаёт его гостю как предпочтительный режим
     const gpuCanvas = $("#screen canvas.gpu");
-    let gpuSize = [0, 0], gpuContexts = 0;
+    let gpuSize = [0, 0];
     function gpuResize(size) {
       const [w, h] = size.split("x").map(Number);
       if (emulator && w && h) emulator.bus.send("virtio-gpu-resize", [w, h]);
     }
+    /* #endif */
+    /* #if gpu */
+    // контексты 3D, которые уже рисовали (virtio-gpu-contexts): их состояние живёт в WebGL и в
+    // сохранение не попадает
+    let gpuContexts = 0;
     /* #endif */
     const screenCanvas = () => /* #if virtio_gpu */ gpuCanvas || /* #endif */ $("#screen canvas");
     const screenPixels = (cv) => /* #if virtio_gpu */ cv === gpuCanvas ? gpuSize : /* #endif */ [cv.width, cv.height];
@@ -2130,6 +2134,12 @@
         opts.disable_keyboard = false;
       }
       /* #endif */
+      /* #if gpu3d */
+      // 3D для программ OpenGL: virtio-gpu без своего экрана (экран - VGA). virglrenderer (wasm
+      // распакует само устройство) и WebGL2 поднимаются в v86 при первой программе OpenGL, до того
+      // не стоят памяти; Mesa в машине берёт драйвер virgl, без устройства - softpipe
+      opts.virtio_gpu = { source: $("#kt-virgljs").textContent, wasm_gz: virglGz, display: false };
+      /* #endif */
       /* #if vga */
       if (vgaSize >= VGA_MIN) {
         opts.screen_container = $("#screen");
@@ -2176,6 +2186,8 @@
         gpuSize = size;
         fitScreen();
       });
+      /* #endif */
+      /* #if gpu */
       emulator.add_listener("virtio-gpu-contexts", (n) => { gpuContexts = n; });
       /* #endif */
       const outDec = new TextDecoder();
