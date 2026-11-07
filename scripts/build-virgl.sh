@@ -48,6 +48,7 @@ link() {
     -sMODULARIZE=1 -sEXPORT_NAME=createVirgl -sENVIRONMENT=web,worker -sALLOW_MEMORY_GROWTH=1 \
     -sSTACK_SIZE=2MB -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sGL_ENABLE_GET_PROC_ADDRESS=1 \
     -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_malloc,_free \
+    -sINCOMING_MODULE_JS_API=wasmBinary,preRun,print,printErr,onAbort \
     --pre-js virgl/vgl.js --pre-js virgl/vtest_web.js
   ls -l $OUT/virgl.js $OUT/virgl.wasm
 }

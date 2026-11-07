@@ -359,6 +359,8 @@ def options(argv=None):
                     help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker")
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
+    ap.add_argument("--virgl", action="store_true",
+                    help="VirGL: сервер vtest с virglrenderer в wasm (build/virgl, scripts/build-virgl.sh) на 192.168.86.1:7790")
     ap.add_argument("--phone-scale", type=float, metavar="CSS",
                     help="экран на телефоне при screen.scale auto: точек страницы на точку X (иначе 1); на ПК не действует")
     ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
@@ -398,6 +400,8 @@ def main():
     # VGA BIOS нужен только экрану: ядро грузится через fw_cfg, консоль - ttyS0
     if a.vga:
         files["vgabios"] = blob(open(v86_dir + "/vgabios.bin", "rb").read())
+    if a.virgl:
+        files["virgl"] = blob(open("build/virgl/virgl.wasm", "rb").read())
     boot = {
         "bzimage": blob(open(IMG + "/bzImage", "rb").read(), gz=False),
         "initrd": {"size": len(initrd), "data": b64(zstd(initrd))},
@@ -418,7 +422,7 @@ def main():
     if a.version:
         bundle["version"] = a.version
     # функции бандла: блоки страницы /* #if имя */ без них вырезаются
-    page = template({"vga"} if a.vga else ())
+    page = template({x for x in ("vga", "virgl") if getattr(a, x)})
 
     if snap:
         bundle["state"] = snapshot(assemble(page, bundle, False), a.run, a.timeout, a.prep)

@@ -45,6 +45,13 @@ static int make_current(void *cookie, int scanout, virgl_renderer_gl_context ctx
    return vgl_make_current((int)(intptr_t)ctx);
 }
 
+/* сообщения vrend (ошибки компиляции шейдеров и т.п.) - в stderr, то есть в консоль страницы */
+static void log_message(enum virgl_log_level_flags level, const char *message, void *data)
+{
+   (void)level; (void)data;
+   fputs(message, stderr);
+}
+
 static const struct virgl_renderer_callbacks context_cbs = {
    .create_gl_context = create_gl_context,
    .destroy_gl_context = destroy_gl_context,
@@ -81,6 +88,7 @@ EMSCRIPTEN_KEEPALIVE int vtw_init(void)
 {
    if (renderer_ready)
       return 0;
+   virgl_set_log_callback(log_message, NULL, NULL);
    vtest_set_context_callbacks(&context_cbs);
    if (vtest_init_renderer(false, VIRGL_RENDERER_USE_GLES, NULL) < 0)
       return -1;

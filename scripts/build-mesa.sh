@@ -3,6 +3,9 @@
 # нужно) и программным softpipe - libGL.so.1 для Qt5 и простых OpenGL-программ. mesa из Alpine
 # тянет LLVM (llvmpipe) - вместе ~480 МБ. Версия - та же, что в Alpine. Собирается тулчейном musl
 # против заголовков Alpine x86 -> packages/mesa-xlib (в git не идёт)
+#   GALLIUM=softpipe,virgl - ещё драйвер virgl: GALLIUM_DRIVER=virpipe рисует через VirGL по
+#   протоколу vtest (сокет VTEST_SOCKET_NAME); libGL тогда требует libdrm.so.2
+#   OUT=каталог, MESA_BUILD=каталог сборки - чтобы такой вариант не перезаписал пакет
 set -e
 cd "$(dirname "$0")/.."
 
@@ -11,8 +14,11 @@ CACHE=$PWD/.cache
 TC=$CACHE/i686-linux-musl-cross
 SRC=$CACHE/mesa-$VER
 SR=$CACHE/msysroot
-B=$CACHE/mesa-build
-OUT=$PWD/packages/mesa-xlib
+B=${MESA_BUILD:-$CACHE/mesa-build}
+OUT=${OUT:-$PWD/packages/mesa-xlib}
+GALLIUM=${GALLIUM:-softpipe}
+EXTRA=
+case ,$GALLIUM, in *,virgl,*) EXTRA=libdrm-dev ;; esac
 
 [ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
 python3 -c "import mako, yaml" 2>/dev/null || { echo "нужны python3 mako и yaml (генераторы mesa)"; exit 1; }
@@ -27,13 +33,16 @@ if [ "$(sha256sum $TAR 2>/dev/null | cut -d' ' -f1)" != $SUM ]; then
 fi
 rm -rf $SRC
 tar -xJf $TAR -C $CACHE
+# virgl (virpipe) под xlib GLX: показ кадра без контекста
+patch -d $SRC -p1 -s < patches/mesa-virgl-xlib-swap.patch
 
 rm -rf $SR
-python3 - "$SR" <<'EOF'
+python3 - "$SR" $EXTRA <<'EOF'
 import sys
 import alpine
 pkgs, provides = alpine.index(tag="xorg-", max_age=7 * 86400)
 want = "xorgproto libx11-dev libxext-dev libxcb-dev libxshmfence-dev libxfixes-dev libxrandr-dev libxxf86vm-dev zlib-dev".split()
+want += sys.argv[2:]
 for n in alpine.resolve(want, pkgs, provides, {"python3", "linux-headers"}):
     f = f"{n}-{pkgs[n]['ver']}.apk"
     alpine.extract(alpine.fetch(f"{alpine.MIRROR}/{pkgs[n]['repo']}/x86/{f}", f"{alpine.CACHE}/apk/{f}"), sys.argv[1], [], [])
@@ -52,8 +61,8 @@ pkg-config = 'pkg-config'
 [built-in options]
 c_args = ['-I$SR/usr/include', '-march=pentium4', '-mtune=generic']
 cpp_args = ['-I$SR/usr/include', '-march=pentium4', '-mtune=generic']
-c_link_args = ['-L$SR/usr/lib', '-Wl,-rpath-link,$SR/usr/lib:$SR/lib']
-cpp_link_args = ['-L$SR/usr/lib', '-Wl,-rpath-link,$SR/usr/lib:$SR/lib']
+c_link_args = ['-L$SR/usr/lib', '-Wl,-rpath-link,$SR/usr/lib:$SR/lib', '-Wl,--build-id=sha1']
+cpp_link_args = ['-L$SR/usr/lib', '-Wl,-rpath-link,$SR/usr/lib:$SR/lib', '-Wl,--build-id=sha1']
 
 [properties]
 pkg_config_libdir = ['$SR/usr/lib/pkgconfig', '$SR/usr/share/pkgconfig']
@@ -67,7 +76,7 @@ endian = 'little'
 EOF
 
 meson setup $B $SRC --cross-file $B.cross --prefix=/usr --buildtype=release -Dstrip=true -Db_ndebug=true \
-  -Dplatforms=x11 -Dgallium-drivers=softpipe -Dvulkan-drivers= -Dglx=xlib -Degl=disabled -Dgbm=disabled \
+  -Dplatforms=x11 -Dgallium-drivers=$GALLIUM -Dvulkan-drivers= -Dglx=xlib -Degl=disabled -Dgbm=disabled \
   -Dgles1=disabled -Dgles2=disabled -Dglvnd=disabled -Dllvm=disabled -Dshared-llvm=disabled -Ddraw-use-llvm=false \
   -Dxlib-lease=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dzstd=disabled -Dxmlconfig=disabled \
   -Dshader-cache=disabled -Dvideo-codecs= -Dgallium-va=disabled -Dgallium-vdpau=disabled \

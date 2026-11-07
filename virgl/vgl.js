@@ -148,6 +148,13 @@ Module.createVGL = function (gl) {
 
   // удалённый объект отвязывается во всех контекстах: в WebGL привязка удалённого - ошибка
   function purge(obj) {
+    const tw = twins.get(obj);
+    if (tw) {
+      gl.deleteBuffer(tw.e);
+      twins.delete(obj);
+    }
+    elemBound.delete(obj);
+    for (const [vao, b] of elemBound) if (b === obj) elemBound.set(vao, null);
     for (const s of [cur, ...contexts.values()]) {
       for (const [k, v] of s.buffers) if (v === obj) s.buffers.set(k, null);
       for (const [k, v] of s.ubo) if (v[0] === obj) s.ubo.delete(k);
@@ -159,6 +166,113 @@ Module.createVGL = function (gl) {
   for (const f of ["deleteBuffer", "deleteTexture", "deleteFramebuffer", "deleteRenderbuffer",
     "deleteVertexArray", "deleteTransformFeedback", "deleteSampler", "deleteProgram"]) {
     track(f, (obj) => { if (obj) purge(obj); });
+  }
+
+  // Индексы и вершины в одном буфере. WebGL2 закрепляет тип буфера при первой привязке: бывший
+  // ELEMENT_ARRAY_BUFFER нельзя привязать к другим точкам и наоборот, копировать между ними тоже
+  // нельзя, а Gallium кладёт индексы и вершины в общий буфер выгрузки. Поэтому у буфера, который
+  // бывает индексным, есть двойник только для ELEMENT_ARRAY_BUFFER: запись с процессора идёт в
+  // оба, запись GPU в основной (копирование, PBO, transform feedback) делает двойника устаревшим,
+  // и он перечитывается при следующей привязке. Чтение индексного буфера - из основного.
+  const twins = new Map(); // основной буфер -> { e: двойник, stale }
+  const elemBound = new Map(); // VAO (null - по умолчанию) -> основной буфер на ELEMENT_ARRAY_BUFFER
+  const elemNow = () => {
+    const b = elemBound.get(cur.vao);
+    return b ? twins.get(b).e : null;
+  };
+  const via = (target, buf, f) => {
+    real.bindBuffer(target, buf);
+    try { return f(target); } finally { real.bindBuffer(target, cur.buffers.get(target)); }
+  };
+  function newTwin() {
+    const e = gl.createBuffer();
+    real.bindBuffer(G.ELEMENT_ARRAY_BUFFER, e); // тип «индексы» - до любой другой привязки
+    real.bindBuffer(G.ELEMENT_ARRAY_BUFFER, elemNow());
+    return { e, stale: true };
+  }
+  function syncTwin(b, t) {
+    const data = via(G.COPY_READ_BUFFER, b, (tg) => {
+      const d = new Uint8Array(gl.getBufferParameter(tg, G.BUFFER_SIZE) || 0);
+      if (d.length) gl.getBufferSubData(tg, 0, d);
+      return d;
+    });
+    via(G.COPY_WRITE_BUFFER, t.e, (tg) => gl.bufferData(tg, data, G.DYNAMIC_DRAW));
+    t.stale = false;
+  }
+  const bufferAt = (t) => t === G.ELEMENT_ARRAY_BUFFER ? elemBound.get(cur.vao) || null : cur.buffers.get(t) || null;
+  const staleTwin = (b) => { const t = b && twins.get(b); if (t) t.stale = true; };
+
+  W.bindBuffer = (t, b) => {
+    if (t !== G.ELEMENT_ARRAY_BUFFER) {
+      if (cur.buffers.has(t)) cur.buffers.set(t, b);
+      return real.bindBuffer(t, b);
+    }
+    if (b) {
+      let tw = twins.get(b);
+      if (!tw) twins.set(b, tw = newTwin());
+      if (tw.stale) syncTwin(b, tw);
+    }
+    elemBound.set(cur.vao, b || null);
+    return real.bindBuffer(t, b ? twins.get(b).e : null);
+  };
+  for (const name of ["bufferData", "bufferSubData"]) {
+    real[name] = gl[name].bind(gl);
+    W[name] = (t, ...a) => {
+      const b = bufferAt(t);
+      if (t === G.ELEMENT_ARRAY_BUFFER) {
+        if (b) via(G.COPY_WRITE_BUFFER, b, (tg) => real[name](tg, ...a));
+        return real[name](t, ...a);
+      }
+      const r = real[name](t, ...a);
+      const tw = b && twins.get(b);
+      if (tw && !tw.stale) via(G.COPY_WRITE_BUFFER, tw.e, (tg) => real[name](tg, ...a));
+      return r;
+    };
+  }
+  real.getBufferSubData = gl.getBufferSubData.bind(gl);
+  W.getBufferSubData = (t, ...a) => t !== G.ELEMENT_ARRAY_BUFFER ? real.getBufferSubData(t, ...a) :
+    via(G.COPY_READ_BUFFER, bufferAt(t), (tg) => real.getBufferSubData(tg, ...a));
+  real.copyBufferSubData = gl.copyBufferSubData.bind(gl);
+  W.copyBufferSubData = (rt, wt, ...a) => {
+    const rb = bufferAt(rt), wb = bufferAt(wt);
+    via(G.COPY_READ_BUFFER, rb, () => via(G.COPY_WRITE_BUFFER, wb, () =>
+      real.copyBufferSubData(G.COPY_READ_BUFFER, G.COPY_WRITE_BUFFER, ...a)));
+    staleTwin(wb);
+  };
+  real.readPixels = gl.readPixels.bind(gl);
+  W.readPixels = (...a) => {
+    const r = real.readPixels(...a);
+    if (typeof a[6] === "number") staleTwin(cur.buffers.get(G.PIXEL_PACK_BUFFER)); // в PBO
+    return r;
+  };
+  real.endTransformFeedback = gl.endTransformFeedback.bind(gl);
+  W.endTransformFeedback = () => {
+    real.endTransformFeedback();
+    for (const t of twins.values()) t.stale = true;
+  };
+
+  // отладка: globalThis.VIRGL_GL_DEBUG - после каждого вызова getError, ошибки - в консоль с
+  // именем функции (ошибки при этом не доходят до vrend; первые 50 разных)
+  if (globalThis.VIRGL_GL_DEBUG) {
+    const seen = new Map();
+    for (const k of Object.keys(W)) {
+      const f = W[k];
+      if (typeof f !== "function" || k === "getError") continue;
+      W[k] = function (...a) {
+        const r = f.apply(this, a);
+        const e = gl.getError();
+        if (e) {
+          const key = k + ":" + e;
+          const n = (seen.get(key) || 0) + 1;
+          seen.set(key, n);
+          if (seen.size <= 50 && (n === 1 || n === 100)) {
+            const args = a.map((x) => typeof x === "number" ? "0x" + x.toString(16) : x && x.constructor ? x.constructor.name : String(x));
+            console.warn("virgl: GL", "0x" + e.toString(16), k + "(" + args.join(", ") + ")", n > 1 ? "x" + n : "");
+          }
+        }
+        return r;
+      };
+    }
   }
 
   const same = (a, b) => a === b || (Array.isArray(a) && Array.isArray(b) &&

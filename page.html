@@ -91,6 +91,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-serialize@0.11.0/lib/xterm-addon-serialize.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-canvas@0.5.0/lib/xterm-addon-canvas.js" data-lazy="kt-canvas"></script>
   <script src="vendor/v86/libv86.js" id="kt-v86"></script>
+  <!-- #if virgl --><script src="build/virgl/virgl.js" data-lazy="kt-virgljs"></script><!-- #endif -->
   <script>
     "use strict";
     const $ = (s) => document.querySelector(s);
@@ -492,6 +493,60 @@
     const sendTo = (t, s) => { if (t.id === 1) serial(s); else ttyIn(t.id, s); };
     const send = (s) => sendTo(target(), s);
     const AGENT_PORT = 7700, PAGE_PORT = 7771, PAGE_IP = "192.168.86.1";
+    /* #if virgl */
+    // VirGL: Mesa в машине (GALLIUM_DRIVER=virpipe) через vtest-bridge подключается к PAGE_IP:7790,
+    // страница отдаёт поток серверу vtest в wasm (virglrenderer -> WebGL2). Клиент один: новое
+    // соединение закрывает прежнее. Состояние GPU живёт в WebGL и в сохранение не попадает
+    const VIRGL_PORT = 7790;
+    let virglGz = null, virgl = null, virglConn = null;
+    function virglModule() {
+      if (!virgl) {
+        lazyScript("kt-virgljs");
+        const wasm = new Response(new Blob([virglGz]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+        virglGz = null;
+        virgl = wasm.then((wasmBinary) => createVirgl({
+          wasmBinary,
+          print: (t) => console.log("virgl:", t),
+          printErr: (t) => console.warn("virgl:", t),
+        })).then((v) => {
+          // рисует vrend в свои FBO, холст только держит контекст WebGL2
+          const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(1, 1) : document.createElement("canvas");
+          v.start(canvas, (bytes) => { if (virglConn) virglConn.write(bytes); });
+          v.onVtestError = (r) => {
+            console.warn("virgl: ошибка разбора", r);
+            if (virglConn) virglConn.close();
+          };
+          return v;
+        });
+      }
+      return virgl;
+    }
+    function virglServe(c) {
+      if (!virglGz && !virgl) return;
+      c.accept();
+      if (virglConn) virglConn.close();
+      virglConn = c;
+      let v = null;
+      const early = [];
+      c.on("data", (d) => { if (v) v.feed(d); else early.push(d.slice()); });
+      const end = () => {
+        if (virglConn !== c) return;
+        virglConn = null;
+        if (v) v.disconnect();
+      };
+      c.on("shutdown", () => { end(); c.close(); });
+      c.on("close", end);
+      virglModule().then((m) => {
+        if (virglConn !== c) return;
+        v = m;
+        v.connect();
+        for (const d of early) v.feed(d);
+      }, (e) => {
+        console.warn("virgl:", e);
+        c.close();
+      });
+    }
+    /* #endif */
     let link = null, linkGen = 0, onReady = null;
     const send1 = (s) => { if (link) link.write(typeof s === "string" ? enc.encode(s) : s); };
     const ctl = (line) => send1(line + "\n");
@@ -1070,7 +1125,11 @@
           created: Date.now(), build: build && build.build, bundle: NAME,
         });
         lastSave = Date.now();
-        say(id, name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`);
+        let note = "";
+        /* #if virgl */
+        if (virglConn) note = "\n3D (VirGL) не сохраняется: программы OpenGL после восстановления запустить заново";
+        /* #endif */
+        say(id, (name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`) + note);
         return blob.size;
       } catch (e) {
         say(id, "не вышло: " + e.message);
@@ -2017,6 +2076,9 @@
           ...Object.entries(browserEnv()).map(([k, v]) => `${k}=${v}`),
         ].join(" ");
       }
+      /* #if virgl */
+      virglGz = take("virgl");
+      /* #endif */
       for (const el of document.querySelectorAll(PARTS)) el.remove();
 
       opts.vga_memory_size = vgaSize;
@@ -2073,6 +2135,9 @@
       });
       emulator.add_listener("tcp-connection", (c) => {
         if (c.sport === PAGE_PORT && c.psrc.join(".") === PAGE_IP) serveRequest(c);
+        /* #if virgl */
+        if (c.sport === VIRGL_PORT && c.psrc.join(".") === PAGE_IP) virglServe(c);
+        /* #endif */
       });
       emulator.add_listener("download-progress", (e) => {
         if (!e.lengthComputable || saved || image) return;

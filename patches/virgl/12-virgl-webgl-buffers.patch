@@ -1,3 +1,50 @@
+--- a/src/vrend/vrend_blitter.c
++++ b/src/vrend/vrend_blitter.c
+@@ -62,6 +62,7 @@
+    virgl_gl_context gl_context;
+    bool initialised;
+    bool use_gles;
++   bool gles30; /* GLSL ES 3.10 not available (WebGL2) */
+ 
+    GLuint vaoid;
+ 
+@@ -127,6 +128,17 @@
+ {
+    GLint param;
+    GLint id = glCreateShader(shader_type);
++   char *es300 = NULL;
++
++   /* The GLES headers ask for GLSL ES 3.10, needed only by multisample
++    * textures, which a GLES 3.0 host (WebGL2) never blits. */
++   if (vrend_blit_ctx.gles30 && !strncmp(buf, "#version 310 es", 15)) {
++      es300 = strdup(buf);
++      if (es300) {
++         es300[10] = '0';
++         buf = es300;
++      }
++   }
+    glShaderSource(id, 1, (const char **)&buf, NULL);
+    glCompileShader(id);
+ 
+@@ -138,8 +150,10 @@
+       virgl_error("Shader failed to compile\n%s\n", infolog);
+       virgl_error("GLSL:\n%s\n", buf);
+       glDeleteShader(id);
++      free(es300);
+       return 0;
+    }
++   free(es300);
+    return id;
+ }
+ 
+@@ -482,6 +496,7 @@
+    }
+ 
+    vrend_sync_make_current(blit_ctx->gl_context);
++   blit_ctx->gles30 = blit_ctx->use_gles && epoxy_gl_version() < 31;
+    glGenVertexArrays(1, &blit_ctx->vaoid);
+    glGenFramebuffers(1, &blit_ctx->fb_id);
+ 
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -77,6 +77,23 @@

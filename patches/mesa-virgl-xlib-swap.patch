@@ -1,0 +1,23 @@
+virgl: present without a context (xlib GLX swap)
+
+xmesa_swap_st_framebuffer() calls flush_frontbuffer() with ctx == NULL; softpipe
+and llvmpipe cope, virgl dereferenced it - glXSwapBuffers on virpipe crashed.
+
+--- a/src/gallium/drivers/virgl/virgl_screen.c
++++ b/src/gallium/drivers/virgl/virgl_screen.c
+@@ -787,9 +787,12 @@
+    struct virgl_context *vctx = virgl_context(ctx);
+ 
+    if (vws->flush_frontbuffer) {
+-      virgl_flush_eq(vctx, vctx, NULL);
+-      vws->flush_frontbuffer(vws, vctx->cbuf, vres->hw_res, level, layer, winsys_drawable_handle,
+-                             nboxes == 1 ? sub_box : NULL);
++      /* the xlib frontend presents on swap without a context (ctx == NULL),
++       * after it has flushed the context itself */
++      if (vctx)
++         virgl_flush_eq(vctx, vctx, NULL);
++      vws->flush_frontbuffer(vws, vctx ? vctx->cbuf : NULL, vres->hw_res, level, layer,
++                             winsys_drawable_handle, nboxes == 1 ? sub_box : NULL);
+    }
+ }
+ 
