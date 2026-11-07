@@ -891,8 +891,11 @@ def main():
         s.ok("rm -f /tmp/rw.bin /tmp/dl.bin /tmp/up.bin")
         s.ev("term.clear()")
         s.typed("kt save; echo SAVED-OK")
-        time.sleep(8)
-        assert "SAVED-OK" in s.screen(), s.screen()[-200:]
+        # не 8 с наугад: под нагрузкой сохранение идёт дольше. SAVED-OK дважды - команда и её вывод
+        t0 = time.time()
+        while s.screen().count("SAVED-OK") < 2 and time.time() - t0 < 60:
+            time.sleep(0.5)
+        assert s.screen().count("SAVED-OK") >= 2, s.screen()[-200:]
         s.c.call("Page.reload")
         time.sleep(1)
         t = s.wait_ready()
