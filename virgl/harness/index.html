@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VirGL стенд</title>
+<style>body { background: #222; color: #ddd; font: 13px monospace; } canvas { border: 1px solid #555; }</style>
+<canvas id="c" width="256" height="256"></canvas>
+<pre id="log"></pre>
+<script src="../../build/virgl/virgl.js"></script>
+<script>
+(async () => {
+  let ws;
+  const logEl = document.getElementById("log");
+  const log = (...a) => {
+    const s = a.join(" ");
+    logEl.textContent += s + "\n";
+    if (ws && ws.readyState === 1) ws.send("log " + s);
+  };
+  window.onerror = (m, src, line) => log("ошибка:", m, src + ":" + line);
+  const debug = location.search.includes("debug");
+  const v = await createVirgl({ print: (s) => log("[out]", s), printErr: (s) => log("[err]", s) });
+  ws = new WebSocket(`ws://${location.host}/vtest`);
+  ws.binaryType = "arraybuffer";
+  v.onVtestError = (r) => log("vtest: ошибка", r);
+  ws.onopen = () => {
+    try {
+      v.start(document.getElementById("c"), (bytes) => {
+        if (debug) log("ответ", bytes.length, Array.from(new Uint32Array(bytes.buffer.slice(0, Math.min(16, bytes.length & ~3)))).join(","));
+        ws.send(bytes);
+      });
+      const gl = v.vgl.gl;
+      log("WebGL:", gl.getParameter(gl.VERSION), "/", gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
+      ws.send("ready");
+    } catch (e) {
+      log("старт:", e.stack || e);
+    }
+  };
+  ws.onmessage = (e) => {
+    try {
+      if (typeof e.data === "string") {
+        if (e.data === "connect") v.connect();
+        else if (e.data === "disconnect") v.disconnect();
+        log("клиент:", e.data);
+      } else {
+        if (debug) log("команды", e.data.byteLength, Array.from(new Uint32Array(e.data.slice(0, Math.min(16, e.data.byteLength & ~3)))).join(","));
+        v.feed(new Uint8Array(e.data));
+      }
+    } catch (err) {
+      log("разбор:", err.stack || err);
+    }
+  };
+})();
+</script>

@@ -1,0 +1,86 @@
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -77,6 +77,23 @@
+ #include <dxgi1_2.h>
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten/html5_webgl.h>
++/* WebGL2 has no buffer mapping (glMapBufferRange). Buffers are written with
++ * glBufferSubData (the fallback below) and read with WebGL's getBufferSubData,
++ * which is not part of GLES and therefore not available through epoxy. */
++#define VREND_HAVE_BUFFER_MAP 0
++static void vrend_get_buffer_sub_data(GLenum target, GLintptr offset, GLsizeiptr size, void *data)
++{
++   static void (*get)(GLenum, GLintptr, GLsizeiptr, void *);
++   if (!get)
++      get = (void (*)(GLenum, GLintptr, GLsizeiptr, void *))emscripten_webgl_get_proc_address("glGetBufferSubData");
++   get(target, offset, size, data);
++}
++#else
++#define VREND_HAVE_BUFFER_MAP 1
++#endif
++
+ /*
+  * VIRTGPU_DRM_CAPSET_VIRGL has version 0 and 1, but they are both
+  * virgl_caps_v1 and are exactly the same.
+@@ -5129,7 +5146,13 @@
+       if (vbo->base.stride == 0) {
+          void *data;
+          /* for 0 stride we are kinda screwed */
++#if VREND_HAVE_BUFFER_MAP
+          data = glMapBufferRange(GL_ARRAY_BUFFER, vbo->base.buffer_offset, ve->nr_chan * sizeof(GLfloat), GL_MAP_READ_BIT);
++#else
++         GLfloat value[4];
++         vrend_get_buffer_sub_data(GL_ARRAY_BUFFER, vbo->base.buffer_offset, ve->nr_chan * sizeof(GLfloat), value);
++         data = value;
++#endif
+ 
+          switch (ve->nr_chan) {
+          case 1:
+@@ -5145,7 +5168,9 @@
+             glVertexAttrib4fv(loc, data);
+             break;
+          }
++#if VREND_HAVE_BUFFER_MAP
+          glUnmapBuffer(GL_ARRAY_BUFFER);
++#endif
+          disable_bitmask |= (1 << loc);
+       } else {
+          GLint size = !vrend_state.use_gles && (va->zyxw_bitmask & (1 << i)) ? GL_BGRA : ve->nr_chan;
+@@ -9303,9 +9328,11 @@
+          map_flags |= GL_MAP_UNSYNCHRONIZED_BIT;
+ 
+       glBindBufferARB(res->target, res->gl_id);
+-      data = glMapBufferRange(res->target, info->box->x, info->box->width, map_flags);
++      data = VREND_HAVE_BUFFER_MAP ?
++         glMapBufferRange(res->target, info->box->x, info->box->width, map_flags) : NULL;
+       if (data == NULL) {
+-         virgl_error("Map failed for element buffer\n");
++         if (VREND_HAVE_BUFFER_MAP)
++            virgl_error("Map failed for element buffer\n");
+          vrend_read_from_iovec_cb(iov, num_iovs, info->offset, info->box->width, &iov_buffer_upload, &d);
+       } else {
+          vrend_read_from_iovec(iov, num_iovs, info->offset, data, info->box->width);
+@@ -9946,12 +9973,21 @@
+ 
+    if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
+       glBindBufferARB(res->target, res->gl_id);
++#if VREND_HAVE_BUFFER_MAP
+       void *data = glMapBufferRange(res->target, info->box->x, info->box->width, GL_MAP_READ_BIT);
+       if (!data)
+          virgl_error("Unable to open buffer for reading %d\n", res->target);
+       else
+          vrend_write_to_iovec(iov, num_iovs, info->offset, data, info->box->width);
+       glUnmapBuffer(res->target);
++#else
++      void *data = malloc(info->box->width);
++      if (!data)
++         return ENOMEM;
++      vrend_get_buffer_sub_data(res->target, info->box->x, info->box->width, data);
++      vrend_write_to_iovec(iov, num_iovs, info->offset, data, info->box->width);
++      free(data);
++#endif
+       glBindBufferARB(res->target, 0);
+    } else {
+       int ret = -1;

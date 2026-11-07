@@ -1,0 +1,68 @@
+--- a/vtest/vtest.h
++++ b/vtest/vtest.h
+@@ -28,6 +28,7 @@
+ #include <errno.h>
+ 
+ struct vtest_context;
++struct virgl_renderer_callbacks;
+ 
+ struct vtest_buffer {
+    const char *buffer;
+@@ -79,6 +80,8 @@
+ int vtest_resource_busy_wait(uint32_t length_dw);
+ int vtest_resource_busy_wait_nop(uint32_t length_dw);
+ void vtest_poll_resource_busy_wait(void);
++bool vtest_resource_busy(void);
++void vtest_set_context_callbacks(const struct virgl_renderer_callbacks *cbs);
+ 
+ int vtest_ping_protocol_version(uint32_t length_dw);
+ int vtest_protocol_version(uint32_t length_dw);
+--- a/vtest/vtest_renderer.c
++++ b/vtest/vtest_renderer.c
+@@ -245,6 +245,15 @@
+ };
+ 
+ 
++/* An embedder without EGL/GLX (a browser page) creates the GL contexts
++ * itself and hands them over through these callbacks. */
++void vtest_set_context_callbacks(const struct virgl_renderer_callbacks *cbs)
++{
++   renderer_cbs.create_gl_context = cbs->create_gl_context;
++   renderer_cbs.destroy_gl_context = cbs->destroy_gl_context;
++   renderer_cbs.make_current = cbs->make_current;
++}
++
+ static struct vtest_renderer renderer = {
+    .max_length = UINT_MAX,
+    .next_context_id = 1,
+@@ -611,8 +620,11 @@
+    list_inithead(&renderer.free_resources);
+    list_inithead(&renderer.free_syncs);
+ 
+-   ctx_flags |= VIRGL_RENDERER_THREAD_SYNC |
+-                VIRGL_RENDERER_USE_EXTERNAL_BLOB;
++   ctx_flags |= VIRGL_RENDERER_USE_EXTERNAL_BLOB;
++#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
++   /* without threads the fences are polled from the caller's event loop */
++   ctx_flags |= VIRGL_RENDERER_THREAD_SYNC;
++#endif
+    ret = virgl_renderer_init(&renderer, ctx_flags, &renderer_cbs);
+    if (ret) {
+       fprintf(stderr, "failed to initialise renderer.\n");
+@@ -1867,6 +1879,16 @@
+    return 0;
+ }
+ 
++/* For callers that cannot block (a browser event loop): poll the implicit
++ * fences once and tell whether VCMD_RESOURCE_BUSY_WAIT with
++ * VCMD_BUSY_WAIT_FLAG_WAIT would have to wait. */
++bool vtest_resource_busy(void)
++{
++   virgl_renderer_poll();
++   return renderer.implicit_fence_completed !=
++          renderer.implicit_fence_submitted;
++}
++
+ void vtest_poll_resource_busy_wait(void)
+ {
+    /* poll the implicit fences */

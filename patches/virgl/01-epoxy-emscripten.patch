@@ -1,0 +1,59 @@
+--- a/src/dispatch_common.c
++++ b/src/dispatch_common.c
+@@ -173,6 +173,14 @@
+ 
+ #include "dispatch_common.h"
+ 
++#ifdef __EMSCRIPTEN__
++/* Emscripten: no dlopen of GL libraries - every entry point comes from the
++ * WebGL bindings via emscripten_webgl_get_proc_address() (link with
++ * -sGL_ENABLE_GET_PROC_ADDRESS). Desktop-only functions resolve to NULL,
++ * so epoxy reports "No provider of ..." instead of calling garbage. */
++#include <emscripten/html5.h>
++#endif
++
+ #if defined(__APPLE__)
+ #define GLX_LIB "/opt/X11/lib/libGL.1.dylib"
+ #define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
+@@ -300,7 +308,10 @@
+         abort();
+     }
+ 
+-#ifdef _WIN32
++#if defined(__EMSCRIPTEN__)
++    (void)lib_name; (void)exit_on_fail; (void)load;
++    *handle = (void *)1;
++#elif defined(_WIN32)
+     *handle = LoadLibraryA(lib_name);
+ #else
+     pthread_mutex_lock(&api.mutex);
+@@ -331,7 +342,12 @@
+     void *result;
+     const char *error = "";
+ 
+-#ifdef _WIN32
++#if defined(__EMSCRIPTEN__)
++    (void)handle;
++    result = emscripten_webgl_get_proc_address(name);
++    if (!result)
++        error = "not provided by WebGL";
++#elif defined(_WIN32)
+     result = GetProcAddress(*handle, name);
+ #else
+     result = dlsym(*handle, name);
+@@ -847,6 +863,15 @@
+ void *
+ epoxy_get_proc_address(const char *name)
+ {
++#if defined(__EMSCRIPTEN__)
++    void *func = emscripten_webgl_get_proc_address(name);
++    if (!func) {
++        /* the dispatch would call NULL: fail with the name instead */
++        fprintf(stderr, "epoxy: %s() is not provided by WebGL\n", name);
++        abort();
++    }
++    return func;
++#endif
+ #if PLATFORM_HAS_EGL
+     GLenum egl_api = EGL_NONE;
+ 
