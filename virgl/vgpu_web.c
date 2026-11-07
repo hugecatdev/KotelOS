@@ -182,11 +182,12 @@ EMSCRIPTEN_KEEPALIVE void vgw_capset_info(uint32_t set, uint32_t *out)
 EMSCRIPTEN_KEEPALIVE void vgw_capset_fill(uint32_t set, uint32_t version, void *caps)
 {
    virgl_renderer_fill_caps(set, version, caps);
-   /* хост не видит память гостя напрямую: без промежуточных буферов, которые хост читает
-    * из подложки (COPY_TRANSFER), и без постоянно отображённых буферов */
+   /* хост не видит память гостя напрямую: без передач в потоке команд (TRANSFER, vrend читал бы
+    * подложку сам), без промежуточных буферов (COPY_TRANSFER) и без постоянно отображённых
+    * буферов - данные носит устройство командами TRANSFER_TO/FROM_HOST_3D */
    if (set == 2)
       ((union virgl_caps *)caps)->v2.capability_bits &=
-         ~(VIRGL_CAP_COPY_TRANSFER | VIRGL_CAP_ARB_BUFFER_STORAGE);
+         ~(VIRGL_CAP_TRANSFER | VIRGL_CAP_COPY_TRANSFER | VIRGL_CAP_ARB_BUFFER_STORAGE);
 }
 
 /* ресурсы, в которые хост пишет сам (VIRGL_BIND_CUSTOM: результаты запросов), держат

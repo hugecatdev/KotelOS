@@ -6,6 +6,8 @@
 #   GALLIUM=softpipe,virgl - ещё драйвер virgl: GALLIUM_DRIVER=virpipe рисует через VirGL по
 #   протоколу vtest (сокет VTEST_SOCKET_NAME); libGL тогда требует libdrm.so.2
 #   OUT=каталог, MESA_BUILD=каталог сборки - чтобы такой вариант не перезаписал пакет
+#   API=dri - вместо GLX через Xlib: DRI (GLX через сервер X с DRI3, EGL, GBM, GLES) - драйвер
+#   virgl рисует через /dev/dri (virtio-gpu); драйверы - libgallium и usr/lib/dri
 set -e
 cd "$(dirname "$0")/.."
 
@@ -17,8 +19,15 @@ SR=$CACHE/msysroot
 B=${MESA_BUILD:-$CACHE/mesa-build}
 OUT=${OUT:-$PWD/packages/mesa-xlib}
 GALLIUM=${GALLIUM:-softpipe}
+API=${API:-xlib}
 EXTRA=
 case ,$GALLIUM, in *,virgl,*) EXTRA=libdrm-dev ;; esac
+if [ "$API" = dri ]; then
+  EXTRA="libdrm-dev"
+  API_OPTS="-Dglx=dri -Degl=enabled -Dgbm=enabled -Dgles2=enabled"
+else
+  API_OPTS="-Dglx=xlib -Degl=disabled -Dgbm=disabled -Dgles2=disabled"
+fi
 
 [ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
 python3 -c "import mako, yaml" 2>/dev/null || { echo "нужны python3 mako и yaml (генераторы mesa)"; exit 1; }
@@ -76,8 +85,8 @@ endian = 'little'
 EOF
 
 meson setup $B $SRC --cross-file $B.cross --prefix=/usr --buildtype=release -Dstrip=true -Db_ndebug=true \
-  -Dplatforms=x11 -Dgallium-drivers=$GALLIUM -Dvulkan-drivers= -Dglx=xlib -Degl=disabled -Dgbm=disabled \
-  -Dgles1=disabled -Dgles2=disabled -Dglvnd=disabled -Dllvm=disabled -Dshared-llvm=disabled -Ddraw-use-llvm=false \
+  -Dplatforms=x11 -Dgallium-drivers=$GALLIUM -Dvulkan-drivers= $API_OPTS \
+  -Dgles1=disabled -Dglvnd=disabled -Dllvm=disabled -Dshared-llvm=disabled -Ddraw-use-llvm=false \
   -Dxlib-lease=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dzstd=disabled -Dxmlconfig=disabled \
   -Dshader-cache=disabled -Dvideo-codecs= -Dgallium-va=disabled -Dgallium-vdpau=disabled \
   -Dgallium-d3d12-video=disabled -Dmicrosoft-clc=disabled -Dbuild-tests=false -Dosmesa=false \
@@ -88,5 +97,12 @@ DESTDIR=$B/inst meson install -C $B --no-rebuild > $B/install.log 2>&1
 rm -rf $OUT/usr
 mkdir -p $OUT/usr/lib
 cp -P $B/inst/usr/lib/lib*.so.* $OUT/usr/lib/
-echo "mesa-xlib -> $OUT ($(du -sh $OUT/usr | cut -f1))"
+if [ "$API" = dri ]; then
+  # драйверы DRI: одна libgallium и ссылки dri/*_dri.so на неё
+  cp -P $B/inst/usr/lib/libgallium*.so $OUT/usr/lib/
+  cp -a $B/inst/usr/lib/dri $OUT/usr/lib/
+  # бэкенд GBM (dri_gbm.so) - отдельно
+  cp -a $B/inst/usr/lib/gbm $OUT/usr/lib/
+fi
+echo "mesa-$API -> $OUT ($(du -sh $OUT/usr | cut -f1))"
 find $OUT/usr | sed "s|$OUT/||" | sort
