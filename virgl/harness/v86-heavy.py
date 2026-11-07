@@ -6,6 +6,7 @@
 import base64
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -21,7 +22,8 @@ DEMOS = ["gears", "gloss", "fire", "ipers", "isosurf", "teapot", "engine", "fsra
 page = os.path.abspath(sys.argv[1])
 secs = int(sys.argv[2]) if len(sys.argv) > 2 else 20
 demos = sys.argv[3:] or DEMOS
-s = Suite(tempfile.mkdtemp(prefix="virgl-heavy-"), None)
+tmp = tempfile.mkdtemp(prefix="virgl-heavy-")  # профили Chrome, /tmp - в памяти: удаляются в конце
+s = Suite(tmp, None)
 s.open("file://" + page)
 s.ev(HOOK)
 
@@ -55,3 +57,4 @@ try:
                   ("\n    vrend: " + "\n    vrend: ".join(x[:200] for x in log)) if log and drv in ("virpipe", "virgl") else ""), flush=True)
 finally:
     s.c.close()
+    shutil.rmtree(tmp, ignore_errors=True)

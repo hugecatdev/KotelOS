@@ -6,6 +6,7 @@
 import base64
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -27,9 +28,10 @@ DEFAULT = [
 # бандл: файл или адрес http(s) (тогда работает kt pkg add из репозитория того же сервера)
 page = sys.argv[1] if sys.argv[1].startswith("http") else "file://" + os.path.abspath(sys.argv[1])
 steps = sys.argv[2:] or DEFAULT
-s = Suite(tempfile.mkdtemp(prefix="virgl-gpu-"), None)
+tmp = tempfile.mkdtemp(prefix="virgl-gpu-")  # профили Chrome, /tmp - в памяти: удаляются в конце
+s = Suite(tmp, None)
 # перехват консоли - до скриптов страницы: сообщения загрузки модуля не теряются
-s.c = Chrome(tempfile.mkdtemp(prefix="virgl-gpu-c-"))
+s.c = Chrome(tempfile.mkdtemp(dir=tmp))
 s.c.open("about:blank")
 s.c.call("Page.enable")
 s.c.call("Page.addScriptToEvaluateOnNewDocument", source=HOOK)
@@ -74,3 +76,4 @@ try:
         print("   ", line[:240])
 finally:
     s.c.close()
+    shutil.rmtree(tmp, ignore_errors=True)

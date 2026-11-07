@@ -126,9 +126,9 @@ static void clear_screen(void)
 
 /* KMS: режим 640x480 (или первый, что даёт разъём) и dumb-буфер, показанный сразу. Ресурсы
  * отпускает выход: тогда DRM возвращает экран своему /dev/fb0 */
-static int kms_init(unsigned *w, unsigned *h)
+static int kms_try(const char *path, unsigned *w, unsigned *h)
 {
-	int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+	int fd = open(path, O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		return -1;
 	uint32_t conn[8], crtc[8];
@@ -177,6 +177,20 @@ static int kms_init(unsigned *w, unsigned *h)
 fail:
 	fb = NULL;
 	close(fd);
+	return -1;
+}
+
+/* первая карта с разъёмом: у virtio-gpu без своего экрана (только 3D) KMS нет, а номер у неё
+ * может быть меньше, чем у VGA */
+static int kms_init(unsigned *w, unsigned *h)
+{
+	char path[32];
+	for (int i = 0; i < 8; i++) {
+		snprintf(path, sizeof path, "/dev/dri/card%d", i);
+		int fd = kms_try(path, w, h);
+		if (fd >= 0)
+			return fd;
+	}
 	return -1;
 }
 
