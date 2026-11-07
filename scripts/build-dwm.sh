@@ -10,7 +10,7 @@
 # экране выше, чем шире (телефон стоя), плитка ставит главное окно сверху, остальные под ним.
 # feh - без libcurl (с OpenSSL ~7 МБ в машине, а https из v86 всё равно не ходит) и libmagic (база
 # типов файлов 10 МБ): картинки он узнаёт и так, через imlib2.
-# Результат -> packages/dwm, packages/dwm-studio, packages/st, packages/feh (бинарники в git не идут)
+# Результат -> packages/dwm, packages/st, packages/feh и bundles/qt/dwm-studio (бинарники в git не идут)
 set -e
 cd "$(dirname "$0")/.."
 
@@ -69,8 +69,7 @@ make_dwm $D
 mkdir -p packages/dwm/usr/bin
 cp $D/dwm packages/dwm/usr/bin/dwm
 make_dwm $B/dwm-studio patches/dwm-studio.patch
-mkdir -p packages/dwm-studio/usr/bin
-cp $B/dwm-studio/dwm packages/dwm-studio/usr/bin/dwm-studio
+cp $B/dwm-studio/dwm bundles/qt/dwm-studio  # не пакет: данные бандла qt (bundles/qt.txt, --file)
 
 S=$B/st-$ST
 patch -d $S -p1 -s < patches/st-config.patch
@@ -85,6 +84,6 @@ rm -rf packages/feh/usr
 make -C $F -s PREFIX=/usr DESTDIR=$PWD/packages/feh install-bin install-font install-img install-applications > /dev/null
 rm -f packages/feh/usr/share/feh/images/feh.svg  # значок для меню рабочих столов; feh.png рисует сам feh
 
-for f in packages/dwm/usr/bin/dwm packages/dwm-studio/usr/bin/dwm-studio packages/st/usr/bin/st packages/feh/usr/bin/feh; do
+for f in packages/dwm/usr/bin/dwm bundles/qt/dwm-studio packages/st/usr/bin/st packages/feh/usr/bin/feh; do
   echo "$f $(du -h $f | cut -f1): $($TC/bin/i686-linux-musl-readelf -d $f | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done

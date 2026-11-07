@@ -84,6 +84,9 @@ def packages_cpio(names, world, extra=()):
         for spec in extra:
             src, _, dest = spec.partition(":")
             dest = dest or "/root/" + os.path.basename(src)
+            if os.path.isdir(src):  # папка - её содержимое в ПУТЬ с правами (данные бандла, мимо kt pkg)
+                shutil.copytree(src, os.path.join(root, dest.lstrip("/")), dirs_exist_ok=True)
+                continue
             if dest.endswith("/"):
                 dest += os.path.basename(src)
             target = os.path.join(root, dest.lstrip("/"))
@@ -361,7 +364,7 @@ def options(argv=None):
     ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
-                    help="положить файл в образ (по умолчанию в /root/)")
+                    help="положить файл в образ (по умолчанию в /root/); папку - её содержимое в ПУТЬ")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
     ap.add_argument("--v86", default=V86, metavar="ПАПКА", help="libv86.js, v86.wasm и BIOS (по умолчанию %s)" % V86)
     # --vga [МБ]: число - только если оно следом, иначе (--vga doom) 8; argparse с nargs="?" съел бы пакет

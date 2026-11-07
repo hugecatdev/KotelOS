@@ -22,7 +22,7 @@ scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> buil
 scripts/build-doom.sh           # doom -> packages/doom, doom1.wad -> build/packages/doom-shareware (его зовёт get-packages.sh)
 scripts/build-xorg.sh           # Xorg без OpenGL -> packages/xorg (его зовёт get-packages.sh)
 scripts/build-mesa.sh           # libGL без LLVM (softpipe через Xlib) -> packages/mesa-xlib (его зовёт get-packages.sh)
-scripts/build-dwm.sh            # dwm, dwm-studio, st, feh -> packages/... (его зовёт get-packages.sh)
+scripts/build-dwm.sh            # dwm, st, feh -> packages/..., dwm-studio -> bundles/qt (его зовёт get-packages.sh)
 scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)
 scripts/build-v86.sh            # v86 из исходников + patches/v86/ -> vendor/v86/ (Rust с wasm32 и Closure Compiler качает в .cache/)
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
