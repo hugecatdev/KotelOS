@@ -71,7 +71,82 @@
  /*
   * VIRTGPU_DRM_CAPSET_VIRGL has version 0 and 1, but they are both
   * virgl_caps_v1 and are exactly the same.
-@@ -5129,7 +5146,13 @@
+@@ -3968,6 +3985,57 @@
+    vrend_shader_state_reference(&state, NULL);
+ }
+ 
++/* GLES without reading the destination in the shader (no framebuffer fetch, e.g. WebGL2):
++ * logic ops that blending can express - exactly when the source channels are 0 or 1 (that is how
++ * X draws rubber bands and inversions: GXxor with all ones), approximately otherwise. shader_op
++ * is what the fragment shader does to the source first (COPY - nothing). NAND and OR_REVERSE
++ * have no such form. */
++static bool logicop_by_blend(enum pipe_logicop op, GLenum *sfactor, GLenum *dfactor,
++                             enum pipe_logicop *shader_op)
++{
++   enum pipe_logicop sh = PIPE_LOGICOP_COPY;
++   GLenum sf, df;
++   switch (op) {
++   case PIPE_LOGICOP_EQUIV:        /* ~(s ^ d) = ~s ^ d */
++      sh = PIPE_LOGICOP_COPY_INVERTED;
++      /* fallthrough */
++   case PIPE_LOGICOP_XOR:          /* s(1-d) + d(1-s) */
++      sf = GL_ONE_MINUS_DST_COLOR; df = GL_ONE_MINUS_SRC_COLOR;
++      break;
++   case PIPE_LOGICOP_OR_INVERTED:  /* ~s | d */
++      sh = PIPE_LOGICOP_COPY_INVERTED;
++      /* fallthrough */
++   case PIPE_LOGICOP_OR:           /* s(1-d) + d */
++      sf = GL_ONE_MINUS_DST_COLOR; df = GL_ONE;
++      break;
++   case PIPE_LOGICOP_AND:          /* s d */
++      sf = GL_DST_COLOR; df = GL_ZERO;
++      break;
++   case PIPE_LOGICOP_AND_INVERTED: /* (1-s) d */
++      sf = GL_ZERO; df = GL_ONE_MINUS_SRC_COLOR;
++      break;
++   case PIPE_LOGICOP_NOR:          /* ~(s | d) = ~s & ~d */
++      sh = PIPE_LOGICOP_COPY_INVERTED;
++      /* fallthrough */
++   case PIPE_LOGICOP_AND_REVERSE:  /* s (1-d) */
++      sf = GL_ONE_MINUS_DST_COLOR; df = GL_ZERO;
++      break;
++   case PIPE_LOGICOP_INVERT:       /* 1-d: the shader outputs 1 */
++      sh = PIPE_LOGICOP_SET;
++      sf = GL_ONE_MINUS_DST_COLOR; df = GL_ZERO;
++      break;
++   case PIPE_LOGICOP_NOOP:
++      sf = GL_ZERO; df = GL_ONE;
++      break;
++   default:
++      return false;
++   }
++   if (sfactor) *sfactor = sf;
++   if (dfactor) *dfactor = df;
++   if (shader_op) *shader_op = sh;
++   return true;
++}
++
+ static inline bool can_emulate_logicop(enum pipe_logicop op)
+ {
+    if (has_feature(feat_framebuffer_fetch_non_coherent) ||
+@@ -4049,9 +4117,16 @@
+       key->fs.lower_left_origin = !sub_ctx->fbo_origin_upper_left;
+       key->fs.swizzle_output_rgb_to_bgr = sub_ctx->swizzle_output_rgb_to_bgr;
+       key->fs.needs_manual_srgb_encode_bitmask = sub_ctx->needs_manual_srgb_encode_bitmask;
++      enum pipe_logicop shader_op;
+       if (vrend_state.use_gles && can_emulate_logicop(sub_ctx->blend_state.logicop_func)) {
+          key->fs.logicop_enabled = sub_ctx->blend_state.logicop_enable;
+          key->fs.logicop_func = sub_ctx->blend_state.logicop_func;
++      } else if (vrend_state.use_gles &&
++                 logicop_by_blend(sub_ctx->blend_state.logicop_func, NULL, NULL, &shader_op)) {
++         /* the rest is done by blending (vrend_hw_emit_blend) */
++         key->fs.logicop_enabled = sub_ctx->blend_state.logicop_enable &&
++                                   shader_op != PIPE_LOGICOP_COPY;
++         key->fs.logicop_func = shader_op;
+       }
+       int fs_prim_mode = sub_ctx->prim_mode; // inherit draw-call's mode
+ 
+@@ -5129,7 +5204,13 @@
        if (vbo->base.stride == 0) {
           void *data;
           /* for 0 stride we are kinda screwed */
@@ -85,7 +160,7 @@
  
           switch (ve->nr_chan) {
           case 1:
-@@ -5145,7 +5168,9 @@
+@@ -5145,7 +5226,9 @@
              glVertexAttrib4fv(loc, data);
              break;
           }
@@ -95,7 +170,34 @@
           disable_bitmask |= (1 << loc);
        } else {
           GLint size = !vrend_state.use_gles && (va->zyxw_bitmask & (1 << i)) ? GL_BGRA : ve->nr_chan;
-@@ -9303,9 +9328,11 @@
+@@ -6417,7 +6500,8 @@
+ 
+    if (logicop_changed) {
+       if (vrend_state.use_gles) {
+-         if (can_emulate_logicop(state->logicop_func))
++         if (can_emulate_logicop(state->logicop_func) ||
++             logicop_by_blend(state->logicop_func, NULL, NULL, NULL))
+             sub_ctx->shader_dirty = true;
+          else
+             report_gles_warn(sub_ctx->parent, GLES_WARN_LOGIC_OP);
+@@ -6492,6 +6576,16 @@
+    }
+    sub_ctx->hw_blend_state.independent_blend_enable = state->independent_blend_enable;
+ 
++   GLenum lsf, ldf;
++   if (vrend_state.use_gles && state->logicop_enable &&
++       !can_emulate_logicop(state->logicop_func) &&
++       logicop_by_blend(state->logicop_func, &lsf, &ldf, NULL)) {
++      /* a logic op replaces blending: set ours over the one above */
++      glBlendEquation(GL_FUNC_ADD);
++      glBlendFunc(lsf, ldf);
++      glEnable(GL_BLEND);
++   }
++
+    if (has_feature(feat_multisample)) {
+       if (state->alpha_to_coverage)
+          glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+@@ -9303,9 +9397,11 @@
           map_flags |= GL_MAP_UNSYNCHRONIZED_BIT;
  
        glBindBufferARB(res->target, res->gl_id);
@@ -109,7 +211,7 @@
           vrend_read_from_iovec_cb(iov, num_iovs, info->offset, info->box->width, &iov_buffer_upload, &d);
        } else {
           vrend_read_from_iovec(iov, num_iovs, info->offset, data, info->box->width);
-@@ -9946,12 +9973,21 @@
+@@ -9946,12 +10042,21 @@
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
        glBindBufferARB(res->target, res->gl_id);

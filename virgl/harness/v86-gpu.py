@@ -24,7 +24,8 @@ DEFAULT = [
     "shot: x",
 ]
 
-page = os.path.abspath(sys.argv[1])
+# бандл: файл или адрес http(s) (тогда работает kt pkg add из репозитория того же сервера)
+page = sys.argv[1] if sys.argv[1].startswith("http") else "file://" + os.path.abspath(sys.argv[1])
 steps = sys.argv[2:] or DEFAULT
 s = Suite(tempfile.mkdtemp(prefix="virgl-gpu-"), None)
 # перехват консоли - до скриптов страницы: сообщения загрузки модуля не теряются
@@ -32,7 +33,7 @@ s.c = Chrome(tempfile.mkdtemp(prefix="virgl-gpu-c-"))
 s.c.open("about:blank")
 s.c.call("Page.enable")
 s.c.call("Page.addScriptToEvaluateOnNewDocument", source=HOOK)
-s.c.call("Page.navigate", url="file://" + page)
+s.c.call("Page.navigate", url=page)
 print("машина готова за %.1f с" % s.wait_ready(), flush=True)
 try:
     for step in steps:
@@ -44,9 +45,22 @@ try:
             print("js %s -> %s" % (what[:120], json.dumps(s.ev(what), ensure_ascii=False)), flush=True)
         elif kind == "reload":
             # та же страница заново: машина восстанавливается из сохранения (kt save)
-            s.c.call("Page.navigate", url="file://" + page)
+            s.c.call("Page.navigate", url=page)
             time.sleep(2)
             print("после перезагрузки готова за %.1f с" % s.wait_ready(), flush=True)
+        elif kind == "drag":
+            # мышью по странице: drag: x1 y1 x2 y2 - нажать, протащить шагами, отпустить
+            x1, y1, x2, y2 = map(float, what.split())
+            m = lambda t, x, y, **k: s.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, **k)
+            m("mouseMoved", x1, y1)
+            time.sleep(0.5)
+            m("mousePressed", x1, y1, button="left", buttons=1, clickCount=1)
+            time.sleep(1)
+            for i in range(1, 11):
+                m("mouseMoved", x1 + (x2 - x1) * i / 10, y1 + (y2 - y1) * i / 10, button="left", buttons=1)
+                time.sleep(0.4)
+            m("mouseReleased", x2, y2, button="left", buttons=0, clickCount=1)
+            time.sleep(2)
         elif kind == "sleep":
             time.sleep(float(what))
         elif kind == "shot":
