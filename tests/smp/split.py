@@ -55,6 +55,21 @@ SCEN = {
     "qt": [
         ("pyqt-studio", "bg", X + "cd /root && exec pyqt-studio > /root/.cache/pyqt-studio.log 2>&1", 10, 300, None),
     ],
+    # VirGL (ветка virgl: bundle.py --virgl, bundles/virgl/xinitrc): Mesa virpipe -> vtest-bridge -> страница
+    "virgl": [
+        ("startx", "tty", "startx", 6, 120, None),
+        ("glxgears", "bg", X + "GALLIUM_DRIVER=virpipe exec timeout 15 glxgears -geometry 290x290+505+20", 5, 60, None),
+        ("glxgears-soft", "bg", X + "GALLIUM_DRIVER=softpipe exec timeout 15 glxgears -geometry 290x290+505+20", 5, 60, None),
+    ],
+    "virglheavy": [
+        ("startx", "tty", "startx", 6, 120, None),
+        ("teapot", "bg", X + "cd /usr/share/mesa-demos; GALLIUM_DRIVER=virpipe exec timeout 20 teapot", 5, 80, None),
+        ("gloss", "bg", X + "cd /usr/share/mesa-demos; GALLIUM_DRIVER=virpipe exec timeout 20 gloss", 5, 80, None),
+        ("engine", "bg", X + "cd /usr/share/mesa-demos; GALLIUM_DRIVER=virpipe exec timeout 20 engine", 5, 80, None),
+        ("terrain", "bg", X + "cd /usr/share/mesa-demos; GALLIUM_DRIVER=virpipe exec timeout 20 terrain", 5, 80, None),
+        ("fire", "bg", X + "cd /usr/share/mesa-demos; GALLIUM_DRIVER=virpipe exec timeout 20 fire", 5, 80, None),
+        ("luanti", "bg", X + "cd /root && GALLIUM_DRIVER=virpipe exec timeout 150 luanti --go --world /root/.minetest/worlds/w --name kt", 140, 260, None),
+    ],
 }
 PREP = {
     "dwm": "{ printf 'P6\\n640 480\\n255\\n'; dd if=/dev/urandom bs=3072 count=300 2>/dev/null; } > /tmp/img.ppm",

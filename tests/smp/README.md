@@ -44,6 +44,26 @@ v86 из main 8f0d31d.
 
 Сырые числа: `split.py ... --json`.
 
+### VirGL (бандлы ветки virgl, `split.py virgl|virglheavy --site ПАПКА`)
+
+Бандлы `build/virgl-serve/index.html` и `heavy.html` из worktree virgl (копии в
+`ПАПКА/virgl/index.html`, `ПАПКА/virglheavy/index.html`), Mesa virpipe -> `vtest-bridge`
+(TCP через ne2k) -> страница -> virglrenderer -> WebGL2 (SwiftShader в headless).
+
+| сценарий | 2 ядра | 4 ядра | кто работает |
+|---|---|---|---|
+| glxgears 15 с | 1.11x (до 1.23) | 1.12x | vtest-bridge 80%, glxgears 26%, Xorg 7% |
+| glxgears, softpipe | 1.05x | 1.06x | glxgears 90% |
+| teapot / gloss / engine / terrain / fire, 20 с | 1.09-1.13x (до 1.25-1.33) | 1.10-1.14x | vtest-bridge 75-79%, программа 21-36% |
+| luanti 150 с (загрузка мира и 1-2 к/с) | **1.45x** (до 1.99) | 1.56x | vtest-bridge 49%, luanti 24%, Server 11%, ServerStart 8%, Emerge-0 7% |
+| startx (twm + xterm) | 1.16-1.19x | 1.19-1.22x | Xorg ~40%, xterm, xkbcomp, twm |
+
+У GL-программ упор - один поток моста (TCP по эмулированной сетевой карте: ядро и
+ne2k), второе ядро взяло бы только саму программу. Дешевле транспорт моста дал бы
+больше, чем SMP. Многопоточный luanti - лучший случай из всех замеров. «По потокам
+видно» больше 100%: время потоков ядро считает точнее тиков `/proc/stat`, при большом
+сетевом трафике тики теряются - на оценку это почти не влияет.
+
 ## 2. Цена атомарных обращений: `v86-atomic-probe.patch`
 
 Патч на дерево `scripts/build-v86.sh` (обработанная копия `.cache/v86-REV`,
