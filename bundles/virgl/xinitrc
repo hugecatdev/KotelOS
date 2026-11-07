@@ -1,0 +1,15 @@
+# сессия бандла virgl (startx): OpenGL идёт через VirGL - Mesa (GALLIUM_DRIVER=virpipe) ->
+# vtest-bridge -> страница -> virglrenderer (wasm) -> WebGL2. Проба: glxgears; для сравнения
+# программно - GALLIUM_DRIVER=softpipe glxgears. Журнал моста - /tmp/vtest-bridge.log
+export GALLIUM_DRIVER=virpipe
+vtest-bridge > /tmp/vtest-bridge.log 2>&1 &
+bridge=$!
+if [ -f "$HOME/.twmrc" ]; then twm & else twm -f /etc/X11/twmrc & fi
+# xterm - на ширину экрана, не больше 80x24 (шрифт 6x13), как без .xinitrc
+size=$(kt screen size 2>/dev/null) || size=800x600
+w=${size%x*} h=${size#*x}
+cols=$(((w - 40) / 6)) rows=$(((h - 60) / 13))
+[ $cols -le 80 ] || cols=80
+[ $rows -le 24 ] || rows=24
+xterm -geometry ${cols}x${rows}+10+20
+kill $bridge 2>/dev/null
