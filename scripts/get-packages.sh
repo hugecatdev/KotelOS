@@ -75,11 +75,23 @@ rm -rf build/packages/qhull/usr/bin
 scripts/build-openblas.sh
 scripts/build-numpy.sh
 scripts/build-doom.sh
+# libdrm - одна libdrm.so.2 (100 КБ, ей нужна только musl): её берут Xorg и mesa-xlib (virgl). В пакете
+# Alpine ещё библиотеки чужих видеокарт (amdgpu, intel, nouveau...), а с ними libpciaccess и база имён PCI
+# (hwdata-pci, 1.5 МБ)
+python3 alpine.py libdrm --keep-existing --max-age 168 --skip libpciaccess --drop 'usr/lib/libdrm_*'
 scripts/build-xorg.sh
 scripts/build-dwm.sh
 scripts/build-mesa.sh
+# Демо OpenGL: glxinfo и glxgears (mesa-utils), mesa-demos (gloss, teapot, fire, terrain... ~290 программ) -
+# только GLX через mesa-xlib: 3D на странице (virgl) или softpipe. Целиком они тянут mesa с LLVM (~250 МБ,
+# машине не поставить) через EGL, GLES и GBM, ещё Vulkan и Wayland - программ для них (egl*, es2*,
+# peglgears, xeglgears, vkgears) в пакетах нет
+python3 alpine.py mesa-demos --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib \
+  --skip mesa-egl --skip mesa-gles --skip mesa-gbm --skip vulkan-loader --skip libdecor \
+  --skip wayland-libs-client --skip wayland-libs-egl --skip libxkbcommon --skip libxkbcommon-x11 \
+  --drop 'usr/bin/egl*' --drop 'usr/bin/es2*' --drop usr/bin/peglgears --drop usr/bin/xeglgears --drop usr/bin/vkgears
 # Qt5 под X: libGL - наша mesa-xlib (у mesa из Alpine LLVM, ~480 МБ), без EGL/GBM (они - для платформ без X),
-# GTK3 (тема), libinput, cups, pango, xdg-utils (тянет libmagic, 10 МБ), libdrm (копия - в xorg) и полных
+# GTK3 (тема), libinput, cups, pango, xdg-utils (тянет libmagic, 10 МБ), libdrm (её ставит xorg) и полных
 # xkeyboard-config (раскладку Qt берёт у сервера) и ICU (хватает icu-data-en)
 python3 alpine.py sqlitebrowser --keep-existing --max-age 168 --alias mesa-gl=mesa-xlib \
   --skip mesa-egl --skip mesa-gbm --skip gtk+3.0 --skip libinput-libs --skip cups-libs --skip pango \

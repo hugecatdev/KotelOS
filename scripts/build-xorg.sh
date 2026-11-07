@@ -98,9 +98,9 @@ mkdir -p $OUT/usr/bin $OUT/usr/lib/xorg
 cp $B/inst/usr/bin/Xorg $OUT/usr/bin/Xorg
 cp -r $B/inst/usr/lib/xorg/modules $OUT/usr/lib/xorg/modules
 rm -f $OUT/usr/lib/xorg/modules/*.la $OUT/usr/lib/xorg/modules/*/*.la
-# libpciaccess и libdrm - своими копиями: пакет Alpine libpciaccess тянет базу имён PCI
-# (hwdata-pci, 1.5 МБ), а libdrm - ещё библиотеки чужих видеокарт и тот же libpciaccess
-cp -P $SR/usr/lib/libpciaccess.so.0 $SR/usr/lib/libpciaccess.so.0.* $SR/usr/lib/libdrm.so.2 $SR/usr/lib/libdrm.so.2.* $OUT/usr/lib/
+# libpciaccess - своей копией: пакет Alpine тянет базу имён PCI (hwdata-pci, 1.5 МБ); libdrm - пакет
+# libdrm (урезанный в get-packages.sh, его берёт и mesa-xlib)
+cp -P $SR/usr/lib/libpciaccess.so.0 $SR/usr/lib/libpciaccess.so.0.* $OUT/usr/lib/
 # раскладки: из xkeyboard-config (3.3 МБ) только us и ru с переключением CapsLock - 0.8 МБ;
 # symbols - всё, что берёт xkbcomp для pc105, us,ru и grp:caps_toggle по правилам evdev
 # (клавиатура) и base (виртуальная клавиатура сервера). Проверять с пустым путём поиска
