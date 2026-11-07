@@ -1,0 +1,565 @@
+diff -ru v86-base/src/rust/codegen.rs v86-fold/src/rust/codegen.rs
+--- v86-base/src/rust/codegen.rs	2026-11-07 20:59:16.290175418 +0200
++++ v86-fold/src/rust/codegen.rs	2026-11-07 21:09:22.082058970 +0200
+@@ -12,6 +12,119 @@
+ use crate::regs;
+ use crate::wasmgen::wasm_builder::{WasmBuilder, WasmLocal, WasmLocalI64};
+ 
++// Замер цены SMP (не для работы): 0 - как в v86, 1 - ветка по выравниванию, обычные операции
++// (невыровненные - с atomic.fence), 2 - то же, но выровненные - атомарные (порядок TSO на ARM),
++// 3 - атомики без лишней ветки: выравнивание - в проверке TLB, невыровненные - медленным путём
++// (чтение-изменение-запись - как 2), 4 - раскладка 3 (у быстрого и медленного пути свои хвосты),
++// но обычные операции и прежнее условие «не через страницу» - цена атомиков = 3 против 4
++pub const SMP_PROBE: u32 = 3;
++
++#[derive(Copy, Clone, PartialEq)]
++enum MemOp { L8, L16, L32, L64, S8, S16, S32, S64 }
++
++fn mem_plain(b: &mut WasmBuilder, op: MemOp, off: u32) {
++    match op {
++        MemOp::L8 => b.load_u8(off),
++        MemOp::L16 => b.load_unaligned_u16(off),
++        MemOp::L32 => b.load_unaligned_i32(off),
++        MemOp::L64 => b.load_unaligned_i64(off),
++        MemOp::S8 => b.store_u8(off),
++        MemOp::S16 => b.store_unaligned_u16(off),
++        MemOp::S32 => b.store_unaligned_i32(off),
++        MemOp::S64 => b.store_unaligned_i64(off),
++    }
++}
++
++fn mem_fast(b: &mut WasmBuilder, op: MemOp, off: u32) {
++    if SMP_PROBE < 2 || SMP_PROBE == 4 {
++        return mem_plain(b, op, off);
++    }
++    // i32.atomic.load8_u/16_u/load, i64.atomic.load, i32.atomic.store8/16/store, i64.atomic.store
++    let (sub, align) = match op {
++        MemOp::L8 => (0x12, 0),
++        MemOp::L16 => (0x13, 1),
++        MemOp::L32 => (0x10, 2),
++        MemOp::L64 => (0x11, 3),
++        MemOp::S8 => (0x19, 0),
++        MemOp::S16 => (0x1A, 1),
++        MemOp::S32 => (0x17, 2),
++        MemOp::S64 => (0x18, 3),
++    };
++    b.atomic_mem(sub, align, off);
++}
++
++// стек: [адрес] для чтения, [адрес, значение] для записи
++fn gen_mem(ctx: &mut JitContext, op: MemOp, off: u32) {
++    let b = &mut *ctx.builder;
++    if SMP_PROBE == 0 || SMP_PROBE == 4 {
++        return mem_plain(b, op, off);
++    }
++    let mask = match op {
++        MemOp::L8 | MemOp::S8 => return mem_fast(b, op, off),
++        MemOp::L16 | MemOp::S16 => 1,
++        MemOp::L32 | MemOp::S32 => 3,
++        MemOp::L64 | MemOp::S64 => 7,
++    };
++    match op {
++        MemOp::S64 => {
++            let v = b.set_new_local_i64();
++            let a = b.set_new_local();
++            b.get_local(&a);
++            b.const_i32(mask);
++            b.and_i32();
++            b.eqz_i32();
++            b.if_void();
++            b.get_local(&a);
++            b.get_local_i64(&v);
++            mem_fast(b, op, off);
++            b.else_();
++            b.atomic_fence();
++            b.get_local(&a);
++            b.get_local_i64(&v);
++            mem_plain(b, op, off);
++            b.block_end();
++            b.free_local(a);
++            b.free_local_i64(v);
++        },
++        MemOp::S16 | MemOp::S32 => {
++            let v = b.set_new_local();
++            let a = b.set_new_local();
++            b.get_local(&a);
++            b.const_i32(mask);
++            b.and_i32();
++            b.eqz_i32();
++            b.if_void();
++            b.get_local(&a);
++            b.get_local(&v);
++            mem_fast(b, op, off);
++            b.else_();
++            b.atomic_fence();
++            b.get_local(&a);
++            b.get_local(&v);
++            mem_plain(b, op, off);
++            b.block_end();
++            b.free_local(a);
++            b.free_local(v);
++        },
++        _ => {
++            let a = b.set_new_local();
++            b.get_local(&a);
++            b.const_i32(mask);
++            b.and_i32();
++            b.eqz_i32();
++            if op == MemOp::L64 { b.if_i64() } else { b.if_i32() }
++            b.get_local(&a);
++            mem_fast(b, op, off);
++            b.else_();
++            b.atomic_fence();
++            b.get_local(&a);
++            mem_plain(b, op, off);
++            b.block_end();
++            b.free_local(a);
++        },
++    }
++}
++
+ pub fn gen_add_cs_offset(ctx: &mut JitContext) {
+     if !ctx.cpu.has_flat_segmentation() {
+         ctx.builder
+@@ -639,12 +752,269 @@
+     )
+ }
+ 
++fn emit_read_tail(ctx: &mut JitContext, bits: BitSize, where_to_write: Option<u32>, atomic: bool) {
++    // стек: [физический адрес]
++    let b = &mut *ctx.builder;
++    if !atomic && SMP_PROBE != 4 {
++        b.atomic_fence();
++    }
++    let ld = |b: &mut WasmBuilder, op: MemOp, off: u32| {
++        if atomic {
++            mem_fast(b, op, off)
++        }
++        else {
++            mem_plain(b, op, off)
++        }
++    };
++    match bits {
++        BitSize::BYTE => ld(b, MemOp::L8, 0),
++        BitSize::WORD => ld(b, MemOp::L16, 0),
++        BitSize::DWORD => ld(b, MemOp::L32, 0),
++        BitSize::QWORD => ld(b, MemOp::L64, 0),
++        BitSize::DQWORD => {
++            let w = where_to_write.unwrap();
++            let v = b.set_new_local();
++            b.const_i32(0);
++            b.get_local(&v);
++            ld(b, MemOp::L64, 0);
++            b.store_unaligned_i64(w);
++            b.const_i32(0);
++            b.get_local(&v);
++            ld(b, MemOp::L64, 8);
++            b.store_unaligned_i64(w + 8);
++            b.free_local(v);
++        },
++    }
++}
++
++fn gen_align_check(ctx: &mut JitContext, bits: BitSize, address_local: &WasmLocal) {
++    // стек: [tlb в порядке]; оставляет [tlb в порядке && выровнено]: выровненное до 8 байт
++    // страницу не пересекает, 16 байт - выровнено на 8 и не через страницу
++    let b = &mut *ctx.builder;
++    if SMP_PROBE == 4 {
++        if bits != BitSize::BYTE {
++            b.get_local(address_local);
++            b.const_i32(0xFFF);
++            b.and_i32();
++            b.const_i32(0x1000 - bits.bytes() as i32);
++            b.le_i32();
++            b.and_i32();
++        }
++        return;
++    }
++    match bits {
++        BitSize::BYTE => {},
++        BitSize::DQWORD => {
++            b.get_local(address_local);
++            b.const_i32(0xFFF);
++            b.and_i32();
++            b.const_i32(0x1000 - 16);
++            b.le_i32();
++            b.and_i32();
++            b.get_local(address_local);
++            b.const_i32(7);
++            b.and_i32();
++            b.eqz_i32();
++            b.and_i32();
++        },
++        _ => {
++            b.get_local(address_local);
++            b.const_i32(bits.bytes() as i32 - 1);
++            b.and_i32();
++            b.eqz_i32();
++            b.and_i32();
++        },
++    }
++}
++
++fn gen_safe_read_fold(
++    ctx: &mut JitContext,
++    bits: BitSize,
++    address_local: &WasmLocal,
++    where_to_write: Option<u32>,
++) {
++    let end = ctx.builder.block_result(match bits {
++        BitSize::DQWORD => 0,
++        BitSize::QWORD => 2,
++        _ => 1,
++    });
++    let slow = ctx.builder.block_void();
++    ctx.builder.get_local(address_local);
++    ctx.builder.const_i32(12);
++    ctx.builder.shr_u_i32();
++    ctx.builder.const_i32(2);
++    ctx.builder.shl_i32();
++    ctx.builder
++        .load_aligned_i32(unsafe { &tlb_data[0] as *const i32 as u32 });
++    let entry_local = ctx.builder.tee_new_local();
++    ctx.builder.const_i32(
++        (0xFFF
++            & !TLB_READONLY
++            & !TLB_GLOBAL
++            & !TLB_HAS_CODE
++            & !TLB_NO_EXEC
++            & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
++    );
++    ctx.builder.and_i32();
++    ctx.builder.const_i32(TLB_VALID as i32);
++    ctx.builder.eq_i32();
++    gen_align_check(ctx, bits, address_local);
++    ctx.builder.eqz_i32();
++    ctx.builder.br_if(slow);
++    // быстрый путь: выровнено - атомарно
++    ctx.builder.get_local(&entry_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    ctx.builder.get_local(address_local);
++    ctx.builder.xor_i32();
++    emit_read_tail(ctx, bits, where_to_write, true);
++    ctx.builder.br(end);
++    ctx.builder.block_end();
++    // медленный путь: промах TLB, невыровнено, через страницу, MMIO
++    ctx.builder.get_local(address_local);
++    ctx.builder
++        .const_i32(ctx.start_of_current_instruction as i32 & 0xFFF);
++    match bits {
++        BitSize::BYTE => ctx.builder.call_fn2_ret("safe_read8_slow_jit"),
++        BitSize::WORD => ctx.builder.call_fn2_ret("safe_read16_slow_jit"),
++        BitSize::DWORD => ctx.builder.call_fn2_ret("safe_read32s_slow_jit"),
++        BitSize::QWORD => ctx.builder.call_fn2_ret("safe_read64s_slow_jit"),
++        BitSize::DQWORD => ctx.builder.call_fn2_ret("safe_read128s_slow_jit"),
++    }
++    ctx.builder.tee_local(&entry_local);
++    ctx.builder.const_i32(1);
++    ctx.builder.and_i32();
++    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.get_local(&entry_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    ctx.builder.get_local(address_local);
++    ctx.builder.xor_i32();
++    emit_read_tail(ctx, bits, where_to_write, false);
++    ctx.builder.block_end();
++    ctx.builder.free_local(entry_local);
++}
++
++fn emit_write_tail(ctx: &mut JitContext, bits: BitSize, value_local: &GenSafeWriteValue, atomic: bool) {
++    // стек: [физический адрес]
++    let b = &mut *ctx.builder;
++    if !atomic && SMP_PROBE != 4 {
++        b.atomic_fence();
++    }
++    let st = |b: &mut WasmBuilder, op: MemOp, off: u32| {
++        if atomic {
++            mem_fast(b, op, off)
++        }
++        else {
++            mem_plain(b, op, off)
++        }
++    };
++    match value_local {
++        GenSafeWriteValue::I32(local) => {
++            b.get_local(local);
++            match bits {
++                BitSize::BYTE => st(b, MemOp::S8, 0),
++                BitSize::WORD => st(b, MemOp::S16, 0),
++                _ => st(b, MemOp::S32, 0),
++            }
++        },
++        GenSafeWriteValue::I64(local) => {
++            b.get_local_i64(local);
++            st(b, MemOp::S64, 0);
++        },
++        GenSafeWriteValue::TwoI64s(local1, local2) => {
++            let v = b.tee_new_local();
++            b.get_local_i64(local1);
++            st(b, MemOp::S64, 0);
++            b.get_local(&v);
++            b.get_local_i64(local2);
++            st(b, MemOp::S64, 8);
++            b.free_local(v);
++        },
++    }
++}
++
++fn gen_safe_write_fold(
++    ctx: &mut JitContext,
++    bits: BitSize,
++    address_local: &WasmLocal,
++    value_local: GenSafeWriteValue,
++) {
++    let end = ctx.builder.block_void();
++    let slow = ctx.builder.block_void();
++    ctx.builder.get_local(address_local);
++    ctx.builder.const_i32(12);
++    ctx.builder.shr_u_i32();
++    ctx.builder.const_i32(2);
++    ctx.builder.shl_i32();
++    ctx.builder
++        .load_aligned_i32(unsafe { &tlb_data[0] as *const i32 as u32 });
++    let entry_local = ctx.builder.tee_new_local();
++    ctx.builder.const_i32(
++        (0xFFF & !TLB_GLOBAL & !TLB_NO_EXEC & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER }))
++            as i32,
++    );
++    ctx.builder.and_i32();
++    ctx.builder.const_i32(TLB_VALID as i32);
++    ctx.builder.eq_i32();
++    gen_align_check(ctx, bits, address_local);
++    ctx.builder.eqz_i32();
++    ctx.builder.br_if(slow);
++    ctx.builder.get_local(&entry_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    ctx.builder.get_local(address_local);
++    ctx.builder.xor_i32();
++    emit_write_tail(ctx, bits, &value_local, true);
++    ctx.builder.br(end);
++    ctx.builder.block_end();
++    ctx.builder.get_local(address_local);
++    match &value_local {
++        GenSafeWriteValue::I32(local) => ctx.builder.get_local(local),
++        GenSafeWriteValue::I64(local) => ctx.builder.get_local_i64(local),
++        GenSafeWriteValue::TwoI64s(local1, local2) => {
++            ctx.builder.get_local_i64(local1);
++            ctx.builder.get_local_i64(local2)
++        },
++    }
++    ctx.builder.const_i32(
++        ctx.start_of_current_instruction as i32 & 0xFFF
++            | (ctx.wasm_table_index.to_u16() as i32) << 16,
++    );
++    match bits {
++        BitSize::BYTE => ctx.builder.call_fn3_ret("safe_write8_slow_jit"),
++        BitSize::WORD => ctx.builder.call_fn3_ret("safe_write16_slow_jit"),
++        BitSize::DWORD => ctx.builder.call_fn3_ret("safe_write32_slow_jit"),
++        BitSize::QWORD => ctx
++            .builder
++            .call_fn3_i32_i64_i32_ret("safe_write64_slow_jit"),
++        BitSize::DQWORD => ctx
++            .builder
++            .call_fn4_i32_i64_i64_i32_ret("safe_write128_slow_jit"),
++    }
++    ctx.builder.tee_local(&entry_local);
++    ctx.builder.const_i32(1);
++    ctx.builder.and_i32();
++    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.get_local(&entry_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    ctx.builder.get_local(address_local);
++    ctx.builder.xor_i32();
++    emit_write_tail(ctx, bits, &value_local, false);
++    ctx.builder.block_end();
++    ctx.builder.free_local(entry_local);
++}
++
+ fn gen_safe_read(
+     ctx: &mut JitContext,
+     bits: BitSize,
+     address_local: &WasmLocal,
+     where_to_write: Option<u32>,
+ ) {
++    if SMP_PROBE >= 3 {
++        return gen_safe_read_fold(ctx, bits, address_local, where_to_write);
++    }
+     // Execute a virtual memory read. All slow paths (memory-mapped IO, tlb miss, page fault and
+     // read across page boundary are handled in safe_read_jit_slow
+ 
+@@ -748,28 +1118,28 @@
+ 
+     match bits {
+         BitSize::BYTE => {
+-            ctx.builder.load_u8(0);
++            gen_mem(ctx, MemOp::L8, 0);
+         },
+         BitSize::WORD => {
+-            ctx.builder.load_unaligned_u16(0);
++            gen_mem(ctx, MemOp::L16, 0);
+         },
+         BitSize::DWORD => {
+-            ctx.builder.load_unaligned_i32(0);
++            gen_mem(ctx, MemOp::L32, 0);
+         },
+         BitSize::QWORD => {
+-            ctx.builder.load_unaligned_i64(0);
++            gen_mem(ctx, MemOp::L64, 0);
+         },
+         BitSize::DQWORD => {
+             let where_to_write = where_to_write.unwrap();
+             let virt_address_local = ctx.builder.set_new_local();
+             ctx.builder.const_i32(0);
+             ctx.builder.get_local(&virt_address_local);
+-            ctx.builder.load_unaligned_i64(0);
++            gen_mem(ctx, MemOp::L64, 0);
+             ctx.builder.store_unaligned_i64(where_to_write);
+ 
+             ctx.builder.const_i32(0);
+             ctx.builder.get_local(&virt_address_local);
+-            ctx.builder.load_unaligned_i64(8);
++            gen_mem(ctx, MemOp::L64, 8);
+             ctx.builder.store_unaligned_i64(where_to_write + 8);
+ 
+             ctx.builder.free_local(virt_address_local);
+@@ -862,6 +1232,9 @@
+     address_local: &WasmLocal,
+     value_local: GenSafeWriteValue,
+ ) {
++    if SMP_PROBE >= 3 {
++        return gen_safe_write_fold(ctx, bits, address_local, value_local);
++    }
+     // Execute a virtual memory write. All slow paths (memory-mapped IO, tlb miss, page fault,
+     // write across page boundary and page containing jitted code are handled in safe_write_jit_slow
+ 
+@@ -979,26 +1352,26 @@
+ 
+             let virt_address_local = ctx.builder.tee_new_local();
+             ctx.builder.get_local_i64(local1);
+-            ctx.builder.store_unaligned_i64(0);
++            gen_mem(ctx, MemOp::S64, 0);
+ 
+             ctx.builder.get_local(&virt_address_local);
+             ctx.builder.get_local_i64(local2);
+-            ctx.builder.store_unaligned_i64(8);
++            gen_mem(ctx, MemOp::S64, 8);
+             ctx.builder.free_local(virt_address_local);
+         },
+     }
+     match bits {
+         BitSize::BYTE => {
+-            ctx.builder.store_u8(0);
++            gen_mem(ctx, MemOp::S8, 0);
+         },
+         BitSize::WORD => {
+-            ctx.builder.store_unaligned_u16(0);
++            gen_mem(ctx, MemOp::S16, 0);
+         },
+         BitSize::DWORD => {
+-            ctx.builder.store_unaligned_i32(0);
++            gen_mem(ctx, MemOp::S32, 0);
+         },
+         BitSize::QWORD => {
+-            ctx.builder.store_unaligned_i64(0);
++            gen_mem(ctx, MemOp::S64, 0);
+         },
+         BitSize::DQWORD => {}, // handled above
+     }
+@@ -1121,16 +1494,16 @@
+ 
+     match bits {
+         BitSize::BYTE => {
+-            ctx.builder.load_u8(0);
++            gen_mem(ctx, MemOp::L8, 0);
+         },
+         BitSize::WORD => {
+-            ctx.builder.load_unaligned_u16(0);
++            gen_mem(ctx, MemOp::L16, 0);
+         },
+         BitSize::DWORD => {
+-            ctx.builder.load_unaligned_i32(0);
++            gen_mem(ctx, MemOp::L32, 0);
+         },
+         BitSize::QWORD => {
+-            ctx.builder.load_unaligned_i64(0);
++            gen_mem(ctx, MemOp::L64, 0);
+         },
+         BitSize::DQWORD => assert!(false), // not used
+     }
+@@ -1220,16 +1593,16 @@
+ 
+     match bits {
+         BitSize::BYTE => {
+-            ctx.builder.store_u8(0);
++            gen_mem(ctx, MemOp::S8, 0);
+         },
+         BitSize::WORD => {
+-            ctx.builder.store_unaligned_u16(0);
++            gen_mem(ctx, MemOp::S16, 0);
+         },
+         BitSize::DWORD => {
+-            ctx.builder.store_unaligned_i32(0);
++            gen_mem(ctx, MemOp::S32, 0);
+         },
+         BitSize::QWORD => {
+-            ctx.builder.store_unaligned_i64(0);
++            gen_mem(ctx, MemOp::S64, 0);
+         },
+         BitSize::DQWORD => {
+             dbg_assert!(false);
+diff -ru v86-base/src/rust/wasmgen/wasm_builder.rs v86-fold/src/rust/wasmgen/wasm_builder.rs
+--- v86-base/src/rust/wasmgen/wasm_builder.rs	2026-11-07 20:59:16.292963307 +0200
++++ v86-fold/src/rust/wasmgen/wasm_builder.rs	2026-11-07 20:57:08.647744518 +0200
+@@ -780,6 +780,19 @@
+         write_leb_u32(&mut self.instruction_body, byte_offset);
+     }
+ 
++    pub fn atomic_mem(&mut self, sub: u8, align: u8, byte_offset: u32) {
++        self.instruction_body.push(op::OP_ATOMIC_PREFIX);
++        self.instruction_body.push(sub);
++        self.instruction_body.push(align);
++        write_leb_u32(&mut self.instruction_body, byte_offset);
++    }
++
++    pub fn atomic_fence(&mut self) {
++        self.instruction_body.push(op::OP_ATOMIC_PREFIX);
++        self.instruction_body.push(op::OP_ATOMIC_FENCE);
++        self.instruction_body.push(0);
++    }
++
+     pub fn increment_fixed_i64(&mut self, byte_offset: u32, n: i64) {
+         self.const_i32(byte_offset as i32);
+         self.load_fixed_i64(byte_offset);
+@@ -886,6 +899,17 @@
+         self.open_block()
+     }
+ 
++    /// блок с результатом: 0 - без, 1 - i32, 2 - i64
++    pub fn block_result(&mut self, kind: u8) -> Label {
++        self.instruction_body.push(op::OP_BLOCK);
++        self.instruction_body.push(match kind {
++            1 => op::TYPE_I32,
++            2 => op::TYPE_I64,
++            _ => op::TYPE_VOID_BLOCK,
++        });
++        self.open_block()
++    }
++
+     pub fn block_void(&mut self) -> Label {
+         self.instruction_body.push(op::OP_BLOCK);
+         self.instruction_body.push(op::TYPE_VOID_BLOCK);
+diff -ru v86-base/src/rust/wasmgen/wasm_opcodes.rs v86-fold/src/rust/wasmgen/wasm_opcodes.rs
+--- v86-base/src/rust/wasmgen/wasm_opcodes.rs	2026-11-07 20:59:16.293039994 +0200
++++ v86-fold/src/rust/wasmgen/wasm_opcodes.rs	2026-11-07 20:47:30.383996583 +0200
+@@ -219,3 +219,7 @@
+ c!(MEM_ALIGN16, 1);
+ c!(MEM_ALIGN32, 2);
+ c!(MEM_ALIGN64, 3);
++
++// threads: префикс атомиков
++c!(OP_ATOMIC_PREFIX, 0xFE);
++c!(OP_ATOMIC_FENCE, 0x03);
