@@ -100,7 +100,7 @@
          if(true)
 --- a/src/virtio_gpu.js
 +++ b/src/virtio_gpu.js
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,845 @@
 +import { dbg_assert, dbg_log } from "./log.js";
 +import { LOG_VIRTIO } from "./const.js";
 +import { VirtIO, VIRTIO_F_VERSION_1 } from "./virtio.js";
@@ -199,8 +199,10 @@
 +    // hardware cursor: resource (0 - none), hot spot and position on the scanout
 +    this.cursor = { id: 0, hot_x: 0, hot_y: 0, x: 0, y: 0 };
 +    this.scanout_rect = [0, 0, 0, 0];
-+    // contexts: id -> capset (3D state is not saved in state images)
++    // contexts: id -> capset (3D state is not saved in state images); used - the ones that submitted
++    // commands (the kernel keeps one for its fbdev client without drawing anything)
 +    this.contexts = new Map();
++    this.contexts_used = new Set();
 +
 +    // requests waiting for a fence: [fence_id, queue_id, bufchain, response]
 +    this.fenced = [];
@@ -634,6 +636,7 @@
 +            if(!this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
 +            gl["_vgw_ctx_destroy"](ctx_id);
 +            this.contexts.delete(ctx_id);
++            if(this.contexts_used.delete(ctx_id)) this.bus.send("virtio-gpu-contexts", this.contexts_used.size);
 +            return response_nodata(RESP_OK_NODATA);
 +        }
 +
@@ -652,6 +655,11 @@
 +            if(!this.contexts.has(ctx_id)) return response_nodata(RESP_ERR_INVALID_CONTEXT_ID);
 +            const size = u32(24);
 +            if(32 + size > request.length || size & 3) return response_nodata(RESP_ERR_INVALID_PARAMETER);
++            if(!this.contexts_used.has(ctx_id))
++            {
++                this.contexts_used.add(ctx_id);
++                this.bus.send("virtio-gpu-contexts", this.contexts_used.size);
++            }
 +            this.sync_shadows_to_host();
 +            const p = this.alloc(size);
 +            this.heap().set(request.subarray(32, 32 + size), p);
@@ -906,6 +914,7 @@
 +    this.scanout_rect = saved.rect;
 +    this.cursor = saved.cursor || { id: 0, hot_x: 0, hot_y: 0, x: 0, y: 0 };
 +    this.contexts.clear();
++    this.contexts_used.clear();
 +    if(this.ready)
 +    {
 +        for(const res of this.resources.values()) this.gl["_vgw_resource_unref"](res.id);
@@ -931,6 +940,7 @@
 +        }
 +    }
 +    this.contexts.clear();
++    this.contexts_used.clear();
 +    this.resources.clear();
 +    this.fenced = [];
 +    this.scanout_resource = 0;

@@ -1136,6 +1136,11 @@
         /* #if virgl */
         if (virglConn) note = "\n3D (VirGL) не сохраняется: программы OpenGL после восстановления запустить заново";
         /* #endif */
+        /* #if virtio_gpu */
+        // состояние GPU (контексты 3D) живёт в WebGL и в сохранение не попадает; X с glamor держит
+        // свой контекст всё время
+        if (gpuContexts) note = "\n3D (virtio-gpu) не сохраняется: программы OpenGL и X с glamor после восстановления запустить заново";
+        /* #endif */
         say(id, (name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`) + note);
         return blob.size;
       } catch (e) {
@@ -1725,7 +1730,7 @@
     // меняются, размер кадра присылает устройство (virtio-gpu-screen-size). Размер дисплея - от
     // страницы, как для X (kt screen size): устройство отдаёт его гостю как предпочтительный режим
     const gpuCanvas = $("#screen canvas.gpu");
-    let gpuSize = [0, 0];
+    let gpuSize = [0, 0], gpuContexts = 0;
     function gpuResize(size) {
       const [w, h] = size.split("x").map(Number);
       if (emulator && w && h) emulator.bus.send("virtio-gpu-resize", [w, h]);
@@ -2171,6 +2176,7 @@
         gpuSize = size;
         fitScreen();
       });
+      emulator.add_listener("virtio-gpu-contexts", (n) => { gpuContexts = n; });
       /* #endif */
       const outDec = new TextDecoder();
       let out = [];
