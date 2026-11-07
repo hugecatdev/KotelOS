@@ -6,8 +6,9 @@
 # формой держат по ~45 МБ, файлы Qt5, PyQt5 и python3 в памяти - ещё ~110. Машина сохраняется сама
 # каждые 2 минуты (--save-timer, kt cfg save.timer): сохранение ~53 МБ, вкладка на миг +330 МБ.
 # pyqt-studio (bundles/qt/fs) и dwm-studio (собирает scripts/build-dwm.sh) - не пакеты, а данные этого
-# бандла: в репозитории и kt pkg их нет; пакеты в конце - их зависимости
---snap --vga 8 --mem 384 --phone-scale 0.75 --save-timer 2
+# бандла: в репозитории и kt pkg их нет; пакеты в конце - их зависимости. v86 в Web Worker (--worker):
+# страница и экран не ждут эмуляцию; по-старому, на странице - kt cfg boot.worker off
+--snap --vga 8 --mem 384 --phone-scale 0.75 --save-timer 2 --worker
 --prep fc-cache
 --run startx
 --file bundles/qt/xinitrc:/root/.xinitrc

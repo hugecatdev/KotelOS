@@ -1,7 +1,8 @@
 # экран с dwm: видеопамять 8 МБ, startx - dwm и два терминала st (~/.xinitrc), xcalc, xeyes, feh;
 # клавиша dwm - Alt, консоли с экрана - Ctrl+Alt+1..9; --prep строит кэш fontconfig (его триггер
-# в перепакованном fontconfig не срабатывает), без него первые окна st появляются на 2-5 с позже
---snap --vga 8
+# в перепакованном fontconfig не срабатывает), без него первые окна st появляются на 2-5 с позже;
+# v86 в Web Worker (--worker): страница и экран не ждут эмуляцию, по-старому - kt cfg boot.worker off
+--snap --vga 8 --worker
 --prep fc-cache
 --file bundles/dwm/xinitrc:/root/.xinitrc
 fun nano htop curl wget pack notify kt-ttyd xorg dwm st xcalc xeyes feh
