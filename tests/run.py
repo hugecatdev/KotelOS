@@ -520,6 +520,36 @@ def main():
         time.sleep(4)
         assert md5(up) in s.screen(), s.screen()[-300:]
 
+    def drop():
+        # файл, брошенный на страницу снаружи, уходит в машину (в /root); картинка, которую тащат по самой
+        # странице (значок в окне tkinter), - нет, хотя браузер отдаёт при отпускании и её файлом
+        s.ok("rm -f /root/up.bin /root/svg+xml")
+        data = {"items": [], "files": [os.path.join(tmp, "up.bin")], "dragOperationsMask": 1}
+        for t in ("dragEnter", "dragOver", "drop"):
+            s.c.call("Input.dispatchDragEvent", type=t, x=200, y=200, data=data)
+        t = time.time()
+        while s.sh("test -f /root/up.bin")[0] and time.time() - t < 20:
+            time.sleep(0.5)
+        out = s.ok("md5sum /root/up.bin && rm /root/up.bin")
+        assert md5(up) in out, out
+        s.ev("""(() => { const i = document.createElement('img'); i.id = 'dragimg';
+          i.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="red"/></svg>');
+          i.style = 'position:fixed;left:300px;top:300px;width:48px;height:48px;z-index:99'; document.body.append(i);
+          window.__drags = 0; addEventListener('dragstart', () => window.__drags++, true); })()""")
+        time.sleep(0.5)
+        m = lambda t, x, y, **k: s.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, **k)  # noqa: E731
+        m("mouseMoved", 324, 324)
+        m("mousePressed", 324, 324, button="left", buttons=1, clickCount=1)
+        for i in range(1, 11):
+            m("mouseMoved", 324 + 30 * i, 324 + 10 * i, button="left", buttons=1)
+            time.sleep(0.05)
+        m("mouseReleased", 624, 424, button="left", buttons=0, clickCount=1)
+        time.sleep(3)
+        s.ev("document.getElementById('dragimg').remove()")
+        assert s.ev("window.__drags"), "браузер не начал перетаскивание картинки - проверять нечего"
+        out = s.ok("ls /root")
+        assert "svg+xml" not in out, "картинка со страницы ушла в машину: " + out
+
     def clipboard():
         s.c.call("Browser.grantPermissions", session=False, origin=base.rstrip("/"), permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
         s.c.call("Emulation.setFocusEmulationEnabled", enabled=True)
@@ -1147,7 +1177,7 @@ def main():
         ("загрузка", boot), ("видеопамять пустая", vga_clean), ("без экрана", no_screen), ("память бандла", bundle_memory), ("один агент", one_agent), ("чистый терминал", clean_screen),
         ("kt js", kt_js), ("kt js из фона", kt_js_background), ("задержки", latency),
         ("kt.exec коды и stdin", exec_codes), ("kt.read/kt.write 2 МБ", read_write),
-        ("kt dl файл, папка, stdin", kt_dl), ("kt up через кнопку", kt_up), ("kt up сразу после Enter", kt_up_typed),
+        ("kt dl файл, папка, stdin", kt_dl), ("kt up через кнопку", kt_up), ("kt up сразу после Enter", kt_up_typed), ("файл брошен на страницу", drop),
         ("kt copy/paste", clipboard), ("события kt.emit", events), ("micropython kt", micropython),
         ("cpython 8 потоков", cpython_threads), ("requests и curl", requests_shim),
         ("alert/confirm/prompt", dialogs), ("kt notify", notify), ("pack/unpack", pack), ("sync", sync),

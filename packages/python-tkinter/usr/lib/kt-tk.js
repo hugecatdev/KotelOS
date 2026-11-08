@@ -131,6 +131,9 @@
 `;
   if (!S.layer?.isConnected) S.layer = document.body.appendChild(document.createElement("div"));
   S.layer.className = "tk-layer";
+  // своего перетаскивания браузера в окнах нет, как в Tk: значок-картинка уезжал бы за мышью, программа
+  // не получала бы <B1-Motion>, а страница при отпускании брала картинку за файл с диска и клала в машину
+  S.layer.ondragstart = (e) => e.preventDefault();
   const NS = "http://www.w3.org/2000/svg";
   const WIN = new Set(["Tk", "Toplevel"]);
   const h = (tag, cls, parent) => {

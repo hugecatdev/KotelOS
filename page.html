@@ -1017,15 +1017,19 @@
       });
     }
 
-    let dragDepth = 0;
-    document.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; $("#drop").classList.add("open"); } });
+    // в машину - только файлы, принесённые снаружи: картинку с самой страницы браузер тоже отдаёт файлом
+    // (значок папки из окна tkinter уезжал в машину файлом svg+xml)
+    let dragDepth = 0, dragInside = false;
+    document.addEventListener("dragstart", () => (dragInside = true));
+    document.addEventListener("dragend", () => (dragInside = false));
+    document.addEventListener("dragenter", (e) => { if (!dragInside && e.dataTransfer.types.includes("Files")) { dragDepth++; $("#drop").classList.add("open"); } });
     document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("open"); } });
     document.addEventListener("dragover", (e) => e.preventDefault());
     document.addEventListener("drop", (e) => {
       e.preventDefault();
       dragDepth = 0;
       $("#drop").classList.remove("open");
-      if (e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files]);
+      if (!dragInside && e.dataTransfer.files.length) uploadFiles([...e.dataTransfer.files]);
     });
 
     function fallbackCopy(text) {
