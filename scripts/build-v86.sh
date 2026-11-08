@@ -48,9 +48,12 @@ ln -f $JAR $SRC/closure-compiler/compiler.jar
 # без отладки и секции имён: 1.6 МБ вместо 2.0, в бандле это gzip 300 КБ вместо 377
 # PROFILER=1 - со счётчиками JIT и опкодов (profiler_stat_get, get_opstats_buffer; tests/jitprof.py):
 # медленнее, только для замеров
+# NAMES=1 - с секцией имён функций (профиль вкладки показывает имена Rust; wasm больше)
 WASM=build/v86.wasm
 [ -n "$PROFILER" ] && WASM=with-profiler
-CARGO_PROFILE_RELEASE_STRIP=symbols make -C $SRC -j"$(nproc)" STRIP_DEBUG=true build/libv86.js $WASM \
+STRIP=symbols STRIP_DEBUG=true
+[ -n "$NAMES" ] && STRIP=debuginfo STRIP_DEBUG=false
+CARGO_PROFILE_RELEASE_STRIP=$STRIP make -C $SRC -j"$(nproc)" STRIP_DEBUG=$STRIP_DEBUG build/libv86.js $WASM \
   > $CACHE/v86-build.log 2>&1 || { tail -30 $CACHE/v86-build.log; exit 1; }
 
 mkdir -p "$OUT"
