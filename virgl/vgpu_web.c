@@ -197,11 +197,19 @@ EMSCRIPTEN_KEEPALIVE void vgw_capset_fill(uint32_t set, uint32_t version, void *
  * подложку здесь; устройство сверяет её с памятью гостя до и после команд */
 EMSCRIPTEN_KEEPALIVE void *vgw_shadow_attach(uint32_t handle, uint32_t size)
 {
+   /* virglrenderer хранит указатель на iovec, а не копию: он живёт вместе с подложкой (на стеке
+    * запись результата запроса шла в мусор - «Query state does not fit IOV size») */
+   struct iovec *iov = malloc(sizeof(*iov));
    void *p = calloc(1, size);
-   if (!p)
+   if (!iov || !p) {
+      free(iov);
+      free(p);
       return NULL;
-   struct iovec iov = { p, size };
-   if (virgl_renderer_resource_attach_iov(handle, &iov, 1)) {
+   }
+   iov->iov_base = p;
+   iov->iov_len = size;
+   if (virgl_renderer_resource_attach_iov(handle, iov, 1)) {
+      free(iov);
       free(p);
       return NULL;
    }
@@ -210,7 +218,10 @@ EMSCRIPTEN_KEEPALIVE void *vgw_shadow_attach(uint32_t handle, uint32_t size)
 
 EMSCRIPTEN_KEEPALIVE void vgw_shadow_detach(uint32_t handle, void *p)
 {
-   virgl_renderer_resource_detach_iov(handle, NULL, NULL);
+   struct iovec *iov = NULL;
+   int num_iovs = 0;
+   virgl_renderer_resource_detach_iov(handle, &iov, &num_iovs);
+   free(iov);
    free(p);
 }
 

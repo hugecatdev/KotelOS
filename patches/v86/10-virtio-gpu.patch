@@ -101,7 +101,7 @@
          if(true)
 --- a/src/virtio_gpu.js
 +++ b/src/virtio_gpu.js
-@@ -0,0 +1,890 @@
+@@ -0,0 +1,900 @@
 +import { dbg_assert, dbg_log } from "./log.js";
 +import { LOG_VIRTIO } from "./const.js";
 +import { VirtIO, VIRTIO_F_VERSION_1 } from "./virtio.js";
@@ -607,6 +607,16 @@
 +            if(!res) return response_nodata(RESP_ERR_INVALID_RESOURCE_ID);
 +            const level = u32(60), stride = u32(64), layer_stride = u32(68);
 +            const span = this.span(res, box, offset, stride, layer_stride);
++            if(res.shadow)
++            {
++                // resources the host writes into itself (query results) have no GL storage to
++                // transfer: the shadow is their data. The guest reads a query result this way while
++                // it isn't there yet (in WebGL it appears only after the event loop): each read is
++                // fenced, at the fence vrend checks queries and all shadows go to the guest
++                const n = Math.min(span, res.shadow_size - offset);
++                if(n > 0) this.copy_backing(res, offset, n, res.shadow + offset, type === CMD_TRANSFER_FROM_HOST_3D);
++                return response_nodata(RESP_OK_NODATA);
++            }
 +            const r = this.transfer(res, ctx_id, level, stride, layer_stride, box, offset, span,
 +                                    type === CMD_TRANSFER_FROM_HOST_3D);
 +            return response_nodata(r ? RESP_ERR_INVALID_PARAMETER : RESP_OK_NODATA);

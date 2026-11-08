@@ -356,6 +356,48 @@
        glBindBufferARB(res->target, 0);
     } else {
        int ret = -1;
+@@ -12205,6 +12350,15 @@
+    if (has_feature(feat_indep_blend))
+       caps->v1.bset.indep_blend_enable = 1;
+ 
++#ifdef __EMSCRIPTEN__
++   /* WebGL2 lacks the last pieces of GL 3.0 for the guest (else it stays at 2.1), they are
++    * approximated: independent blend - per-buffer blend state and color masks take those of buffer
++    * 0 (vrend_hw_emit_blend without feat_indep_blend); conditional rendering always renders (query
++    * results can't be waited for in WebGL, and the draws it skips are the invisible ones) */
++   caps->v1.bset.indep_blend_enable = 1;
++   caps->v1.bset.conditional_render = 1;
++#endif
++
+    if (has_feature(feat_draw_instance))
+       caps->v1.bset.instanceid = 1;
+ 
+@@ -12349,6 +12503,13 @@
+ 
+    glGetIntegerv(GL_MAX_SAMPLES, &max);
+    caps->v1.max_samples = max;
++#ifdef __EMSCRIPTEN__
++   /* WebGL2 has multisample renderbuffers but no multisample textures, which vrend renders to: no
++    * real MSAA. One sample - the guest fakes MSAA (FakeSWMSAA, like softpipe: multisample
++    * framebuffers work, without antialiasing), which GL 3.0 accepts */
++   if (!has_feature(feat_texture_multisample))
++      caps->v1.max_samples = 1;
++#endif
+ 
+    /* All of the formats are common. */
+    for (i = 0; i < VIRGL_FORMAT_MAX; i++) {
+@@ -12626,6 +12787,11 @@
+ 
+    if (has_feature(feat_srgb_write_control))
+       caps->v2.capability_bits |= VIRGL_CAP_SRGB_WRITE_CONTROL;
++#ifdef __EMSCRIPTEN__
++   /* GL_FRAMEBUFFER_SRGB (needed for GL 3.0): GLES has no switch, writes to sRGB textures are
++    * always encoded, to linear ones never (surfaces use the texture itself without texture views) */
++   caps->v2.capability_bits |= VIRGL_CAP_SRGB_WRITE_CONTROL;
++#endif
+ 
+    if (has_feature(feat_transform_feedback3))
+          caps->v2.capability_bits |= VIRGL_CAP_TRANSFORM_FEEDBACK3;
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -3123,6 +3123,41 @@
