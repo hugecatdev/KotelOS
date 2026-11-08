@@ -70,6 +70,10 @@ rm -rf $B
 mkdir -p $B
 tar -xzf $CACHE/virgl-src/libepoxy-$EPOXY.tar.gz -C $B
 tar -xzf $CACHE/virgl-src/virglrenderer-$VIRGL.tar.gz -C $B
+# patches/virgl: 01 - libepoxy берёт функции у Emscripten (нет - abort с именем); 10 - vrend собирается
+# под Emscripten; 11 - сервер vtest внутри модуля; 12 - WebGL2: буферы без glMapBufferRange, блиттер на
+# GLSL ES 3.00, логические операции X смешиванием, перестановку каналов вида текстуры (ALPHA,
+# LUMINANCE, INTENSITY, BGRA - нет TEXTURE_SWIZZLE) делает шейдер. Правятся в $B, патчи - разница с архивами
 for p in patches/virgl/0*-epoxy-*.patch; do patch -d $B/libepoxy-$EPOXY -p1 -s < "$p"; done
 for p in patches/virgl/1*-virgl-*.patch; do [ -f "$p" ] && patch -d $B/virglrenderer-$VIRGL -p1 -s < "$p"; done
 
