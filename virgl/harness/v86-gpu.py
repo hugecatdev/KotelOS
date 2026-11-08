@@ -2,7 +2,8 @@
 """virtio-gpu в машине: видит ли ядро устройство, X на нём, снимки страницы (CDP, холст WebGL
 через toDataURL не снять) - build/virgl/gpu-ИМЯ.png, сообщения virglrenderer со страницы.
   python3 virgl/harness/v86-gpu.py БАНДЛ ['sh: команда' | 'js: выражение' | 'shot: имя' | 'sleep: с' | 'reload: ' ...]
-Без шагов: сведения о DRM, startx, снимок."""
+'mem: метка' - RssAnon процессов своего Chrome по типам (renderer - страница и v86, gpu-process -
+WebGL), МБ. Без шагов: сведения о DRM, startx, снимок."""
 import base64
 import json
 import os
@@ -24,6 +25,34 @@ DEFAULT = [
     "sh: for i in $(seq 90); do test -S /tmp/.X11-unix/X0 && break; sleep 1; done; sleep 3; grep -E 'modeset|EE|virtio|Output' /var/log/Xorg.0.log | tail -12",
     "shot: x",
 ]
+
+
+def chrome_mem(profile):
+    """RssAnon (МБ) процессов своего Chrome по --type: браузер ищется по профилю, остальные - его
+    потомки (у них профиля в командной строке нет)"""
+    procs = {}
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            # дочерние процессы Chrome переписывают cmdline одной строкой (setproctitle): делить и по пробелам
+            cmd = open("/proc/%s/cmdline" % pid, "rb").read().decode(errors="replace").replace("\0", " ").split()
+            ppid = int(open("/proc/%s/stat" % pid).read().rsplit(")", 1)[1].split()[1])
+            rss = next((int(l.split()[1]) for l in open("/proc/%s/status" % pid) if l.startswith("RssAnon:")), 0)
+        except (OSError, ValueError, IndexError):
+            continue
+        procs[int(pid)] = (ppid, cmd, rss)
+    mine = {p for p, (_, cmd, _) in procs.items() if any(profile in a for a in cmd)}
+    grew = True
+    while grew:
+        more = {p for p, (pp, _, _) in procs.items() if pp in mine and p not in mine}
+        mine |= more
+        grew = bool(more)
+    out = {}
+    for p in mine:
+        _, cmd, rss = procs[p]
+        kind = next((a[7:] for a in cmd if a.startswith("--type=")), "browser")
+        out[kind] = out.get(kind, 0) + rss / 1024
+    return out
+
 
 # бандл: файл или адрес http(s) (тогда работает kt pkg add из репозитория того же сервера)
 page = sys.argv[1] if sys.argv[1].startswith("http") else "file://" + os.path.abspath(sys.argv[1])
@@ -65,6 +94,9 @@ try:
             time.sleep(2)
         elif kind == "sleep":
             time.sleep(float(what))
+        elif kind == "mem":
+            m = chrome_mem(tmp)
+            print("память %s: %s" % (what, ", ".join("%s %.0f" % kv for kv in sorted(m.items()))), flush=True)
         elif kind == "shot":
             png = s.c.call("Page.captureScreenshot", format="png")["data"]
             path = os.path.join(ROOT, "build/virgl", "gpu-%s.png" % what)
