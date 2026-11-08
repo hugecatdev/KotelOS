@@ -31,18 +31,19 @@ SNAP = """(() => { const c = emulator.v86.cpu, e = c.wm.exports;
   if (!e.profiler_is_enabled()) return null;
   const st = []; for (let i = 0; i < %d; i++) st.push(e.profiler_stat_get(i));
   const ops = {};
-  for (const [k, a] of [["exec", [0, 0]], ["exit", [0, 1]]]) {
+  for (const [k, a] of [["exec", [0, 0, 0]], ["exit", [0, 1, 0]], ["wasm", [0, 0, 1]], ["compiled", [1, 0, 0]]]) {
     const r = [];
     for (let op = 0; op < 256; op++) for (const f of [0, 1]) for (const m of [0, 1]) for (let g = 0; g < 8; g++)
-      r.push(e.get_opstats_buffer(a[0], a[1], 0, 0, op, f, m, g));
+      r.push(e.get_opstats_buffer(a[0], a[1], 0, a[2], op, f, m, g));
     ops[k] = r;
   }
   return { st, ops, t: performance.now() };
 })()"""
 
 
-def stat_names():
-    src = sorted(glob.glob(os.path.join(ROOT, ".cache/v86-*/src/rust/profiler.rs")))
+def stat_names(path=None):
+    # имена счётчиков - по порядку enum stat в profiler.rs той сборки, что в бандле
+    src = [path] if path else sorted(glob.glob(os.path.join(ROOT, ".cache/v86-*/src/rust/profiler.rs")))
     if not src:
         sys.exit("нет .cache/v86-*/src/rust/profiler.rs - сначала scripts/build-v86.sh")
     text = open(src[-1]).read()
@@ -82,9 +83,10 @@ def main():
     ap.add_argument("--pre", action="append", default=[])
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--stats", metavar="PROFILER_RS", help="profiler.rs сборки в бандле, если не из .cache/v86-*")
     a = ap.parse_args()
 
-    names = stat_names()
+    names = stat_names(a.stats)
     page = a.bundle if a.bundle.startswith("http") else "file://" + os.path.abspath(a.bundle)
     tmp = tempfile.mkdtemp(prefix="jitprof-")  # профиль Chrome, /tmp - в памяти: удаляется в конце
     s = Suite(tmp, None)
@@ -120,7 +122,8 @@ def main():
             d = e["st"][i] - b["st"][i]
             if d:
                 print("  %-55s %14.0f" % (n, d))
-        for kind, title in (("exec", "выполнено"), ("exit", "выходы из JIT")):
+        for kind, title in (("exec", "выполнено"), ("exit", "выходы из JIT"), ("compiled", "скомпилировано"),
+                            ("wasm", "байт wasm на них")):
             tb, te = ops_table(b["ops"][kind]), ops_table(e["ops"][kind])
             diff = {k: te.get(k, 0) - tb.get(k, 0) for k in te}
             total = sum(v for v in diff.values() if v > 0)
