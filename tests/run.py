@@ -843,6 +843,8 @@ def main():
         assert s.ok("cat /var/lib/kt/mirror").strip() == base + "alpine"
         out = s.ok("kt pkg")
         assert re.search(r"^\* ktapk .*test apk  \(apk\)$", out, re.M) and "ktapklib" not in out, out
+        out = s.ok("kt pkg -a")
+        assert re.search(r"^\* ktapk ", out, re.M) and re.search(r"^  ktapklib ", out, re.M) and not re.search(r"^. base ", out, re.M), out
         s.ok("kt pkg add ktold", 120)
         assert s.ok("ktold").strip() == "new"
         code, out, err = s.sh("kt pkg add ktgone", 120)
