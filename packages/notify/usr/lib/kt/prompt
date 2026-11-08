@@ -1,6 +1,6 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='<text> [<default>]  вопрос в окне браузера и начальное значение; ответ - в stdout, отмена - код 1'
+KT_HELP='<text> [<default>]  вопрос в окне браузера и начальное значение; ответ - в stdout'
 kt_meta "<text> [<default>]" "ввод строки" "$@"
 [ $# -ge 1 ] && [ $# -le 2 ] || kt_usage "<text> [<default>]"
 kt_js "(t, d) => { const v = prompt(t, d); if (v === null) throw new Error('отменено'); return v }" "$1" "$2"

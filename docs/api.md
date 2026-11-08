@@ -9,7 +9,7 @@
 | - | `kt.events()`, `kt.wait(name)`, `@kt.on(name)` + `kt.run()` | `kt.emit(name, data)` | события со страницы в гостя |
 | `kt dl <file>...`, `команда \| kt dl <name>` | `kt.dl(path)`, `kt.dl(data, name)` | - | файл из машины в загрузки браузера (папка -> .tar.gz) |
 | `kt up [<dir>]` | `kt.up(dir)` | `kt.write(path, data)` | файлы с устройства в машину; файл, брошенный на страницу мышью, ложится в `/root` (только принесённый снаружи: картинку, которую тащат по самой странице, браузер тоже отдаёт файлом, её страница не берёт) |
-| `kt sync`, `kt sync add [<dir>]`, `kt sync rm <dir>` (пакет `sync`) | - | - | копия папки с диска, правки из машины пишутся обратно (Chrome, Edge) |
+| `kt sync`, `kt sync add [<dir>]`, `kt sync rm <dir>` (пакет `sync`) | - | - | копия папки с диска, правки из машины пишутся обратно (только в браузерах на Chromium) |
 | `kt copy [<text> \| -s]`, `kt paste` | `kt.copy(s)`, `kt.paste()` | - | буфер обмена; если браузер просит подтвердить, `kt copy` ждёт кнопку «Копировать» внизу (до 20 с) |
 | `kt cfg [<key> [<value>]]`, `kt cfg rm [-y] [<key>...]` | `kt.cfg[key]`, `kt.cfg[key] = v`, `kt.cfg.describe()` | `kt.cfg[key]`, `kt.cfg[key] = v`, `kt.cfg(key, v)` | реестр настроек, см. ниже |
 | `kt save [<name>]`, `kt load [-y] [<name>]`, `kt snap [rm [-y] <name>...]`, `kt reset [-y] [-b]` | `kt.save(name="")` | `kt.save()` | сохранение машины и снимки в IndexedDB |
@@ -21,8 +21,8 @@
 | `kt share [<name>]` (пакет `kt-share`) | - | `kt.share(rev)`, `kt.source`, `kt.keepSource()` | машина файлом: та же страница со снимком машины, см. [Бандлы](bundles.md#машина-файлом-kt-share). `kt.share` - сохранение с новой ревизией, отдаёт его запись; `kt.source` - исходник страницы без снимка (Blob или null); `kt.keepSource()` - брать его со следующего открытия |
 | `kt font [<name>] [<size>]`, `kt theme [<name>]` | - | - | шрифт и тема |
 | `kt notify [<text>]` (пакет `notify`, код - `/usr/lib/kt-notify.js`) | `kt.notify(s)` | - | системное уведомление (первый раз спросит разрешение; нужен https или localhost, через file:// браузер их не даёт - только мигает заголовок вкладки) |
-| `kt alert [<text>]`, `kt confirm <text>`, `kt prompt <text> [<default>]` (пакет `notify`) | - | - | родные окна браузера: alert, да/нет кодом выхода (0 - да, 1 - нет или отмена), строка на stdout (отмена - код 1). Пока окно открыто, страница и машина стоят |
-| `kt pkg [<name>... \| search \| add \| rm \| files]` | - | - | пакеты, см. [packages.md](packages.md) |
+| `kt alert [<text>]`, `kt confirm <text>`, `kt prompt <text> [<default>]` (пакет `notify`) | - | - | родные окна браузера: alert, да/нет кодом выхода (0 - да, 1 - нет или отмена), строка на stdout (отмена - код 1). Окно блокирует поток эмулятора |
+| `kt pkg [-a \| <name>... \| search \| add \| rm \| files]` | - | - | пакеты, см. [packages.md](packages.md) |
 | - | - | `kt.exec(cmd)`, `kt.read(path)` | выполнить команду / прочитать файл в госте |
 | - | - | `kt.type(text)`, `kt.fit()` | ввод в терминал, подогнать размер |
 

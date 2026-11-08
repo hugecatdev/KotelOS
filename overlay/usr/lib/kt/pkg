@@ -1,6 +1,7 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  что установлено (без зависимостей): скачать и в памяти - вместе с ними
+KT_HELP='без аргументов  установленные явно; размер - вместе с зависимостями
+-a  все установленные, и зависимости тоже; * - установленные явно
 <name>...  что поставится и сколько займёт
 search [-r] <word>  поиск по имени и описанию в репозитории и Alpine; -r - только в репозитории
 add [-q] <name>...  установка с зависимостями из репозитория или Alpine; -q - без вывода
@@ -9,7 +10,7 @@ rm -d <name>...  удаление вместе с зависимостями, к
 rm -c <name>...  удаление вместе с пакетами, которым он нужен
 files <name>...  файлы установленного пакета
 репозиторий - kt cfg pkg.repo, на одну команду - KT_REPO=адрес kt pkg ...'
-kt_meta "[<name>... | search | add | rm | files]" "пакеты" "$@"
+kt_meta "[-a | <name>... | search | add | rm | files]" "пакеты" "$@"
 REPO=${KT_REPO:-$(kt cfg pkg.repo 2>/dev/null)}
 REPO=${REPO:-/repo}
 DB=/var/lib/kt/pkg
@@ -397,7 +398,35 @@ case "$1" in
     for p in "$@"; do
       sed -n '/\/$/!s|^|/|p' "$DB/$p"
     done ;;
-  -*) kt_usage "[<name>... | search | add | rm | files]" ;;
+  -a)
+    # все установленные: свой размер у каждого, * - установленные явно (world)
+    [ $# -eq 1 ] || kt_usage "-a"
+    index
+    cut -f1 $IDX > $T.idx 2>/dev/null
+    if ls $DB | grep -qvxF -f $T.idx && alpine; then ALP=1; fi
+    rm -f $T.idx
+    installed | awk -F'\t' -v w="$(width)" -v world="$(tr '\n' ' ' < $WORLD)" "$L$H$U"'
+      { order[++no] = $1 }
+      function show(p, m, line, room, d) {
+        m = src[p] != "" ? "  (apk)" : ""
+        line = sprintf("%s %-" nw "s %6s", (p in W) ? "*" : " ", p, h(dl[p]))
+        if (w >= 50) line = line sprintf(" %6s", h(mem[p]))
+        room = w - length(line) - 2 - length(m)
+        d = room > 8 ? cut(desc[p], room) : ""
+        print line (d != "" ? "  " d : "") m
+      }
+      END {
+        n = split(world, a, " ")
+        for (i = 1; i <= n; i++) W[a[i]] = 1
+        nw = 12
+        for (p in inst) if (len(p) > nw) nw = len(p)
+        delete inst["@"]
+        delete inst["base"]
+        for (i = 1; i <= no; i++) if (order[i] in inst) { show(order[i]); done[order[i]] = 1 }
+        for (p in inst) if (!(p in done)) print ((p in W) ? "* " : "  ") p
+      }
+    ' - $(files) ;;
+  -*) kt_usage "[-a | <name>... | search | add | rm | files]" ;;
   *)
     index
     want "$@"

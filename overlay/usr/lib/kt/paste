@@ -1,6 +1,6 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  текст из буфера обмена - в stdout; пустой буфер или отмена - код 1'
+KT_HELP='без аргументов  текст из буфера обмена - в stdout'
 kt_meta "" "из буфера обмена" "$@"
 [ $# -eq 0 ] || kt_usage ""
 kt_receive paste "" || { rm -rf "$KT_DIR"; exit 1; }

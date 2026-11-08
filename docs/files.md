@@ -11,7 +11,7 @@
 `kt sync` - что синхронизируется, `kt sync rm <dir>` - перестать писать на
 диск (файлы в машине остаются).
 
-- Работает в Chrome и Edge (File System Access API), нужен https, localhost или файл.
+- Работает только в браузерах на Chromium (File System Access API), нужен https, localhost или файл.
   На Linux окно выбора папки рисует xdg-desktop-portal; если он не видит
   `DISPLAY`, окна не будет (`systemctl --user import-environment DISPLAY`).
 - Копируется без `.git`, `node_modules`, `__pycache__`, `.venv`/`venv`; swap и

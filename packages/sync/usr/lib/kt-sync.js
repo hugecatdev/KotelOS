@@ -74,7 +74,7 @@ const tar = async (root) => {
 };
 
 const pick = async (to, dest) => {
-  if (!window.showDirectoryPicker) throw new Error('браузер не умеет, нужен Chrome или Edge');
+  if (!window.showDirectoryPicker) throw new Error('нужен браузер на Chromium');
   let h;
   try {
     h = await kt.gesture('Папка с диска скопируется в машину, правки из машины пойдут обратно', 'Выбрать', () => showDirectoryPicker({ mode: 'readwrite' }));
