@@ -1,5 +1,6 @@
 #!/bin/sh
 . /usr/lib/kt.sh
+KT_CONSOLE=1
 KT_HELP='без аргументов  список тем с образцами
 name            выбор темы'
 kt_meta "[name]" "тема" "$@"

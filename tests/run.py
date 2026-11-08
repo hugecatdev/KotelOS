@@ -460,6 +460,14 @@ def main():
         big = "x" * 100000
         assert s.ok("kt js '(s) => s.length' %s" % big).strip() == "100000"
 
+    def kt_list_x():
+        def mods(cmd):
+            out = re.sub(r"\x1b\[[0-9;]*m", "", s.ok(cmd))
+            return {l.split()[1] for l in out.splitlines() if l.startswith("* ")}
+        con, x11 = mods("kt"), mods("DISPLAY=:0 kt")
+        assert con - x11 == {"theme", "font"}, (con - x11, x11 - con)
+        assert "kt font" in s.ok("DISPLAY=:0 kt help font")
+
     def kt_js_background():
         out = s.ok("(setsid kt js '\"bg-\" + 7' > /tmp/bg 2>&1 < /dev/null &); sleep 3; cat /tmp/bg")
         assert out.strip() == "bg-7", out
@@ -1075,6 +1083,11 @@ def main():
         s.ok("kt screen off")
         assert not s.ev("document.querySelector('#screen').classList.contains('on')")
         assert not s.ev("emulator.keyboard_adapter.emu_enabled")
+        # консоль на виду - экран долой, как по Ctrl+Alt+N (kt tty N из X)
+        s.ok("kt screen on")
+        assert s.ok("kt js 'kt.tty.go(1)'").strip() == "true"
+        assert s.ok("kt screen").strip() == "off", "kt.tty.go не спрятал экран"
+        assert not s.ev("emulator.keyboard_adapter.emu_enabled"), "клавиатура осталась в машине"
 
         # хеш показанного кадра - по пикселям холста: и без воркера, и с ним (кадр пришёл копией)
         frame = """(() => { const c = document.querySelector('#screen canvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
@@ -1175,7 +1188,7 @@ def main():
 
     tests = [
         ("загрузка", boot), ("видеопамять пустая", vga_clean), ("без экрана", no_screen), ("память бандла", bundle_memory), ("один агент", one_agent), ("чистый терминал", clean_screen),
-        ("kt js", kt_js), ("kt js из фона", kt_js_background), ("задержки", latency),
+        ("kt js", kt_js), ("kt js из фона", kt_js_background), ("kt в X без консолей", kt_list_x), ("задержки", latency),
         ("kt.exec коды и stdin", exec_codes), ("kt.read/kt.write 2 МБ", read_write),
         ("kt dl файл, папка, stdin", kt_dl), ("kt up через кнопку", kt_up), ("kt up сразу после Enter", kt_up_typed), ("файл брошен на страницу", drop),
         ("kt copy/paste", clipboard), ("события kt.emit", events), ("micropython kt", micropython),

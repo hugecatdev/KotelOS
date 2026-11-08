@@ -1,5 +1,6 @@
 #!/bin/sh
 . /usr/lib/kt.sh
+KT_CONSOLE=1
 KT_HELP='без аргументов  список шрифтов и текущий размер
 name            имя из списка или имя шрифта Google Fonts
 size            размер, от 8 до 32'

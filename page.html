@@ -784,6 +784,8 @@
     function ttyGo(id) {
       const t = ttys.get(id);
       if (!t || t.host) return false;
+      // консоль на виду - экран долой, как по Ctrl+Alt+N: kt tty N и kt tty new из X
+      /* #if vga */ setScreen(false); /* #endif */
       if (t !== active) {
         active.el.classList.add("off");
         t.el.classList.remove("off");

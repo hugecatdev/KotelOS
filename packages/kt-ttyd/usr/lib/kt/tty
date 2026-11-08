@@ -2,7 +2,7 @@
 . /usr/lib/kt.sh
 KT_HELP='без аргументов   консоли: номер, * - на виду, своя - эта
 new [команда]    новая консоль: шелл или команда, номер - на stdout
-N                перейти на консоль N (на клавиатуре Alt+1..9)
+N                перейти на консоль N, экран прячется (на клавиатуре Alt+1..9)
 kill N           закрыть консоль N (шеллу - SIGHUP)'
 kt_meta "[new [команда] | N | kill N]" "виртуальные консоли" "$@"
 page() {
@@ -15,8 +15,11 @@ page() {
 }
 case $1 in
   "")
+    # своя консоль - та, где шелл; в X (DISPLAY) он в окне, а KT_TTY достался от консоли со startx
+    me=${KT_TTY:-1}
+    [ -z "$DISPLAY" ] || me=0
     page '(me) => kt.tty.list().map((t) => (t.active ? "*" : " ") + " " + t.id + (String(t.id) === me ? " (эта)" : "")
-      + (t.window ? " окно" : "") + (t.title ? " " + t.title : "")).join("\n")' "${KT_TTY:-1}" ;;
+      + (t.window ? " окно" : "") + (t.title ? " " + t.title : "")).join("\n")' "$me" ;;
   new) shift; page '(c) => kt.tty.open(c)' "$*" ;;
   kill) [ -n "$2" ] || kt_usage "kill N"; page '(n) => kt.tty.kill(n) && ""' "$2" ;;
   *[!0-9]*) kt_usage "[new [команда] | N | kill N]" ;;
