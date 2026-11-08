@@ -76,6 +76,13 @@ def closure(names):
     return out
 
 
+def shmin(data):
+    """шелл-скрипт без комментариев, пустых строк и отступов - как minify() в build.sh"""
+    lines = data.split(b"\n")
+    out = lines[:1] + [l.lstrip() for l in lines[1:] if l.strip() and not l.lstrip().startswith(b"#")]
+    return b"\n".join(out) + b"\n"
+
+
 def packages_cpio(names, world, extra=()):
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "root")
@@ -92,6 +99,12 @@ def packages_cpio(names, world, extra=()):
             target = os.path.join(root, dest.lstrip("/"))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             shutil.copy(src, target)
+            # отдельный шелл-скрипт (~/.xinitrc и т.п.) - сжатым, как скрипты пакетов; папка - как есть
+            with open(target, "rb") as f:
+                data = f.read()
+            if data.startswith(b"#!/bin/sh"):
+                with open(target, "wb") as f:
+                    f.write(shmin(data))
         triggers = []
         for n in names:
             if n in APK:
@@ -229,13 +242,13 @@ def assemble(html, bundle, minify):
 
 
 class Chrome:
-    def __init__(self, profile):
+    def __init__(self, profile, size="800,600"):
         exe = os.environ.get("CHROME") or next(
             (x for x in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable") if shutil.which(x)), None)
         if not exe:
             sys.exit("для снимка нужен chromium (или CHROME=путь)")
         args = [exe, "--headless=new", "--remote-debugging-pipe", "--user-data-dir=" + profile,
-                "--no-first-run", "--no-default-browser-check", "--window-size=800,600"]
+                "--no-first-run", "--no-default-browser-check", "--window-size=" + size]
         self.proc = subprocess.Popen(["sh", "-c", 'exec "$@" 3<&0 4>&1 </dev/null >/dev/null', "sh"] + args,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.id = 0
@@ -446,7 +459,10 @@ def main():
     page = template(have)
 
     if snap:
-        bundle["state"] = snapshot(assemble(page, bundle, False), a.run, a.timeout, a.prep)
+        # снимок - без boot.cmd: команда для того, кто откроет бандл, а не для сборки (иначе --cmd startx
+        # поднимал X ещё в снимке, под окно сборки, а при открытии - второй раз)
+        nocmd = {k: v for k, v in bundle.items() if k != "cmd"}
+        bundle["state"] = snapshot(assemble(page, nocmd, False), a.run, a.timeout, a.prep)
         if not a.keep_boot:
             bundle["files"] = files
 
