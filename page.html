@@ -1194,6 +1194,31 @@
     }
 
     const SNAP = "snap:";
+
+    // диск /disk: файлы машины ссылаются на ключи в каталоге OPFS DISK, один на сайт (снимок из другого
+    // бандла - kt load - находит свои). Ключ пишется один раз, и сохранение (keys в его записи) читает ровно
+    // то, что записало; остальное - мусор: после сохранения и через минуту после старта уходит всё, на что
+    // не ссылаются ни машина, ни сохранения и снимки, кроме ключей моложе 10 минут (запись ещё идёт).
+    // Пока открыта другая вкладка сайта (замок DISK), её машину отсюда не видно - уборки нет
+    const DISK = "kt-disk";
+    navigator.locks?.request(DISK, { mode: "shared" }, () => new Promise(() => {})).catch(() => {});
+    async function diskGC() {
+      try {
+        const held = (await navigator.locks.query()).held.filter((l) => l.name === DISK);
+        if (held.length > 1 || !emulator) return;
+        const keep = new Set(await emulator.fs9p_keys());
+        for (const k of await kv.keys()) {
+          if (!/^(state|snap):/.test(k)) continue;
+          for (const key of ((await kv.get(k).catch(() => null)) || {}).keys || []) keep.add(key);
+        }
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(DISK, { create: true });
+        const young = Date.now() - 600000, gone = [];
+        for await (const name of dir.keys()) {
+          if (!keep.has(name) && !(parseInt(name, 36) > young)) gone.push(name);
+        }
+        for (const name of gone) await dir.removeEntry(name).catch(() => {});
+      } catch {}
+    }
     // то же правило, что kt_name в госте
     const snapName = (n) => {
       if (!/^(?!-)[\w.-]{1,32}$/.test(n)) throw new Error("имя - латинские буквы, цифры, . _ -, до 32 знаков: " + n);
@@ -1221,13 +1246,15 @@
       try {
         if (name) snapName(name);
         const raw = await emulator.save_state();
+        const keys = await emulator.fs9p_keys().catch(() => []);
         const screenDump = serializer.serialize({ scrollback: 300 });
         const blob = await gzip(raw);
         await kv.set(name ? SNAP + name : SLOT, {
           blob, screen: screenDump, memory_size: memSize, vga_memory_size: vgaSize, screen_on: screenOn,
           screen_size: screenSent, replyId: id || null,
-          created: Date.now(), build: build && build.build, bundle: NAME, revs,
+          created: Date.now(), build: build && build.build, bundle: NAME, revs, keys,
         });
+        diskGC();
         lastSave = Date.now();
         if (!name) keepSave = false;
         let note = "";
@@ -2295,6 +2322,9 @@
         disable_speaker: true,
         net_device: { type: "ne2k", relay_url: "fetch" },
         preserve_mac_from_state_image: true,
+        // диск /disk (virtio-9p): дерево файлов - в машине и её сохранении, содержимое - в каталоге
+        // OPFS сайта (patches/v86/13); без OPFS (файл с диска) содержимое остаётся в памяти
+        filesystem: { opfs: DISK },
       };
 
       bootlog("распаковываю v86 и bios");
@@ -2457,6 +2487,7 @@
         if (state) release(state);
         if (initrd) URL.revokeObjectURL(initrd);
         connectAgent();
+        setTimeout(diskGC, 60000);
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
         // снимок kt share - не новая машина: boot.cmd (startx бандлов xorg и dwm) уже отработал у отправителя

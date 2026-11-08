@@ -1,0 +1,330 @@
+9p с содержимым файлов в OPFS: filesystem = { opfs: "каталог" }
+
+Файловая система 9p держит дерево файлов в памяти JS, а содержимое - в
+хранилище; прежде всё, что писал гость, оставалось в inodedata (память вкладки
+и снимок целиком). Теперь:
+
+- OpfsFileStorage: файл OPFS на ключ в каталоге opfs. Ключ пишется один раз -
+  новая версия файла гостя получает новый ключ, так что сохранённое состояние
+  читает ровно то, что записало. В памяти - только File открытых файлов.
+  Без createWritable (Safari) - синхронный handle, он есть только в воркере.
+  list() и remove() - для уборки ключей, на которые ничто не ссылается.
+- FS.CloseInode: записанный обычный файл через секунду после последнего
+  закрытия уходит в хранилище, если оно умеет write (файл, который открывают
+  снова и снова, как echo >> log, пишется один раз); в памяти остаётся inode
+  со ссылкой на ключ. Запись, усечение или удаление во время сброса (счётчик
+  changes) - файл остаётся в памяти до следующего закрытия.
+- Гостю монтировать с ignoreqv (qid.version у v86 всегда 0, без него ядро
+  читает в обход кэша страниц) и без writeback (cache=0xb): с ним fid записи
+  закрывается, только когда ядро вытесняет inode, и файл висит в памяти.
+- starter.js: filesystem.opfs; в воркере FS со своим OpfsFileStorage
+  строится там (fs9p_opfs), в настройки воркера живой объект не уходит.
+  fs9p_keys() - ключи, на которые ссылаются файлы (и в воркере): по ним
+  страница убирает из OPFS то, на что не ссылается ни машина, ни сохранения.
+- cpu.js: состояние без 9p восстанавливается в v86 с 9p (устройство новое).
+
+--- a/src/browser/filestorage.js
++++ b/src/browser/filestorage.js
+@@ -158,3 +158,126 @@
+ {
+     this.storage.uncache(sha256sum);
+ };
++
++/**
++ * Contents of the files in a directory of the Origin Private File System, one OPFS file per key.
++ * A key is written once: a new version of a guest file gets a new key, so a saved state reads
++ * exactly what it wrote. Only the File objects of open files stay in memory, not the data.
++ *
++ * @constructor
++ * @implements {FileStorageInterface}
++ * @param {string} name directory in the root of the OPFS
++ */
++export function OpfsFileStorage(name)
++{
++    const storage = /** @type {?} */ (navigator).storage;
++    /**
++     * no OPFS (a page from a file): writes fail, and the FS keeps the contents in memory
++     * @type {!Promise<?>}
++     */
++    this.dir = storage && storage.getDirectory ?
++        storage.getDirectory().then(root => root.getDirectoryHandle(name, { create: true })) :
++        Promise.reject(new Error("no OPFS"));
++    this.dir.catch(() => {});
++    /** @type {!Map<string, !Promise<?>>} */
++    this.files = new Map();
++}
++
++/**
++ * @return {string}
++ */
++OpfsFileStorage.prototype.new_key = function()
++{
++    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
++};
++
++/**
++ * @param {string} key
++ * @param {number} offset
++ * @param {number} count
++ * @return {!Promise<Uint8Array>} null if file does not exist.
++ */
++OpfsFileStorage.prototype.read = async function(key, offset, count)
++{
++    let file = this.files.get(key);
++    if(!file)
++    {
++        file = this.dir.then(dir => dir.getFileHandle(key)).then(handle => handle.getFile());
++        this.files.set(key, file);
++    }
++    try
++    {
++        const blob = (await file).slice(offset, offset + count);
++        return new Uint8Array(await blob.arrayBuffer());
++    }
++    catch(e)
++    {
++        this.files.delete(key);
++        return null;
++    }
++};
++
++/**
++ * @param {string} key
++ * @param {!Uint8Array} data
++ * @return {!Promise}
++ */
++OpfsFileStorage.prototype.write = async function(key, data)
++{
++    const dir = await this.dir;
++    const handle = await dir.getFileHandle(key, { create: true });
++    if(handle.createWritable)
++    {
++        const stream = await handle.createWritable();
++        await stream.write(data);
++        await stream.close();
++    }
++    else
++    {
++        // Safari: only the synchronous handle of a worker
++        const sync = await handle.createSyncAccessHandle();
++        sync.truncate(0);
++        sync.write(data, { at: 0 });
++        sync.flush();
++        sync.close();
++    }
++};
++
++/**
++ * @param {string} key
++ * @param {!Uint8Array} data
++ */
++OpfsFileStorage.prototype.cache = async function(key, data)
++{
++    await this.write(key, data);
++};
++
++/**
++ * @param {string} key
++ */
++OpfsFileStorage.prototype.uncache = function(key)
++{
++    this.files.delete(key);
++};
++
++/**
++ * @return {!Promise<!Array<string>>} all keys
++ */
++OpfsFileStorage.prototype.list = async function()
++{
++    const dir = await this.dir;
++    const keys = [];
++    for await (const name of dir.keys()) keys.push(name);
++    return keys;
++};
++
++/**
++ * @param {string} key
++ * @return {!Promise}
++ */
++OpfsFileStorage.prototype.remove = async function(key)
++{
++    this.files.delete(key);
++    const dir = await this.dir;
++    await dir.removeEntry(key).catch(() => {});
++};
+--- a/lib/filesystem.js
++++ b/lib/filesystem.js
+@@ -71,6 +71,15 @@
+ 
+     this.inodedata = {};
+ 
++    /**
++     * changes of inodedata by inode: a write while the file goes to the storage keeps it in memory
++     * @type {!Map<number, number>}
++     */
++    this.changes = new Map();
++
++    /** @type {!Map<number, number>} */
++    this.flush_timers = new Map();
++
+     this.total_size = 256 * 1024 * 1024 * 1024;
+     this.used_size = 0;
+ 
+@@ -698,6 +707,61 @@
+         inode.status = STATUS_INVALID;
+         await this.DeleteData(id);
+     }
++    else if(this.inodedata[id] && (inode.mode & S_IFMT) === S_IFREG && this.storage.write)
++    {
++        // a second after the last close: a file opened again and again (echo >> log) goes once
++        clearTimeout(this.flush_timers.get(id));
++        this.flush_timers.set(id, setTimeout(() => {
++            this.flush_timers.delete(id);
++            this.flush(id);
++        }, 1000));
++    }
++};
++
++/**
++ * @return {!Array<string>} keys of the storage that the files point to
++ */
++FS.prototype.storage_keys = function()
++{
++    const keys = [];
++    for(let i = 0; i < this.inodes.length; i++)
++    {
++        const inode = this.inodes[i];
++        if(inode.status === STATUS_ON_STORAGE && inode.sha256sum) keys.push(inode.sha256sum);
++    }
++    return keys;
++};
++
++/**
++ * Contents of a written file go to a storage that can write (OpfsFileStorage): memory keeps the
++ * inode only. A storage key is written once, the file gets a new one.
++ * @param {number} id
++ */
++FS.prototype.flush = async function(id)
++{
++    const inode = this.inodes[id];
++    const data = this.inodedata[id];
++    if(!data || !inode || inode.status !== STATUS_OK) return;
++    const change = this.changes.get(id);
++    const key = this.storage.new_key();
++    try
++    {
++        await this.storage.write(key, data.subarray(0, inode.size));
++    }
++    catch(e)
++    {
++        dbg_log("Filesystem: flush to storage failed: " + e, LOG_9P);
++        return;
++    }
++    if(this.inodedata[id] !== data || this.changes.get(id) !== change || inode.status !== STATUS_OK)
++    {
++        // written, truncated or deleted meanwhile: the next close tries again
++        this.storage.remove(key);
++        return;
++    }
++    delete this.inodedata[id];
++    inode.status = STATUS_ON_STORAGE;
++    inode.sha256sum = key;
+ };
+ 
+ /**
+@@ -1112,6 +1176,7 @@
+ {
+     // Current scheme: Save all modified buffers into local inodedata.
+     this.inodedata[idx] = buffer;
++    this.changes.set(idx, (this.changes.get(idx) || 0) + 1);
+     if(this.inodes[idx].status === STATUS_ON_STORAGE)
+     {
+         this.inodes[idx].status = STATUS_OK;
+--- a/src/browser/starter.js
++++ b/src/browser/starter.js
+@@ -27,7 +27,7 @@
+ /* #endif */
+ 
+ /* #if 9p */
+-import { MemoryFileStorage, ServerFileStorageWrapper } from "./filestorage.js";
++import { MemoryFileStorage, ServerFileStorageWrapper, OpfsFileStorage } from "./filestorage.js";
+ /* #endif */
+ import { SyncBuffer, buffer_from_object } from "../buffer.js";
+ /* #if 9p */
+@@ -546,6 +546,12 @@
+     {
+         settings.proxy9p = options.filesystem.proxy_url;
+     }
++    else if(options.filesystem && options.filesystem.opfs)
++    {
++        // file contents in a directory of the OPFS; the worker makes its own FS
++        if(options.worker) settings.fs9p_opfs = options.filesystem.opfs;
++        else settings.fs9p = this.fs9p = new FS(new OpfsFileStorage(options.filesystem.opfs));
++    }
+     else if(options.filesystem)
+     {
+         var fs_url = options.filesystem.basefs;
+@@ -1016,6 +1022,24 @@
+     return this.v86.save_state();
+ };
+ 
++/* #if 9p */
++/**
++ * Keys of the storage (OpfsFileStorage) that the files of the 9p filesystem point to: the others
++ * are garbage, unless a saved state still points to them
++ *
++ * @return {Promise<!Array<string>>}
++ */
++V86.prototype.fs9p_keys = async function()
++{
++    if(this.worker)
++    {
++        return /** @type {!Array<string>} */ (await this.worker_call("fs9p_keys"));
++    }
++    const p9 = this.v86.cpu.devices.virtio_9p;
++    return p9 && p9.fs ? p9.fs.storage_keys() : [];
++};
++/* #endif */
++
+ /**
+  * @return {number}
+  * @ignore
+@@ -2105,6 +2129,12 @@
+             {
+                 settings.screen = new DummyScreenAdapter({});
+             }
++            /* #if 9p */
++            if(settings.fs9p_opfs)
++            {
++                settings.fs9p = new FS(new OpfsFileStorage(settings.fs9p_opfs));
++            }
++            /* #endif */
+             emulator.init(settings);
+             if(settings.initial_state)
+             {
+@@ -2141,6 +2171,13 @@
+                     transfer = [result];
+                 }
+                 else if(data.method === "restore_state") emulator.restore_state(data.arg);
++                /* #if 9p */
++                else if(data.method === "fs9p_keys")
++                {
++                    const p9 = emulator.cpu.devices.virtio_9p;
++                    result = p9 && p9.fs ? p9.fs.storage_keys() : [];
++                }
++                /* #endif */
+                 else if(data.method === "run") emulator.run();
+                 else if(data.method === "stop") emulator.stop();
+                 flush();
+--- a/src/cpu.js
++++ b/src/cpu.js
+@@ -725,7 +725,8 @@
+ 
+     this.set_tsc(state[43][0], state[43][1]);
+ 
+-    this.devices.virtio_9p && this.devices.virtio_9p.set_state(state[45]);
++    // a state saved without 9p: the device stays new
++    this.devices.virtio_9p && state[45] && this.devices.virtio_9p.set_state(state[45]);
+     state[46] && this.set_state_apic(state[46]);
+     this.devices.rtc && this.devices.rtc.set_state(state[47]);
+     this.devices.dma && this.devices.dma.set_state(state[49]);

@@ -147,7 +147,15 @@ CONFIG_SYSVIPC=y
 # CONFIG_SERIAL_8250_PERICOM is not set
 # CONFIG_HW_RANDOM is not set
 # CONFIG_DEVMEM is not set
-# CONFIG_NETWORK_FILESYSTEMS is not set
+# диск в браузере (/disk): virtio-9p v86, файлы - в OPFS страницы, а не в ОЗУ машины; из сетевых
+# файловых систем - только 9p
+CONFIG_NETWORK_FILESYSTEMS=y
+CONFIG_NET_9P=y
+CONFIG_NET_9P_VIRTIO=y
+# CONFIG_NET_9P_FD is not set
+CONFIG_9P_FS=y
+# CONFIG_9P_FS_POSIX_ACL is not set
+# CONFIG_9P_FS_SECURITY is not set
 # CONFIG_MISC_FILESYSTEMS is not set
 # CONFIG_SLUB_DEBUG is not set
 # CONFIG_DNOTIFY is not set

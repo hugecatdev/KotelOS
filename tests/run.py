@@ -933,11 +933,8 @@ def main():
         assert gone("kt pkg rm -cy ktb") == ["ktb", "ktuser", "kttop"]
         assert "/bin/busybox" in s.ok("kt pkg files base"), "каскад задел base"
 
-    def pkg_memory():
-        # корень - tmpfs: вся память без 16 МБ и без предела файлов (S01mount)
-        total = int(s.ok("sed -n 's/^MemTotal: *\\([0-9]*\\) kB/\\1/p' /proc/meminfo"))
-        dev, path, fs, opts = s.ok("head -n 1 /proc/mounts").split()[:4]
-        assert path == "/" and "size=%dk" % (total - 16384) in opts.split(",") and "nr_inodes=0" in opts.split(","), opts
+    def mem_repo():
+        # частный репозиторий для KT_REPO=/memrepo: настоящий индекс и пакеты под размер свободной памяти
         room = int(s.ok("awk '/^MemAvailable:/ { print $2 - 16384 }' /proc/meminfo"))
         repo = os.path.join(www, "memrepo")
         os.makedirs(repo, exist_ok=True)
@@ -951,6 +948,12 @@ def main():
                     info.mode = 0o755
                     t.addfile(info)
                 for p, body in files.items():
+                    if body.startswith(b"->"):
+                        info = tarfile.TarInfo(p)
+                        info.type = tarfile.SYMTYPE
+                        info.linkname = body[2:].decode()
+                        t.addfile(info)
+                        continue
                     info = tarfile.TarInfo(p)
                     info.size = len(body)
                     t.addfile(info, io.BytesIO(body))
@@ -958,15 +961,33 @@ def main():
             with open(os.path.join(repo, name + ".tar.xz"), "wb") as f:
                 f.write(data[:len(data) // 2] if cut else data)
 
-        pack("ktsmall", {"usr/share/ktsmall/x": b"x\n"})
+        pack("ktsmall", {"usr/share/ktsmall/x": b"x\n", "usr/share/ktsmall/y": b"->x", "usr/share/ktsmall/top": b"->../../../etc/hostname"})
         pack("ktbad", {"usr/share/ktbad/a": b"a\n", "usr/share/ktbad/r": os.urandom(300000)}, cut=True)
         shutil.copy(os.path.join(www, "repo", "index.txt"), repo)
         with open(os.path.join(repo, "index.txt"), "a") as f:
             f.write("kthuge\t1/%d\t\tне влезет\n" % (room * 2))
             f.write("ktbig\t1/%d\t\tпочти вся память\n" % (room - 8192))
             f.write("ktsmall\t1/4\t\tзависимость\nktbad\t1/4\tktsmall\tбитый архив\n")
+
+    def pkg_memory():
+        # корень - tmpfs: вся память без 16 МБ и без предела файлов (S01mount)
+        total = int(s.ok("sed -n 's/^MemTotal: *\\([0-9]*\\) kB/\\1/p' /proc/meminfo"))
+        dev, path, fs, opts = s.ok("head -n 1 /proc/mounts").split()[:4]
+        assert path == "/" and "size=%dk" % (total - 16384) in opts.split(",") and "nr_inodes=0" in opts.split(","), opts
+        mem_repo()
+        # в память не влезет: есть диск - вопрос, нет - отказ
         code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
-        assert code == 1 and "не хватит памяти: нужно" in err and "свободно" in out, (code, out, err)
+        assert code == 1 and "в память не влезет: нужно" in err and "поставить на диск /disk? [y/N]" in err, (code, out, err)
+        out = s.ok("KT_REPO=/memrepo kt pkg kthuge")
+        assert "kt pkg add -d kthuge" in out, out
+        s.ok("umount /disk")
+        try:
+            code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
+            assert code == 1 and "не хватит памяти: нужно" in err and "свободно" in out, (code, out, err)
+            code, out, err = s.sh("KT_REPO=/memrepo kt pkg add -d ktsmall")
+            assert code == 1 and "диска нет" in err, (code, out, err)
+        finally:
+            s.ok("eval \"$(grep -o 'mount -t 9p [^|]*/disk' /etc/init.d/S01mount)\"")
         for answer in ("", "echo n | "):
             code, out, err = s.sh(answer + "KT_REPO=/memrepo kt pkg add ktbig")
             assert code == 1 and "свободной памяти останется" in err and "[y/N]" in err, (code, out, err)
@@ -982,6 +1003,44 @@ def main():
         out = s.ok("dd if=/dev/zero of=/root/fill bs=1M count=%d 2>/dev/shm/e; rm -f /root/fill; cat /dev/shm/e; rm /dev/shm/e" % (total // 1024))
         assert "No space left on device" in out, out
         s.ok("kt pkg > /dev/null")
+
+    def disk():
+        # /disk - 9p v86, содержимое файлов в OPFS: кэш страниц есть (ignoreqv), writeback нет
+        opts = s.ok("grep ' /disk ' /proc/mounts").split()[3].split(",")
+        assert "cache=b" in opts and "ignoreqv" in opts, opts
+        keys = len(s.ev("emulator.fs9p_keys()"))
+        out = s.ok("head -c 2000000 /dev/urandom > /tmp/r && cp /tmp/r /disk/r && echo 3 > /proc/sys/vm/drop_caches && md5sum < /tmp/r && md5sum < /disk/r && rm /tmp/r")
+        assert len(set(out.split())) == 2, out
+        # файл уходит в OPFS через секунду после закрытия
+        time.sleep(3)
+        assert len(s.ev("emulator.fs9p_keys()")) > keys
+        if not WORKER:
+            left = s.ev("Object.keys(emulator.fs9p.inodedata).filter((k) => (emulator.fs9p.inodes[k].mode & 0xF000) === 0x8000).length")
+            assert left == 0, "файлов в памяти страницы: %s" % left
+        # пакет на диск: в корне ссылки на файлы, его ссылки - как есть
+        mem_repo()
+        out = s.ok("KT_REPO=/memrepo kt pkg add -d ktsmall", 60)
+        assert "на диске" in out, out
+        assert s.ok("readlink /usr/share/ktsmall/x; readlink /usr/share/ktsmall/y").split() == ["/disk/pkg/usr/share/ktsmall/x", "x"]
+        assert s.ok("cat /usr/share/ktsmall/y /usr/share/ktsmall/top") == "x\n" + s.ok("cat /etc/hostname")
+        assert re.search(r"^\* ktsmall .*\(диск\)", s.ok("KT_REPO=/memrepo kt pkg"), re.M)
+        s.ok("KT_REPO=/memrepo kt pkg rm -y ktsmall")
+        code, out, err = s.sh("ls -d /usr/share/ktsmall /disk/pkg/usr/share/ktsmall /var/lib/kt/disk/ktsmall")
+        assert code != 0 and not out, out
+        # уборка OPFS: ключ, на который не ссылается машина, уходит, моложе 10 минут - остаётся
+        names = s.ev("""(async () => {
+          const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("kt-disk");
+          for (const n of ["1-old", Date.now().toString(36) + "-young"]) {
+            const w = await (await d.getFileHandle(n, { create: true })).createWritable();
+            await w.write("x");
+            await w.close();
+          }
+          await diskGC();
+          const names = [];
+          for await (const n of d.keys()) names.push(n);
+          return names;
+        })()""")
+        assert "1-old" not in names and any(n.endswith("-young") for n in names), names
 
     def chawan():
         s.ok("kt pkg add chawan", 180)
@@ -1051,6 +1110,7 @@ def main():
 
     def save_restore():
         s.ok("rm -f /tmp/rw.bin /tmp/dl.bin /tmp/up.bin")
+        keep = s.ok("head -c 300000 /dev/urandom > /disk/keep && sleep 2 && md5sum < /disk/keep").split()[0]
         s.ev("term.clear()")
         s.typed("kt save; echo SAVED-OK")
         # не 8 с наугад: под нагрузкой сохранение идёт дольше. SAVED-OK дважды - команда и её вывод
@@ -1065,6 +1125,8 @@ def main():
         scr = s.screen()
         assert "восстановлено сохранение" in scr and scr.count("SAVED-OK") >= 2, scr[-300:]
         assert s.ok("kt js 1+1").strip() == "2"
+        # файл диска: дерево - из сохранения, содержимое - из OPFS
+        assert s.ok("echo 3 > /proc/sys/vm/drop_caches; md5sum < /disk/keep").split()[0] == keep, "файл /disk после восстановления другой"
         return "восстановление %.1f с" % t
 
     def snap_rules():
@@ -1471,7 +1533,7 @@ def main():
         ("cpython 8 потоков", cpython_threads), ("requests и curl", requests_shim),
         ("alert/confirm/prompt", dialogs), ("kt notify", notify), ("pack/unpack", pack), ("sync", sync),
         ("kt cfg свои ключи", cfg_custom), ("рендер терминала", render), ("ai инструменты", ai_tool), ("ai сжатие контекста", ai_context),
-        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade), ("kt pkg add и память", pkg_memory),
+        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade), ("kt pkg add и память", pkg_memory), ("диск /disk", disk),
         ("chawan", chawan), ("в /run/kt нет мусора", run_clean),
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
