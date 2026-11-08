@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сайт с окнами KotelOS</title>
+<style>
+  body { margin: 0; font: 17px/1.55 Georgia, serif; color: #222; background: #f6f3ec; }
+  main { max-width: 680px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 30px; margin: 0 0 12px; }
+  code { font: 14px ui-monospace, Menlo, Consolas, monospace; background: #e9e4d8; padding: 1px 4px; }
+  button { font: inherit; padding: 6px 14px; }
+  p { margin: 0 0 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Обычная страница</h1>
+  <p>Окна поверх текста - программа на tkinter, которая идёт в машине KotelOS прямо в этой вкладке.
+  Терминала не видно: на странице только её окна, их можно таскать, тянуть за уголок и закрывать.</p>
+  <p>Всё мимо окон остаётся страницей: текст выделяется, <a href="#tail">ссылки</a> работают, кнопка
+  считает нажатия - <button id="count">нажато 0</button></p>
+  <p>Машина лежит в прозрачном iframe во весь экран, а клики он получает только над окнами: страница
+  машины присылает их прямоугольники, <code>embed.js</code> ставит iframe <code>clip-path</code>.</p>
+  <p id="state">машина загружается...</p>
+  <p style="height: 900px"></p>
+  <p id="tail">Конец страницы.</p>
+</main>
+<script src="embed.js"></script>
+<script>
+  let n = 0;
+  document.getElementById("count").onclick = (e) => { e.target.textContent = "нажато " + ++n; };
+  const vm = KotelOS.embed("app.html");
+  const state = document.getElementById("state");
+  vm.ready.then(() => vm.exec("uname -sm")).then((r) => { state.textContent = "машина готова: " + r.out.trim(); });
+  vm.on("rects", (r) => { if (!r.length) state.textContent = "окон нет - программа закрыта"; });
+</script>
+</body>
+</html>

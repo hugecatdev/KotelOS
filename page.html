@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
 <title>KotelOS</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<!-- #if embed -->
+<!-- bundle.py --embed: внутри iframe (embed.js на сайте) страница - только окна tk поверх сайта, открытая
+     сама - обычная, с терминалом. Класс - до разбора бандла, иначе терминал успел бы показаться -->
+<script>if (window.parent !== window) document.documentElement.classList.add("embed");</script>
+<!-- #endif -->
 <style>
   :root { --line: #333; --text: #bbb; --hi: #eee; --bg: #000; --mono: ui-monospace, Menlo, Consolas, monospace; }
   html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
@@ -66,6 +71,12 @@
   .overlay textarea { width: 100%; box-sizing: border-box; background: #000; color: var(--text); border: 1px solid var(--line); font: inherit; margin-bottom: 12px; }
   .overlay .btns { display: flex; justify-content: flex-end; gap: 8px; }
   #drop { pointer-events: none; color: var(--hi); font: 16px var(--mono); border: 1px dashed var(--hi); }
+  /* #if embed */
+  /* встроенная: прозрачная поверх сайта, видны только окна tk и окна страницы (#ask); терминал
+     раскладывается как обычно, но невидим и фокус не берёт */
+  html.embed, html.embed body { background: transparent; }
+  html.embed #app { visibility: hidden; }
+  /* #endif */
 </style>
 </head>
 <body>
@@ -101,6 +112,9 @@
     const $ = (s) => document.querySelector(s);
     const qs = new URLSearchParams(location.search);
     const BUNDLE = window.KT_BUNDLE || null;
+    /* #if embed */
+    const EMBED = document.documentElement.classList.contains("embed");
+    /* #endif */
     const isTouch = matchMedia("(pointer: coarse)").matches;
     const enc = new TextEncoder();
     const dec = new TextDecoder();
@@ -845,7 +859,12 @@
     }
     // сочетание - консолям, пока они на экране: в окне tk-term оно программе этого окна, а под рабочим
     // столом (окно tk во весь экран) переключение шло бы невидимо
-    const ttySwitch = () => !target().host && !document.querySelector(".tk-layer > .tk-desk:not([hidden])");
+    const ttySwitch = () => {
+      /* #if embed */
+      if (EMBED) return false; // встроенная: консоли невидимы, Alt+цифра - программе в окне
+      /* #endif */
+      return !target().host && !document.querySelector(".tk-layer > .tk-desk:not([hidden])");
+    };
     function ttyKill(id) {
       if (id > 1 && ttys.has(id)) ttyWrite(`KILL ${id}\n`);
     }
@@ -1184,6 +1203,11 @@
     let saving = false, lastSave = Date.now();
     // ?fresh или ?boot при живом сохранении: оно не загружено, и автосохранение его не затирает до kt save
     let keepSave = false;
+    /* #if embed */
+    // встроенная с нуля (embed.js без save) машину в браузере не копит: снимок - десятки МБ на каждое
+    // сворачивание вкладки, а открывается она всё равно со снимка бандла
+    if (EMBED && qs.has("fresh")) keepSave = true;
+    /* #endif */
     // строки в терминал, когда машина готова: что страница сделала сама (в том числе до перезагрузки)
     const notes = [];
     if (store.get("kt.note")) {
@@ -1548,6 +1572,47 @@
     });
     ready.then(() => { if (window.parent !== window) window.parent.postMessage({ kt: "ready" }, "*"); });
 
+    /* #if embed */
+    // встроенная: iframe лежит поверх всего сайта, а embed.js пропускает в него клики только над тем, что
+    // видно: clip-path по прямоугольникам, которые шлёт страница, - окна tk, их меню и окна страницы
+    // (#ask). Пока открыто меню, прямоугольник - весь экран: щелчок мимо меню закрывает его, как в Tk, а
+    // не уходит сайту. Шлётся после перемен в слое окон (одна пачка kt-tk.js - одна отправка) и только новое
+    if (EMBED) {
+      let sent = "", layer = null;
+      const send = () => {
+        const rects = [];
+        for (const el of document.querySelectorAll(".tk-layer > *, .overlay.open")) {
+          const b = el.getBoundingClientRect();
+          if (b.width < 1 || b.height < 1 || getComputedStyle(el).visibility === "hidden") continue;
+          if (el.classList.contains("tk-dd")) {
+            rects.splice(0, rects.length, [0, 0, innerWidth, innerHeight]);
+            break;
+          }
+          const x = Math.floor(b.left), y = Math.floor(b.top);
+          rects.push([x, y, Math.ceil(b.right) - x, Math.ceil(b.bottom) - y]);
+        }
+        const s = JSON.stringify(rects);
+        if (s === sent) return;
+        sent = s;
+        window.parent.postMessage({ kt: "rects", rects }, "*");
+      };
+      const watch = new MutationObserver(send);
+      // слой окон заводит kt-tk.js при первом окне (и заново, если его убрали)
+      const find = () => {
+        const l = document.querySelector(".tk-layer");
+        if (!l || l === layer) return;
+        layer = l;
+        watch.observe(l, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
+        send();
+      };
+      new MutationObserver(find).observe(document.body, { childList: true });
+      find();
+      for (const o of document.querySelectorAll(".overlay")) watch.observe(o, { attributes: true, attributeFilter: ["class"] });
+      window.addEventListener("resize", send);
+      if (document.fonts) document.fonts.addEventListener("loadingdone", send);
+    }
+
+    /* #endif */
     const mods = { ctrl: 0, alt: 0 };
     const modBtn = { ctrl: [], alt: [] }; // кнопки CTRL и ALT всех рядов: страницы и окон tk-term
     function setMod(name, v) {
@@ -1673,6 +1738,9 @@
     });
 
     function focusInput() {
+      /* #if embed */
+      if (EMBED) return; // встроенная: терминал невидим, набранное ушло бы в шелл
+      /* #endif */
       /* #if vga */ if (screenOn) return; /* #endif */ // экран: клавиатура - в машину, на телефоне - кнопкой ⌨
       if (mobile) kbd.focus({ preventScroll: true });
       else active.term.focus();

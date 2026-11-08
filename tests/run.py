@@ -46,6 +46,34 @@ print(n)
 """
 
 
+# встраивание (bundle.py --embed, embed.js): окно tkinter поверх сайта; сайт - кнопка во весь экран, она
+# считает все клики мимо окон
+EMBED_APP = """import tkinter as tk
+root = tk.Tk()
+root.title("встроено")
+v = tk.StringVar()
+tk.Entry(root, textvariable=v).pack()
+out = tk.Label(root, text="-")
+out.pack()
+tk.Button(root, text="ok", command=lambda: out.config(text="ok:" + v.get())).pack()
+bar = tk.Menu(root)
+m = tk.Menu(bar, tearoff=0)
+m.add_command(label="пункт")
+bar.add_cascade(label="Меню", menu=m)
+root.config(menu=bar)
+root.mainloop()
+"""
+EMBED_SITE = """<!doctype html><meta charset="utf-8"><body style="margin:0">
+<button id="site" style="position:fixed;inset:0;width:100%;height:100%">сайт</button>
+<script src="embed.js"></script>
+<script>
+window.hits = 0;
+site.onclick = () => hits++;
+window.rects = null;
+window.vm = KotelOS.embed("e.html", { cmd: "micropython -X heapsize=8M /root/app.py" }).on("rects", (r) => { rects = r; });
+</script>
+"""
+
 class Chrome(bundle.Chrome):
     def __init__(self, profile):
         super().__init__(profile)
@@ -378,9 +406,16 @@ def main():
     www = os.path.join(tmp, "www")
     os.makedirs(www)
     worker = ["--worker"] if WORKER else []
+    with open(os.path.join(tmp, "app.py"), "w") as f:
+        f.write(EMBED_APP)
+    with open(os.path.join(www, "embed.html"), "w") as f:
+        f.write(EMBED_SITE)
+    shutil.copy("embed.js", www)
     for args in (["-o", www + "/t.html", "-n", "test"] + worker + PKGS,
                  ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"] + worker,
-                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg", "xclip"] + worker):
+                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg", "xclip"] + worker,
+                 ["-o", www + "/e.html", "-n", "embed", "--embed", "--file", tmp + "/app.py:/root/app.py",
+                  "micropython", "python-tkinter"] + worker):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -1346,6 +1381,75 @@ def main():
         assert got == [(29, 1), (47, 1), (47, 0), (29, 0), (45, 1), (45, 0)], got
         return "из X в браузер за %.1f с" % copied
 
+    def embed():
+        with open(os.path.join(www, "t.html"), encoding="utf-8") as f:
+            assert 'kt: "rects"' not in f.read(), "код встраивания в бандле без --embed"
+        if s.c:
+            s.c.close()
+        s.c = Chrome(tempfile.mkdtemp(dir=s.tmp))
+        s.c.open(base + "embed.html")
+        F = "vm.frame.contentWindow"
+
+        def wait(expr, timeout, what):
+            t = time.time()
+            while time.time() - t < timeout:
+                try:
+                    v = s.ev(expr)
+                    if v:
+                        return v
+                except RuntimeError:
+                    pass
+                time.sleep(0.2)
+            raise AssertionError("%s: нет за %d с" % (what, timeout))
+
+        def click(x, y):
+            for t in ("mousePressed", "mouseReleased"):
+                s.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, button="left", buttons=1 if t == "mousePressed" else 0, clickCount=1)
+            time.sleep(0.3)
+
+        def center(sel):
+            return s.ev("(() => { const b = %s.document.querySelector(%s).getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()"
+                        % (F, json.dumps(sel)))
+
+        def clip():
+            return s.ev("vm.frame.style.clipPath").replace(" ", "").lower()
+
+        t0 = time.time()
+        r = wait("rects && rects.length && rects", 120, "окно программы")[0]
+        took = time.time() - t0
+        assert len(wait("rects", 1, "")) == 1, s.ev("rects")
+        assert clip() == 'path("m%d%dh%dv%dh%dz")' % (r[0], r[1], r[2], r[3], -r[2]), (clip(), r)
+        assert s.ev("getComputedStyle(%s.document.querySelector('#app')).visibility" % F) == "hidden", "терминал виден"
+        vw, vh = s.ev("[innerWidth, innerHeight]")
+        out = (vw - 10, vh - 10)
+        assert not (r[0] <= out[0] <= r[0] + r[2] and r[1] <= out[1] <= r[1] + r[3]), (out, r)
+        click(*out)
+        assert s.ev("hits") == 1, "клик мимо окна не дошёл до сайта"
+        # ввод в Entry и кнопка окна: сайту не достаются, в шелл не уходят
+        click(*center(".tk-win input"))
+        s.c.call("Input.insertText", text="abc")
+        click(*center(".tk-win .tk-btn"))
+        wait("%s.document.querySelector('.tk-win').innerText.includes('ok:abc')" % F, 10, "кнопка в окне")
+        assert s.ev("hits") == 1, "клик в окно дошёл до сайта"
+        assert "abc" not in s.ev("%s.eval('screenText()')" % F), "набранное ушло в терминал"
+        # меню: весь экран ловит iframe, щелчок мимо закрывает меню и сайту не достаётся
+        click(*center(".tk-mb > button"))
+        assert s.ev("rects") == [[0, 0, vw, vh]], s.ev("rects")
+        click(*out)
+        assert not s.ev("!!%s.document.querySelector('.tk-dd')" % F), "меню не закрылось"
+        assert s.ev("hits") == 1, "щелчок мимо меню дошёл до сайта"
+        wait("rects.length === 1 && rects[0][2] !== %d" % vw, 3, "прямоугольник окна после меню")
+        # закрыть: программа выходит, остаётся пиксель в углу (не пусто: Chrome усыпил бы iframe)
+        click(*center(".tk-win .tk-x:not(.tk-min)"))
+        wait("rects && rects.length === 0", 15, "окно закрыто")
+        assert clip() == 'path("m00h1v1h-1z")', clip()
+        click(r[0] + 10, r[1] + 10)
+        assert s.ev("hits") == 2, "где было окно, клик не дошёл до сайта"
+        time.sleep(1)
+        ms = s.ev("(async () => { const t = performance.now(); for (let i = 0; i < 5; i++) await vm.exec('true'); return (performance.now() - t) / 5; })()")
+        assert ms < 500, "машина без окон отвечает %d мс" % ms
+        return "окно через %.1f с, exec без окон %d мс" % (took, ms)
+
     def snap_bundle():
         t = s.open(base + "snap.html")
         tz = s.ok("date +%z").strip()
@@ -1372,7 +1476,7 @@ def main():
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("снимки и коды выхода", snap_rules), ("kt reset", reset),
-        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("бандл со снимком", snap_bundle),
+        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("встраивание", embed), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]
     try:

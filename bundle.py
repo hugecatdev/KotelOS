@@ -380,6 +380,9 @@ def options(argv=None):
                     help="экран на телефоне при screen.scale auto: точек страницы на точку X (иначе 1); на ПК не действует")
     ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
     ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
+    ap.add_argument("--embed", action="store_true",
+                    help="для сайта через embed.js: внутри iframe видны только окна tk поверх сайта, без терминала; "
+                         "открытый сам по себе бандл - обычный")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/); папку - её содержимое в ПУТЬ")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
@@ -449,7 +452,7 @@ def main():
     if "kt-share" in names:  # страница сразу берёт свой исходник для kt share (см. SOURCE в page.html)
         bundle["share"] = True
     # функции бандла: блоки страницы /* #if имя */ без них вырезаются
-    have = {x for x in ("vga", "virgl", "virtio_gpu") if getattr(a, x)}
+    have = {x for x in ("vga", "virgl", "virtio_gpu", "embed") if getattr(a, x)}
     if a.virgl or a.virtio_gpu or gpu3d:
         have.add("virgl_module")
     if a.virtio_gpu or gpu3d:
