@@ -1,0 +1,7 @@
+#!/bin/sh
+# кнопка kt share на странице: страница запускает page.d при каждом открытии и восстановлении
+r=$(kt js -f /usr/lib/kt-share.js button 2>/dev/null) || exit 0
+# машина из снимка kt share: его команда ждёт ответа страницы, которая осталась у отправителя
+if [ -f /run/kt/share.wait ] && [ ! -f /run/kt/share.done ] && [ "$r" != busy ]; then
+  echo "0это копия машины из kt share" > /run/kt/share.done.part && mv /run/kt/share.done.part /run/kt/share.done
+fi

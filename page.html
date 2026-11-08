@@ -249,6 +249,10 @@
 
     const NAME = (BUNDLE && BUNDLE.name) || "kotelos";
     const SLOT = "state:" + NAME;
+    // бандл из kt share (пакет kt-share): ревизия его снимка. Сохранение помнит ревизии, от которых пошла
+    // машина (revs); сохранение не от этого файла уступает ему и уходит в снимок с именем бандла
+    const SENT = (BUNDLE && BUNDLE.state && BUNDLE.state.rev) || null;
+    let revs = [], stashed = false;
     const HOME = location.pathname;
     const hasKernel = !!(BUNDLE && BUNDLE.files.bzimage);
     const coldBoot = qs.has("boot") && hasKernel;
@@ -959,6 +963,8 @@
         hello();
         if (!ttyLink) ttyConnect();
         if (onReady) { const f = onReady; onReady = null; f(); }
+        // пакеты дорисовывают своё на странице (кнопка kt-share): при каждом открытии и восстановлении
+        exec('for f in /etc/kt/page.d/*; do [ -x "$f" ] && "$f"; done; true');
         if (startCmd) typeWhenIdle(startCmd);
         startCmd = null;
       }
@@ -1138,7 +1144,7 @@
         await kv.set(name ? SNAP + name : SLOT, {
           blob, screen: screenDump, memory_size: memSize, vga_memory_size: vgaSize, screen_on: screenOn,
           screen_size: screenSent, replyId: id || null,
-          created: Date.now(), build: build && build.build, bundle: NAME,
+          created: Date.now(), build: build && build.build, bundle: NAME, revs,
         });
         lastSave = Date.now();
         let note = "";
@@ -1282,7 +1288,8 @@
           if (name) {
             const s = await kv.get(SNAP + snapName(name)).catch(() => null);
             if (!s) throw new Error(`нет снимка ${name}`);
-            await kv.set(SLOT, s);
+            // выбранный снимок - продолжение этого файла kt share, иначе загрузка отдала бы его в снимок обратно
+            await kv.set(SLOT, SENT ? { ...s, revs: [...(s.revs || []), SENT] } : s);
             status(id, true, `загружаю снимок ${name}...`);
           } else {
             const s = await kv.get(SLOT).catch(() => null);
@@ -1341,7 +1348,7 @@
         if (!r) return say(id, "отменено");
         const [f] = await r.value;
         if (!f) return say(id, "отменено");
-        await kv.set(SLOT, { blob: f, memory_size: memSize, vga_memory_size: vgaSize, created: f.lastModified || Date.now(), build: null });
+        await kv.set(SLOT, { blob: f, memory_size: memSize, vga_memory_size: vgaSize, created: f.lastModified || Date.now(), build: null, revs: SENT ? [SENT] : [] });
         say(id, `импортировано ${f.name}, перезагружаю...`);
         leave();
       },
@@ -1397,6 +1404,16 @@
       type: (text) => { serial(String(text)); },
       emit,
       save: () => saveState(),
+      // kt share: снять машину в сохранение с новой ревизией и отдать запись (blob - gzip от save_state)
+      async share(rev) {
+        const was = revs;
+        revs = [...revs, String(rev)].slice(-64);
+        if (!(await saveState())) {
+          revs = was;
+          throw new Error("машина не сохранилась");
+        }
+        return kv.get(SLOT);
+      },
       fit: () => layout(),
       cfg: new Proxy((k, v) => k === undefined ? cfg.all() : (v === undefined || cfg.set(k, v), cfg.typed(k)), {
         get: (f, k) => typeof k === "string" && k.includes(".") ? cfg.typed(k) : f[k],
@@ -2134,6 +2151,10 @@
 
       let saved = null, image = null;
       if (!qs.has("fresh") && !coldBoot) saved = await kv.get(SLOT).catch(() => null);
+      if (saved && SENT && !(saved.revs || []).includes(SENT) && await kv.set(SNAP + NAME, saved).then(() => true, () => false)) {
+        saved = null;
+        stashed = true;
+      }
 
       const opts = {
         memory_size: memSize,
@@ -2156,6 +2177,7 @@
         try {
           bootlog(`сохранение от ${when(saved.created)}, ${mb(saved.blob.size)}`);
           state = await gunzip(saved.blob);
+          revs = saved.revs || [];
           memSize = saved.memory_size || memSize;
           vgaSize = saved.vga_memory_size || VGA_OFF;
           bootEnd();
@@ -2170,7 +2192,9 @@
         image = BUNDLE.state;
         memSize = image.mem;
         vgaSize = image.vga || VGA_OFF;
-        state = take("state").buffer;
+        // bundle.py кладёт zstd (его v86 разжимает сам), kt share в браузере - gzip
+        state = image.gz ? await gunzip(new Blob([take("state")])) : take("state").buffer;
+        revs = image.revs || [];
         bootEnd();
         if (image.screen) term.write(image.screen);
       }
@@ -2298,7 +2322,8 @@
         connectAgent();
         if (!saved && !image) { bootlog("загружается Linux"); return; }
         restoredAt = Date.now();
-        if (saved) startCmd = null;
+        // снимок kt share - не новая машина: boot.cmd (startx бандлов xorg и dwm) уже отработал у отправителя
+        if (saved || SENT) startCmd = null;
         /* #if vga */
         // экран на виду в сохранении или во встроенном снимке (бандл с --run startx) - показать; размер X -
         // тот, что был у страницы тогда: если сейчас место другое, X получит screen-size и перейдёт
@@ -2309,6 +2334,7 @@
         }
         /* #endif */
         onReady = () => {
+          if (stashed) term.write(`\r\n\x1b[90mоткрыта присланная машина; прежнее сохранение - снимок ${NAME}, вернуть: kt load ${NAME}\x1b[0m\r\n`);
           ctl("REDRAW");
           emit("restore");
           /* #if vga */ if (screenOn) screenResized(true); /* #endif */
