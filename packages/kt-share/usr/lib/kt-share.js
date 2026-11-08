@@ -148,11 +148,7 @@ async (cmd = "", arg = "") => {
   function busy(on) {
     W.busy = on;
     const b = document.getElementById("kt-share");
-    if (b) {
-      b.classList.toggle("busy", on);
-      if (on) b.classList.add("open");
-      else if (b.shut) b.shut(1500);
-    }
+    if (b) b.classList.toggle("busy", on);
   }
 
   async function share(shell, name) {
@@ -182,19 +178,16 @@ async (cmd = "", arg = "") => {
     return "";
   }
 
-  // кнопка - язычок у правого края над рядом клавиш, поверх терминала и экрана X (у #screen z-index 16):
-  // свёрнутая почти не занимает места, наведение или касание раскрывает, нажатие на раскрытую - kt share
-  const CSS = `#kt-share { position: absolute; right: 0; bottom: 8px; z-index: 17; width: 12px; height: 40px; padding: 0;
-  border: 0; background: none; display: flex; align-items: center; justify-content: flex-end; color: var(--text); cursor: pointer;
-  touch-action: none; user-select: none; -webkit-user-select: none; }
-#kt-share::before { content: ""; width: 5px; height: 100%; border-radius: 3px 0 0 3px; background: #888; opacity: .7; }
-#kt-share svg { display: none; }
-#kt-share.open { width: 40px; justify-content: center; background: var(--bg); border: 1px solid #777; border-right: 0; border-radius: 8px 0 0 8px; }
-body.mobile #kt-share.open { width: 44px; height: 52px; }
-#kt-share.open::before { display: none; }
-#kt-share.open svg { display: block; }
-#kt-share.busy { opacity: .6; cursor: wait; }
-body.mobile #kt-share:not(.open) { width: 20px; height: 52px; }`;
+  // кнопка - полупрозрачный значок без фона у правого края над рядом клавиш, поверх терминала и экрана X
+  // (у #screen z-index 16); светлый с тёмной тенью - виден и на чёрном терминале, и на белом окне X
+  const CSS = `#kt-share { position: absolute; right: 8px; bottom: 8px; z-index: 17; width: 32px; height: 32px; padding: 0;
+  border: 0; background: none; color: #ddd; opacity: .45; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 2px #000); touch-action: none;
+  user-select: none; -webkit-user-select: none; }
+#kt-share:hover { opacity: .9; }
+#kt-share.busy { cursor: wait; animation: kt-share .8s ease-in-out infinite alternate; }
+@keyframes kt-share { from { opacity: .3; } to { opacity: 1; } }
+body.mobile #kt-share { width: 40px; height: 40px; }`;
 
   if (cmd === "button") {
     document.getElementById("kt-share")?.remove();
@@ -208,24 +201,18 @@ body.mobile #kt-share:not(.open) { width: 20px; height: 52px; }`;
     b.id = "kt-share";
     b.tabIndex = -1;
     b.setAttribute("aria-label", "kt share");
-    b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
-    let t = 0, wasOpen = false;
-    const open = () => { clearTimeout(t); b.classList.add("open"); };
-    b.shut = (ms) => { clearTimeout(t); t = setTimeout(() => { if (!W.busy) b.classList.remove("open"); }, ms); };
-    // фокус остаётся у терминала или экрана X, клавиатура телефона не закрывается (как у ряда клавиш)
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v9h14v-9"/></svg>';
+    // фокус остаётся у терминала или экрана X, клавиатура телефона не закрывается (как у ряда клавиш),
+    // поэтому нажатие - по pointerup (click после погашенного touchstart не приходит)
+    let down = false;
     b.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
     b.addEventListener("mousedown", (e) => e.preventDefault());
-    b.onpointerenter = (e) => { if (e.pointerType === "mouse") open(); };
-    b.onpointerleave = (e) => { if (e.pointerType === "mouse") b.shut(1000); };
-    b.onpointerdown = (e) => {
-      wasOpen = b.classList.contains("open");
-      open();
-      if (e.pointerType !== "mouse") b.shut(4000);
-    };
+    b.onpointerdown = () => { down = true; };
+    b.onpointerleave = () => { down = false; };
     // без функции gesture показывает окно всегда (с функцией сразу после нажатия - только вызывает её)
     b.onpointerup = () => {
-      if (wasOpen && !W.busy) share(false).catch((e) => kt.gesture("kt share: " + e.message, "OK").catch(() => {}));
-      wasOpen = false;
+      if (down && !W.busy) share(false).catch((e) => kt.gesture("kt share: " + e.message, "OK").catch(() => {}));
+      down = false;
     };
     const app = document.getElementById("app"), keys = document.getElementById("keys");
     app.append(b);

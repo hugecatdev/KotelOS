@@ -64,7 +64,7 @@ class Person(bundle.Chrome):
         return self.eval("screenText()")
 
     def click(self):
-        # как человек: мышь на язычок (раскрывается), нажать и отпустить
+        # как человек: мышь на значок, нажать и отпустить
         x, y = self.eval("(() => { const r = document.getElementById('kt-share').getBoundingClientRect(); "
                          "return [r.right - 3, r.top + r.height / 2]; })()")
         self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
