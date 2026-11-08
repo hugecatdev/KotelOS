@@ -21,7 +21,7 @@
 | `kt share [<name>]` (пакет `kt-share`) | - | `kt.share(rev)` | машина файлом: та же страница со снимком машины, см. [Бандлы](bundles.md#машина-файлом-kt-share). `kt.share` - сохранение с новой ревизией, отдаёт его запись |
 | `kt font [<name>] [<size>]`, `kt theme [<name>]` | - | - | шрифт и тема |
 | `kt notify [<text>]` (пакет `notify`, код - `/usr/lib/kt-notify.js`) | `kt.notify(s)` | - | системное уведомление (первый раз спросит разрешение; нужен https или localhost, через file:// браузер их не даёт - только мигает заголовок вкладки) |
-| `kt alert [<text>]`, `kt confirm <text>`, `kt prompt <text> [<default>]` (пакет `notify`) | - | - | родные окна браузера: alert, да/нет кодом выхода (0 - да, 1 - нет или отмена), строка на stdout (отмена - код 1). Пока окно открыто, страница и машина стоят |
+| `kt alert [<text>]`, `kt confirm <text>`, `kt prompt <text> [<default>]` (пакет `notify`) | - | - | родные окна браузера: alert, да/нет кодом выхода (0 - да, 1 - нет или отмена), строка на stdout (отмена - код 1). Окно блокирует поток эмулятора |
 | `kt pkg [-a \| <name>... \| search \| add \| rm \| files]` | - | - | пакеты, см. [packages.md](packages.md) |
 | - | - | `kt.exec(cmd)`, `kt.read(path)` | выполнить команду / прочитать файл в госте |
 | - | - | `kt.type(text)`, `kt.fit()` | ввод в терминал, подогнать размер |
