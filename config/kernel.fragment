@@ -124,6 +124,9 @@ CONFIG_NOHIGHMEM=y
 # CONFIG_PM is not set
 # CONFIG_CPU_IDLE is not set
 CONFIG_SECCOMP=y
+# System V IPC - для MIT-SHM: кадр программы (Mesa через Xlib, Qt) уходит в X общей памятью, а не
+# копией через сокет; у OpenGL-программ доля Xorg вдвое меньше (gloss 36 -> 19%). +12 КБ к bzImage
+CONFIG_SYSVIPC=y
 # CONFIG_STACKPROTECTOR is not set
 # CONFIG_RANDOMIZE_KSTACK_OFFSET is not set
 # CONFIG_BLOCK is not set

@@ -45,7 +45,9 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   конфигов Buildroot: без железа, модулей, блочных устройств, крипто и т.п.
   В busybox добавлены `timeout`, `pgrep` и `pkill` (последние два - пара КБ).
   В ядре включён `CONFIG_SECCOMP` (с ним `SECCOMP_FILTER`, +4 КБ к bzImage): без
-  него chawan не запускает процессы страниц.
+  него chawan не запускает процессы страниц. И `CONFIG_SYSVIPC` (+12 КБ): с ним
+  в X работает MIT-SHM - кадры OpenGL-программ и Qt идут общей памятью, а не
+  через сокет (у OpenGL доля Xorg вдвое меньше, `virgl/harness/glsplit.sh`).
 - `overlay/` - всё своё: `kt`, модули, агент, init-скрипты, `kt.py`.
 - `images/` - собранные bzImage, rootfs.cpio, build.json; `vendor/v86/` -
   libv86.js, v86.wasm и BIOS из проекта v86. Из них и собирается бандл
