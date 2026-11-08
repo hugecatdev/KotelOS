@@ -17,9 +17,9 @@ try:
   await v.play();
   const c = document.createElement("canvas");
   window.ktCam = { v, c, g: c.getContext("2d", { willReadFrequently: true }) };
-}""", timeout=60)
+}""")
 except kt.JSError as e:
-    print("cam: нет доступа к камере (%s)" % str(e).split(": ", 1)[-1], file=sys.stderr)
+    print("cam: нет доступа к камере (%s)" % e, file=sys.stderr)
     sys.exit(1)
 
 GRAB = """(w, h) => {

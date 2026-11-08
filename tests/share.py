@@ -165,7 +165,7 @@ def main():
         check("B: сказано про снимок", "прежнее сохранение - снимок " + pid in B.screen(), B.screen()[-400:])
         check("B: kt snap показывает отложенное", pid in B.sh("kt snap")[1], B.sh("kt snap"))
         time.sleep(6)  # kt load сразу после восстановления страница пропускает
-        B.eval("send('kt load %s\\r')" % pid)
+        B.eval("send('kt load -y %s\\r')" % pid)
         time.sleep(3)
         B.ready()
         check("B: kt load вернул своё и не отдал его в снимок снова",

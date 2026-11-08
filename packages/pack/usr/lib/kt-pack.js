@@ -15,7 +15,7 @@ const req = async (mode, fn) => {
 };
 const get = async (n) => {
   const v = await req('readonly', (s) => s.get(n));
-  if (!v) throw new Error('нет ' + n);
+  if (!v) throw new Error('нет архива ' + n + ' (kt pack - список)');
   return v;
 };
 const put = (n, v) => req('readwrite', (s) => s.put(v, n));

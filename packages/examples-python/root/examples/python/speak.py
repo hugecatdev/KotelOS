@@ -18,7 +18,7 @@ try:
   u.onerror = (e) => err(new Error(e.error));
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
-})""", text, lang, timeout=600)
+})""", text, lang)
 except kt.JSError as e:
-    print("speak: " + str(e).split(": ", 1)[-1], file=sys.stderr)
+    print("speak: %s" % e, file=sys.stderr)
     sys.exit(1)

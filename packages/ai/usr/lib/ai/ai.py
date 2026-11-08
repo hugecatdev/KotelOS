@@ -12,7 +12,8 @@ except ImportError:
     def setraw(fd, when=None):
         termios.setraw(fd)
 
-URL = "https://api.openai.com/v1"
+# ключи ai.* и их умолчания - в /usr/share/kt/cfg/ai, kt.cfg отдаёт их и для незаданных
+SETTINGS = sorted((k, v) for k, v in kt.cfg.describe().items() if k.startswith("ai."))
 HOME = os.getenv("HOME") or "/root"
 LAST = HOME + "/.ai/last.json"
 HIST = HOME + "/.ai/history.json"
@@ -35,17 +36,11 @@ HELP = """usage: ai [-c] [текст]
   -k     ввод ключа API
 
 Настройки kt cfg:
-  ai.url     адрес API, совместимого с OpenAI (по умолчанию %s)
-  ai.key     ключ API, хранится только в браузере
-  ai.model   модель
-  ai.effort  уровень рассуждения: none, minimal, low, medium, high, xhigh
-  ai.auto    off - подтверждать команды и правки (по умолчанию без подтверждения)
-  ai.api     протокол chat или responses, без значения выбирается сам
-  ai.ctx     предел контекста в тысячах токенов (по умолчанию 32)
+%s
 
 Системный промпт: AGENTS.md из текущей папки, без него /etc/ai/AGENTS.md.
 Скиллы: <имя>/SKILL.md в ./.ai/skills, ~/.ai/skills, /etc/ai/skills.
-Команды диалога: /help""" % URL
+Команды диалога: /help""" % "\n".join("  %-10s %s%s" % (k, d, " (по умолчанию %s)" % v if v else "") for k, (v, d) in SETTINGS)
 
 CMDS = """/model    выбор модели и рассуждения
 /auto     подтверждение команд и правок: вкл/выкл
@@ -434,20 +429,21 @@ class Agent:
         self.ask_tty = None
         self.ed = None
         self.pending = []
-        c = kt.js("() => ['url', 'model', 'ctx', 'effort', 'api', 'auto'].map((k) => kt.cfg['ai.' + k] || '')")
-        self.yes = c[5] != "off"
-        self.url = c[0] or URL
-        self.model, self.effort = c[1], c[3]
+        c = kt.cfg()
+        self.yes = c.get("ai.auto") != "off"
+        self.url = c.get("ai.url") or ""
+        self.model, self.effort = c.get("ai.model", ""), c.get("ai.effort", "")
         try:
-            self.limit = max(4, int(c[2] or 32)) * 1000
+            self.limit = max(4, int(c.get("ai.ctx") or 32)) * 1000
         except ValueError:
             self.limit = 32000
-        self.fixed = c[4] in ("chat", "responses")
+        api = c.get("ai.api", "")
+        self.fixed = api in ("chat", "responses")
         try:
             self.protos = json.loads(load(PROTO))
         except (OSError, ValueError):
             self.protos = {}
-        self.mode = c[4] if self.fixed else self.protos.get(self.url, "chat")
+        self.mode = api if self.fixed else self.protos.get(self.url, "chat")
         self.names = None
         self.msgs = [self.system()]
         self.base = (0, 0)
@@ -476,17 +472,20 @@ class Agent:
             raise Stop(str(e))
         out = r[1:].decode().strip()
         if r[:1] != b"0":
-            raise Stop(out.split(": ", 1)[-1])
+            raise Stop(out[7:] if out.startswith("Error: ") else out)
         return json.loads(out) if out else None
 
+    # как kt.js, но Esc с клавиатуры прерывает ожидание: ответа ждёт, пока соединение живо, а сменился
+    # агент (машину восстановили) - ещё kt.WAIT секунд, по соединению или файлом от агента
     def page(self, code):
         s = socket.socket()
         old = None
+        rid = kt._rid()
         try:
-            s.settimeout(600)
+            s.settimeout(kt.WAIT)
             try:
                 s.connect(socket.getaddrinfo(kt.PAGE[0], kt.PAGE[1])[0][-1])
-                data = ("jsjson %s 0 %s\n" % (kt._rid(), kt._b64(code))).encode()
+                data = ("jsjson %s 0 %s\n" % (rid, kt._b64(code))).encode()
                 if hasattr(s, "sendall"):
                     s.sendall(data)
                 else:
@@ -499,10 +498,19 @@ class Agent:
                 old = self.ed.quiet()
                 wait.register(0, select.POLLIN)
             out = []
+            agent, lost = kt._agent(), None
             while True:
-                got = wait.poll(600000)
+                got = wait.poll(1000)
                 if not got:
-                    raise OSError("браузер не ответил")
+                    if lost is None and kt._agent() != agent:
+                        lost = kt._ms()
+                    if lost is not None:
+                        r = kt._take("%s/reply.%s" % (kt.RUN, rid))
+                        if r is not None:
+                            return r
+                        if kt._diff(kt._ms(), lost) > kt.WAIT * 1000:
+                            raise OSError("браузер не ответил")
+                    continue
                 for e in got:
                     if e[0] == 0 and e[1] & (select.POLLHUP | select.POLLERR):
                         wait.unregister(0)
@@ -901,7 +909,7 @@ class Agent:
         i = self.last_user()
         if c == "/auto":
             self.yes = not self.yes
-            kt.js("(v) => { kt.cfg['ai.auto'] = v }", "" if self.yes else "off")
+            kt.cfg["ai.auto"] = "on" if self.yes else "off"
             note("команды и правки " + ("без подтверждения" if self.yes else "с подтверждением"))
         elif c == "/clear":
             self.msgs = [self.system()]
@@ -929,7 +937,11 @@ class Agent:
         elif c == "/copy":
             for m in reversed(self.msgs):
                 if m["role"] == "assistant" and m.get("content"):
-                    note(kt.call("copy", kt._b64(m["content"])).decode().strip() or "скопировано")
+                    try:
+                        kt.copy(m["content"])
+                        note("скопировано")
+                    except kt.Error as e:
+                        note(str(e))
                     break
             else:
                 note("ответов ещё нет")
@@ -1047,8 +1059,8 @@ def main():
 
 try:
     sys.exit(main())
-except kt.JSError as e:
-    print("ai: " + str(e).split(": ", 1)[-1], file=sys.stderr)
+except kt.Error as e:
+    print("ai: " + str(e), file=sys.stderr)
     sys.exit(1)
 except Stop as e:
     print("ai: " + str(e), file=sys.stderr)

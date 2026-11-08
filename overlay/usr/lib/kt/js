@@ -1,27 +1,20 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='code      выражение или функция JavaScript
-arg...    аргументы функции, передаются строками
--f file   код из файла
-без code  код из stdin'
-kt_meta "<code> [arg...] | -f file [arg...]" "выполнить JS" "$@"
-fn=
+KT_HELP='без аргументов  код из stdin: команда | kt js
+<code>  выражение или функция JavaScript; результат - в stdout
+<code> <arg>...  функция, аргументы уходят в неё строками
+-f <file> [<arg>...]  код из файла
+в коде есть kt - API страницы и term - терминал'
+kt_meta "[<code> [<arg>...] | -f <file> [<arg>...]]" "выполнить JS на странице" "$@"
 if [ "$1" = -f ]; then
-  [ -r "$2" ] || { echo "kt js: нет файла $2" >&2; exit 1; }
+  [ -r "$2" ] || kt_die "нет файла $2"
   code=$(cat "$2")
   shift 2
-  fn=1
-elif [ $# -gt 1 ]; then
-  case $1 in
-    *"=>"*|function*|async*) code=$1; shift; fn=1 ;;
-  esac
-fi
-if [ -n "$fn" ]; then
-  a=$(kt_b64 "$code")
-  for x in "$@"; do a="$a $(kt_b64 "$x")"; done
-  kt_send js "$a"
+elif [ $# -gt 0 ]; then
+  code=$1
+  shift
 else
-  [ $# -gt 0 ] || [ ! -t 0 ] || kt_usage "<code> [arg...] | -f file [arg...]"
-  kt_send js "$(kt_b64 "$@")"
+  [ ! -t 0 ] || kt_usage "[<code> [<arg>...] | -f <file> [<arg>...]]"
+  code=$(cat)
 fi
-kt_status 6000
+kt_js "$code" "$@"

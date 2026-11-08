@@ -1,11 +1,28 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  список снимков
-rm name         удаление снимка'
-kt_meta "[rm name]" "снимки" "$@"
+KT_HELP='без аргументов  снимки: имя, когда, размер, бандл
+rm [-y] <name>...  удалить снимки
+снимок делает kt save <name>, загружает kt load <name>, в файл - kt export <name>'
+kt_meta "[rm [-y] <name>...]" "снимки" "$@"
 case "$1" in
-  "") kt_send snaps "" ;;
-  rm) [ -n "$2" ] || kt_usage "rm <name>"; kt_send snapdel "$(kt_b64 "$2")" ;;
-  *) kt_usage "[rm name]" ;;
+  "") kt_page snaps "" ;;
+  rm)
+    shift
+    y=
+    while getopts :y o; do
+      case $o in
+        y) y=1 ;;
+        *) kt_usage "rm [-y] <name>..." ;;
+      esac
+    done
+    shift $((OPTIND - 1))
+    [ $# -gt 0 ] || kt_usage "rm [-y] <name>..."
+    for n; do kt_name "$n"; done
+    have=$(kt_page snaps "" | awk '{ print $1 }') || exit 1
+    for n; do printf '%s\n' "$have" | grep -qxF "$n" || kt_die "нет снимка $n"; done
+    [ -n "$y" ] || kt_ask "удалить снимки $*?" || exit 1
+    rc=0
+    for n; do kt_page snapdel "$(kt_b64 "$n")" || rc=1; done
+    exit $rc ;;
+  *) kt_usage "[rm [-y] <name>...]" ;;
 esac
-kt_status

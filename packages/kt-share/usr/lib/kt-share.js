@@ -17,7 +17,8 @@ async (cmd = "", arg = "") => {
   // самой машине и уезжает со снимком: следующий kt share - та же машина новой ревизией
   async function project(name) {
     if (name) {
-      if (!/^[\w.-]{1,24}$/.test(name)) throw new Error("имя: латинские буквы, цифры, . _ -, до 24 знаков");
+      // как kt_name в госте; 24 - чтобы с «-xxxxxx» вышло имя снимка, до 32 знаков
+      if (!/^(?!-)[\w.-]{1,24}$/.test(name)) throw new Error("имя - латинские буквы, цифры, . _ -, до 24 знаков: " + name);
     } else {
       const [id, n] = (await sh(`cat ${PROJ} 2>/dev/null; true`)).split("\n");
       if (id && n) return { id, name: n };
@@ -129,7 +130,7 @@ async (cmd = "", arg = "") => {
   if (cmd === "share") {
     // через mv: команда ждёт появления файла и не должна прочитать его недописанным
     const done = (s) => kt.exec(`cat > ${DONE}.part && mv ${DONE}.part ${DONE}`, { stdin: s + "\n" }).catch(() => {});
-    share(true, arg).then((m) => done("0" + m), (e) => done("1kt share: " + e.message));
+    share(true, arg).then((m) => done("0" + m), (e) => done("1" + e.message));
     return "";
   }
 

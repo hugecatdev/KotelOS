@@ -42,7 +42,7 @@ if len(sys.argv) > 1:
 else:
     try:
         lat, lon = kt.js("""() => new Promise((ok, err) => navigator.geolocation.getCurrentPosition(
-  (p) => ok([p.coords.latitude, p.coords.longitude]), (e) => err(new Error(e.message)), { timeout: 20000 }))""", timeout=30)
+  (p) => ok([p.coords.latitude, p.coords.longitude]), (e) => err(new Error(e.message)), { timeout: 20000 }))""")
         place = "%.2f, %.2f" % (lat, lon)
     except (kt.JSError, OSError):
         place, lat, lon = "Москва", 55.75, 37.62

@@ -1,27 +1,24 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов   консоли: номер, * - на виду, своя - эта
-new [команда]    новая консоль: шелл или команда, номер - на stdout
-N                перейти на консоль N, экран прячется (на клавиатуре Alt+1..9)
-kill N           закрыть консоль N (шеллу - SIGHUP)'
-kt_meta "[new [команда] | N | kill N]" "виртуальные консоли" "$@"
-page() {
-  code=$1
-  shift
-  a=$(kt_b64 "$code")
-  for x in "$@"; do a="$a $(kt_b64 "$x")"; done
-  kt_send js "$a"
-  kt_status 6000
-}
+KT_HELP='без аргументов  консоли: * - на виду, (эта) - та, где запущена команда
+<N>  перейти на консоль N, экран прячется; на клавиатуре Alt+1..9
+new [<cmd>]  новая консоль с шеллом или командой; её номер - в stdout
+kill <N>  закрыть консоль N, шеллу - SIGHUP'
+kt_meta "[<N> | new [<cmd>] | kill <N>]" "виртуальные консоли" "$@"
 case $1 in
   "")
     # своя консоль - та, где шелл; в X (DISPLAY) он в окне, а KT_TTY достался от консоли со startx
     me=${KT_TTY:-1}
     [ -z "$DISPLAY" ] || me=0
-    page '(me) => kt.tty.list().map((t) => (t.active ? "*" : " ") + " " + t.id + (String(t.id) === me ? " (эта)" : "")
+    kt_js '(me) => kt.tty.list().map((t) => (t.active ? "*" : " ") + " " + t.id + (String(t.id) === me ? " (эта)" : "")
       + (t.window ? " окно" : "") + (t.title ? " " + t.title : "")).join("\n")' "$me" ;;
-  new) shift; page '(c) => kt.tty.open(c)' "$*" ;;
-  kill) [ -n "$2" ] || kt_usage "kill N"; page '(n) => kt.tty.kill(n) && ""' "$2" ;;
-  *[!0-9]*) kt_usage "[new [команда] | N | kill N]" ;;
-  *) page '(n) => kt.tty.go(n) ? "" : "нет консоли " + n' "$1" ;;
+  new) shift; kt_js '(c) => kt.tty.open(c)' "$*" ;;
+  kill)
+    case $2 in ""|*[!0-9]*) kt_usage "kill <N>" ;; esac
+    [ $# -eq 2 ] || kt_usage "kill <N>"
+    kt_js '(n) => { if (!kt.tty.list().some((t) => String(t.id) === n)) throw new Error("нет консоли " + n); kt.tty.kill(n) }' "$2" ;;
+  *[!0-9]*) kt_usage "[<N> | new [<cmd>] | kill <N>]" ;;
+  *)
+    [ $# -eq 1 ] || kt_usage "[<N> | new [<cmd>] | kill <N>]"
+    kt_js '(n) => { if (!kt.tty.go(n)) throw new Error("нет консоли " + n) }' "$1" ;;
 esac

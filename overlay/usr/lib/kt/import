@@ -1,5 +1,7 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='заменяет текущее сохранение файлом .v86state.gz из kt export'
+KT_HELP='без аргументов  файл .v86state.gz из kt export заменяет сохранение, страница перезагружается
+файл выбирается в браузере, отмена - код 1'
 kt_meta "" "сохранение из файла" "$@"
-kt_call import "" 36000
+[ $# -eq 0 ] || kt_usage ""
+kt_page import ""

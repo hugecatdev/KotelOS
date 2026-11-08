@@ -162,7 +162,7 @@
       "save.auto": { def: "on", values: ["on", "off"] },
       "save.timer": { def: String((BUNDLE && BUNDLE.save_timer) || 0), range: [0, 240] },
       "term.font": { def: isTouch ? "12" : "13", range: [8, 32], apply: (v) => setFont(+v) },
-      "term.family": { def: "system", check: fontCheck, apply: (v) => setFamily(v) },
+      "term.family": { def: "system", check: fontCheck, prepare: fontLoad, apply: (v) => setFamily(v) },
       "term.theme": { def: "dark", values: Object.keys(THEMES), apply: (v) => setTheme(v) },
       "term.render": { def: "dom", values: ["dom", "canvas"], apply: (v) => { setRender(v); layout(); } },
       "term.cursor": { def: "block", values: ["block", "bar", "underline"], apply: (v) => { for (const t of ttys.values()) t.term.options.cursorStyle = v; } },
@@ -217,13 +217,25 @@
         if (s.apply) s.apply(v);
         return v;
       },
+      // set с проверкой, которой нужно время (шрифт есть на Google Fonts): kt cfg, kt font, kt.cfg(k, v)
+      async put(k, v) {
+        const s = this.spec(k);
+        if (s && s.prepare) {
+          v = String(v);
+          if (s.check) s.check(v);
+          await s.prepare(v);
+        }
+        return this.set(k, v);
+      },
       reset(k) { const s = this.spec(k); return this.set(k, s ? s.def : ""); },
-      resetAll() {
-        const keys = Object.keys(this.data);
-        for (const k of keys) if (Object.hasOwn(SETTINGS, k)) this.reset(k);
-        this.data = {};
-        store.set("kt.cfg", "{}");
-        return keys.length ? "сброшено: " + keys.join(" ") : "всё и так по умолчанию";
+      // rm: ключи - к умолчанию (свои - удалить), без ключей - все ключи страницы; свои ключи пакетов
+      // (ai.key) так не трогаются. Ответ - снятые ключи, «- ключ» строкой
+      rm(keys) {
+        if (!keys.length) keys = Object.keys(this.data).filter((k) => Object.hasOwn(SETTINGS, k)).sort();
+        for (const k of keys) this.spec(k);
+        const gone = keys.filter((k) => Object.hasOwn(this.data, k));
+        for (const k of keys) this.reset(k);
+        return gone.map((k) => "- " + k).join("\n");
       },
       typed(k) {
         const s = this.spec(k), v = this.get(k);
@@ -235,13 +247,19 @@
       },
       keys() { return [...Object.keys(SETTINGS), ...this.custom()]; },
       all() { return Object.fromEntries(this.keys().map((k) => [k, this.typed(k)])); },
-      list() { return this.keys().map((k) => k + "\t" + this.get(k).replace(/[\t\n]/g, " ")).join("\n"); },
+      // для kt cfg: «ключ<TAB>значение<TAB>умолчание» у ключей страницы, «ключ<TAB>значение» у своих
+      list() {
+        const one = (v) => String(v).replace(/[\t\n]/g, " ");
+        return this.keys().map((k) => k + "\t" + one(this.get(k)) + (Object.hasOwn(SETTINGS, k) ? "\t" + one(SETTINGS[k].def) : "")).join("\n");
+      },
     };
 
-    if (qs.has("reset")) {
-      cfg.data = {};
-      store.set("kt.cfg", "{}");
-      const rest = location.search.slice(1).split("&").filter((p) => p && p.split("=")[0] !== "reset").join("&");
+    // ?defaults - как kt cfg rm: ключи страницы по умолчанию, свои ключи пакетов остаются. Терминала ещё нет,
+    // применять нечего - ключи просто убираются
+    if (qs.has("defaults")) {
+      for (const k of Object.keys(cfg.data)) if (Object.hasOwn(SETTINGS, k)) delete cfg.data[k];
+      store.set("kt.cfg", JSON.stringify(cfg.data));
+      const rest = location.search.slice(1).split("&").filter((p) => p && p.split("=")[0] !== "defaults").join("&");
       history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
     }
 
@@ -425,8 +443,8 @@
     }
     const gzip = (buf) => new Response(chunks(buf).pipeThrough(new CompressionStream("gzip"))).blob();
     const gunzip = (blob) => new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
-    const mb = (n) => (n / 1048576).toFixed(1) + " МБ";
-    const human = (n) => n < 1048576 ? Math.ceil(n / 1024) + " КБ" : mb(n);
+    // размер как у kt_size в госте: до мегабайта - КБ, дальше - МБ с десятыми
+    const mb = (n) => n < 1048576 ? Math.ceil(n / 1024) + " КБ" : (n / 1048576).toFixed(1) + " МБ";
     const when = (t) => new Date(t).toLocaleString("ru", { dateStyle: "short", timeStyle: "short" });
 
     function layout() {
@@ -457,6 +475,9 @@
 
     function fontCheck(v) {
       if (!Object.hasOwn(FONTS, v) && !/^[\p{L}\p{N} ]{2,40}$/u.test(v)) throw new Error("term.family: " + Object.keys(FONTS).join("|") + " или имя шрифта с Google Fonts");
+    }
+    async function fontLoad(v) {
+      if (!(await loadFont(v))) throw new Error(`term.family: нет шрифта ${v} на Google Fonts`);
     }
     async function loadFont(key) {
       const f = FONTS[key] || { name: key };
@@ -879,8 +900,8 @@
         const fn = Object.hasOwn(commands, verb) && commands[verb];
         if (id && id !== "-") pending.set(id, c);
         Promise.resolve()
-          .then(() => fn ? fn(rest.join(" "), id, data) : say(id, "нет команды " + verb))
-          .catch((e) => say(id, "ошибка: " + e.message))
+          .then(() => fn ? fn(rest.join(" "), id, data) : status(id, false, "нет команды " + verb))
+          .catch((e) => status(id, false, e.message))
           .finally(() => { if (pending.get(id) === c) pending.delete(id); c.close(); });
       };
       c.on("data", (d) => {
@@ -926,7 +947,7 @@
       const b64 = toB64(enc.encode(text));
       send1(`REPLY ${id} ${b64.length}\n${b64}`);
     }
-    const say = (id, text) => reply(id, text ? text + "\n" : "");
+    // ответ на запрос kt: первый байт 0 - успех, 1 - ошибка или отмена, дальше текст (stdout или stderr в госте)
     const status = (id, ok, text) => reply(id, (ok ? "0" : "1") + (text ? text.replace(/\n?$/, "\n") : ""));
 
     let sizeTimer = 0;
@@ -978,6 +999,10 @@
         markReady();
         hello();
         if (!ttyLink) ttyConnect();
+        if (notes.length) {
+          for (const n of notes.splice(0)) term.write(`\r\n\x1b[90m${n}\x1b[0m\r\n`);
+          if (!onReady) ctl("REDRAW");
+        }
         if (onReady) { const f = onReady; onReady = null; f(); }
         // пакеты дорисовывают своё на странице (кнопка kt-share): при каждом открытии и восстановлении;
         // исходник со следующего открытия - только если хук kt-share снова попросит (kt.keepSource)
@@ -1069,6 +1094,7 @@
       try { document.execCommand("copy"); } catch {}
       ta.remove();
     }
+    // true - скопировано; без жеста браузер не даёт буфер, тогда кнопка «Копировать» 20 с и ответ после неё
     async function copyText(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -1077,12 +1103,14 @@
         const t = $("#toast");
         t.querySelector("span").textContent = "Браузер просит подтвердить";
         t.classList.add("open");
-        t.querySelector("button").onclick = () => {
-          t.classList.remove("open");
-          (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => fallbackCopy(text));
-        };
-        setTimeout(() => t.classList.remove("open"), 20000);
-        return false;
+        return new Promise((done) => {
+          const end = setTimeout(() => { t.classList.remove("open"); done(false); }, 20000);
+          t.querySelector("button").onclick = () => {
+            clearTimeout(end);
+            t.classList.remove("open");
+            (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => fallbackCopy(text)).then(() => done(true));
+          };
+        });
       }
     }
     function screenText() {
@@ -1124,12 +1152,15 @@
     }
 
     const AsyncFunction = (async () => {}).constructor;
-    async function evalJS(code) {
+    // код - выражение или тело функции; вышла функция - она и вызывается, с args. Аргументы у не-функции - ошибка
+    async function evalJS(code, args = []) {
       let fn;
       try { fn = new AsyncFunction("kt", "term", "return (" + code + "\n)"); }
       catch { fn = new AsyncFunction("kt", "term", code); }
       const r = await fn(api, term);
-      return typeof r === "function" ? r() : r;
+      if (typeof r === "function") return r(...args);
+      if (args.length) throw new Error("аргументы бывают только у функции, а код - не функция");
+      return r;
     }
     function asText(v) {
       if (v === undefined) return "";
@@ -1144,15 +1175,24 @@
     }
 
     const SNAP = "snap:";
+    // то же правило, что kt_name в госте
     const snapName = (n) => {
-      if (!/^[\w.-]{1,32}$/.test(n)) throw new Error("имя: буквы, цифры, . _ -");
+      if (!/^(?!-)[\w.-]{1,32}$/.test(n)) throw new Error("имя - латинские буквы, цифры, . _ -, до 32 знаков: " + n);
       return n;
     };
 
     let saving = false, lastSave = Date.now();
+    // ?fresh или ?boot при живом сохранении: оно не загружено, и автосохранение его не затирает до kt save
+    let keepSave = false;
+    // строки в терминал, когда машина готова: что страница сделала сама (в том числе до перезагрузки)
+    const notes = [];
+    if (store.get("kt.note")) {
+      notes.push(store.get("kt.note"));
+      store.set("kt.note", "");
+    }
     async function saveState(id, name) {
-      if (!emulator) return;
-      if (saving) return say(id, "уже сохраняю");
+      if (!emulator) return status(id, false, "машина ещё не запущена");
+      if (saving) return status(id, false, "уже сохраняю");
       saving = true;
       try {
         if (name) snapName(name);
@@ -1165,6 +1205,7 @@
           created: Date.now(), build: build && build.build, bundle: NAME, revs,
         });
         lastSave = Date.now();
+        if (!name) keepSave = false;
         let note = "";
         /* #if virgl */
         if (virglConn) note = "\n3D (VirGL) не сохраняется: программы OpenGL после восстановления запустить заново";
@@ -1173,10 +1214,10 @@
         // X с glamor (экран virtio-gpu) держит свой контекст всё время
         if (gpuContexts) note = "\n3D (virtio-gpu) не сохраняется: программы OpenGL" + /* #if virtio_gpu */ " и X с glamor" + /* #endif */ " после восстановления запустить заново";
         /* #endif */
-        say(id, (name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`) + note);
+        status(id, true, (name ? `снимок ${name} сохранён, ${mb(blob.size)}` : `сохранено, ${mb(blob.size)}`) + note);
         return blob.size;
       } catch (e) {
-        say(id, "не вышло: " + e.message);
+        status(id, false, "не сохранить: " + e.message);
       } finally {
         saving = false;
       }
@@ -1199,16 +1240,16 @@
       leaving = true;
       for (let i = 0; saving && i < 50; i++) await new Promise((r) => setTimeout(r, 100));
       await kv.del(SLOT).catch(() => {});
-      cfg.data = {};
-      store.set("kt.cfg", "{}");
+      for (const k of Object.keys(cfg.data)) if (Object.hasOwn(SETTINGS, k)) delete cfg.data[k];
+      store.set("kt.cfg", JSON.stringify(cfg.data));
       location.href = HOME;
     }
     document.addEventListener("visibilitychange", async () => {
-      if (document.hidden && !leaving && cfg.get("save.auto") === "on" && agentReady && await alive() && !leaving) saveState();
+      if (document.hidden && !leaving && !keepSave && cfg.get("save.auto") === "on" && agentReady && await alive() && !leaving) saveState();
     });
     setInterval(async () => {
       const m = +cfg.get("save.timer");
-      if (m && !leaving && !saving && agentReady && Date.now() - lastSave >= m * 60000 && await alive()) saveState();
+      if (m && !leaving && !saving && !keepSave && agentReady && Date.now() - lastSave >= m * 60000 && await alive()) saveState();
     }, 20000);
 
     async function snaps() {
@@ -1243,25 +1284,27 @@
     }
 
     const commands = {
-      async upload() {
+      // upload, paste, fetch: файлы идут через агента, FIN - конец (агент пишет upload.done), ответ - после него
+      async upload(arg, id) {
         const r = await ask("Гость ждёт файлы", "Выбрать", () => pickFile($("#file")));
-        if (r) {
-          const files = await r.value;
-          if (files.length) return uploadFiles(files);
-        }
-        ctl("FIN");
+        const files = r ? await r.value : [];
+        if (files.length) await uploadFiles(files);
+        else ctl("FIN");
+        status(id, files.length > 0, files.length ? "" : "отменено");
       },
-      async paste() {
+      async paste(arg, id) {
         const text = await readClipboard();
-        if (text) await transfer("clip.txt", "", new Blob([text])).catch(() => {});
+        let err = text === null ? "отменено" : text ? "" : "буфер обмена пуст";
+        if (!err) await transfer("clip.txt", "", new Blob([text])).catch((e) => { err = e.message; });
         ctl("FIN");
+        status(id, !err, err);
       },
       async fetch(arg, id) {
         const stop = new AbortController();
-        let timer;
+        let timer, url = b64text(arg);
         const idle = () => { clearTimeout(timer); timer = setTimeout(() => stop.abort(), 30000); };
         try {
-          const url = new URL(b64text(arg), location.href);
+          url = new URL(url, location.href);
           idle();
           const r = await fetch(url, { signal: stop.signal });
           if (!r.ok) throw new Error(`${r.status} ${r.statusText}`.trim());
@@ -1275,15 +1318,17 @@
           clearTimeout(timer);
           const name = decodeURIComponent(url.pathname.split("/").pop()) || "index.html";
           await transfer(name, "", new Blob(parts));
+          ctl("FIN");
+          status(id, true, "");
         } catch (e) {
           clearTimeout(timer);
-          status(id, false, "fetch: " + (stop.signal.aborted ? "сервер молчит 30 с" : e.message));
+          ctl("FIN");
+          status(id, false, `${url}: ${stop.signal.aborted ? "сервер молчит 30 с" : e.message}`);
         }
-        ctl("FIN");
       },
       async js(arg, id) {
         const [code, ...args] = arg.split(" ").map(b64text);
-        try { status(id, true, asText(await evalJS(args.length ? `(${code})(${args.map((a) => JSON.stringify(a)).join(", ")})` : code))); }
+        try { status(id, true, asText(await evalJS(code, args))); }
         catch (e) { status(id, false, String(e)); }
       },
       async jsjson(arg, id) {
@@ -1291,10 +1336,10 @@
         catch (e) { reply(id, "1" + String(e)); }
       },
       save: (arg, id) => saveState(id, b64text(arg)),
-      info: async (arg, id) => say(id, await sessionInfo()),
+      info: async (arg, id) => status(id, true, await sessionInfo()),
       async new(arg, id) {
         const cold = b64text(arg) === "boot";
-        if (cold && !hasKernel) return status(id, false, "kt reset: в этом файле нет ядра, только снимок");
+        if (cold && !hasKernel) return status(id, false, "в этом файле нет ядра, только снимок");
         await kv.del(SLOT).catch(() => {});
         status(id, true, cold ? "сохранение удалено, загружаюсь с ядра..." : "сохранение удалено, перезагружаю...");
         leave(cold ? "?boot" : "");
@@ -1316,7 +1361,7 @@
           }
           leave();
         } catch (e) {
-          status(id, false, "kt load: " + e.message);
+          status(id, false, e.message);
         }
       },
       async snaps(arg, id) {
@@ -1325,23 +1370,12 @@
       },
       async snapdel(arg, id) {
         const name = b64text(arg);
-        if (!(await kv.get(SNAP + name).catch(() => null))) return status(id, false, `kt snap: нет снимка ${name}`);
+        if (!(await kv.get(SNAP + name).catch(() => null))) return status(id, false, `нет снимка ${name}`);
         await kv.del(SNAP + name);
-        status(id, true, `снимок ${name} удалён`);
+        status(id, true, "- " + name);
       },
-      async font(arg, id) {
-        const name = b64text(arg).trim();
-        if (name) {
-          try {
-            fontCheck(name);
-            if (!(await loadFont(name))) throw new Error(`нет шрифта ${name} на Google Fonts`);
-            cfg.set("term.family", name);
-            status(id, true, "");
-          } catch (e) {
-            status(id, false, "kt font: " + e.message.replace(/^term\.family: /, ""));
-          }
-          return;
-        }
+      // список; выбор шрифта - kt cfg term.family (kt font name шлёт его же)
+      font(arg, id) {
         const cur = cfg.get("term.family");
         const rows = Object.entries(FONTS).map(([k, f]) => `${k === cur ? "*" : " "} ${k.padEnd(10)} \x1b[90m${f.name || "ui-monospace"}\x1b[0m`);
         if (!Object.hasOwn(FONTS, cur)) rows.push(`* ${cur}`);
@@ -1356,45 +1390,43 @@
       async export(arg, id) {
         const snap = b64text(arg);
         const s = await kv.get(snap ? SNAP + snap : SLOT).catch(() => null);
-        if (!s) return say(id, snap ? `нет снимка ${snap}` : "сохранения нет, сначала kt save");
+        if (!s) return status(id, false, snap ? `нет снимка ${snap}` : "сохранения нет, сначала kt save");
         const name = `kotelos-${snap ? snap + "-" : ""}${new Date(s.created).toISOString().slice(0, 16).replace(/[-:T]/g, "")}.v86state.gz`;
         saveBlob(s.blob, name);
-        say(id, `скачиваю ${name}, ${mb(s.blob.size)}`);
+        status(id, true, `скачиваю ${name}, ${mb(s.blob.size)}`);
       },
       async import(arg, id) {
         const r = await ask("Выбери файл .v86state.gz - текущее сохранение заменится", "Выбрать", () => pickFile($("#statefile")));
-        if (!r) return say(id, "отменено");
-        const [f] = await r.value;
-        if (!f) return say(id, "отменено");
+        const [f] = r ? await r.value : [];
+        if (!f) return status(id, false, "отменено");
         await kv.set(SLOT, { blob: f, memory_size: memSize, vga_memory_size: vgaSize, created: f.lastModified || Date.now(), build: null, revs: SENT ? [SENT] : [] });
-        say(id, `импортировано ${f.name}, перезагружаю...`);
+        status(id, true, `импортировано ${f.name}, перезагружаю...`);
         leave();
       },
-      cfg(arg, id) {
+      // cfg: "" - список, "get k", "set k v", "rm [k...]"
+      async cfg(arg, id) {
         const [op, key, ...rest] = b64text(arg).split(" ");
         try {
           if (!op) status(id, true, cfg.list());
           else if (op === "get") { const v = cfg.get(key); status(id, v !== undefined, v); }
-          else if (op === "set") {
-            const v = cfg.set(key, rest.join(" "));
-            status(id, true, v);
-          }
-          else if (op === "reset") status(id, true, key ? cfg.reset(key) : cfg.resetAll());
+          else if (op === "set") status(id, true, await cfg.put(key, rest.join(" ")));
+          else if (op === "rm") status(id, true, cfg.rm([key, ...rest].filter(Boolean)));
           else throw new Error("не понял " + op);
         } catch (e) {
-          status(id, false, "kt cfg: " + e.message);
+          status(id, false, e.message);
         }
       },
       async copy(arg, id) {
-        const text = b64text(arg);
-        say(id, await copyText(text) ? "" : "нажми «Копировать» внизу экрана");
+        const ok = await copyText(b64text(arg));
+        status(id, ok, ok ? "" : "не скопировано: браузер просил подтвердить кнопкой «Копировать»");
       },
       dl(arg, id, body) {
         saveBlob(new Blob([body]), b64text(arg) || "file.bin");
         status(id, true, "");
       },
       async copyscreen(arg, id) {
-        say(id, await copyText(screenText()) ? "" : "нажми «Копировать» внизу экрана");
+        const ok = await copyText(screenText());
+        status(id, ok, ok ? "" : "не скопировано: браузер просил подтвердить кнопкой «Копировать»");
       },
       /* #if vga */
       // скопированное в X (kt-xclipd: "xclip - длина" + текст) - в буфер браузера
@@ -1433,7 +1465,9 @@
         return kv.get(SLOT);
       },
       fit: () => layout(),
-      cfg: new Proxy((k, v) => k === undefined ? cfg.all() : (v === undefined || cfg.set(k, v), cfg.typed(k)), {
+      // kt.cfg(k, v) - с той же проверкой, что kt cfg (шрифт ищется на Google Fonts), отдаёт Promise;
+      // kt.cfg[k] = v - сразу, без проверок, которым нужно время
+      cfg: new Proxy((k, v) => k === undefined ? cfg.all() : v === undefined ? cfg.typed(k) : cfg.put(k, v).then(() => cfg.typed(k)), {
         get: (f, k) => typeof k === "string" && k.includes(".") ? cfg.typed(k) : f[k],
         set: (f, k, v) => (cfg.set(k, v), true),
         deleteProperty: (f, k) => (cfg.reset(k), true),
@@ -1487,7 +1521,7 @@
           /* #endif */
           return screenSent;
         }
-        if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("kt screen: on или off");
+        if (on !== true && on !== false && on !== "on" && on !== "off") throw new Error("нужно on, off или size");
         setScreen(on === true || on === "on");
         return "";
       },
@@ -2173,6 +2207,13 @@
 
       let saved = null, image = null;
       if (!qs.has("fresh") && !coldBoot) saved = await kv.get(SLOT).catch(() => null);
+      else {
+        const old = await kv.get(SLOT).catch(() => null);
+        if (old) {
+          keepSave = true;
+          notes.push(`сохранение от ${when(old.created)} не загружено (${coldBoot ? "?boot" : "?fresh"}), автосохранение выключено до kt save; вернуться к сохранению - kt load`);
+        }
+      }
       if (saved && SENT && !(saved.revs || []).includes(SENT) && await kv.set(SNAP + NAME, saved).then(() => true, () => false)) {
         saved = null;
         stashed = true;
@@ -2302,7 +2343,9 @@
         emulator.add_listener("worker-error", (e) => {
           if (loaded) return;
           loaded = true;
-          bootlog(`v86 в воркере не запустился (${String(e).split("\n")[0]}), boot.worker off`);
+          const why = `v86 в воркере не запустился (${String(e).split("\n")[0]}), boot.worker off`;
+          bootlog(why);
+          store.set("kt.note", why + "; включить снова - kt cfg boot.worker on");
           cfg.set("boot.worker", "off");
           setTimeout(() => location.reload(), 1500);
         });
@@ -2337,7 +2380,7 @@
         if (!e.lengthComputable || saved || image) return;
         const f = e.file_name.split("/").pop();
         const name = FILES[Object.keys(FILES).find((k) => f.includes(k))] || f;
-        bootlog(`${name} ${human(e.total)} ${Math.round(e.loaded / e.total * 100)}%`, name);
+        bootlog(`${name} ${mb(e.total)} ${Math.round(e.loaded / e.total * 100)}%`, name);
       });
       emulator.add_listener("emulator-loaded", () => {
         if (state) release(state);
@@ -2361,7 +2404,7 @@
           ctl("REDRAW");
           emit("restore");
           /* #if vga */ if (screenOn) screenResized(true); /* #endif */
-          if (saved) say(saved.replyId, `восстановлено сохранение от ${when(saved.created)}`);
+          if (saved) status(saved.replyId, true, `восстановлено сохранение от ${when(saved.created)}`);
         };
       });
 

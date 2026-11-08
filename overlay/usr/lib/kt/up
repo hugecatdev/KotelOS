@@ -1,20 +1,22 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='dir  каталог назначения, по умолчанию текущий'
-kt_meta "[dir]" "файлы из браузера" "$@"
+KT_HELP='без аргументов  в текущий каталог
+<dir>  в каталог dir
+файлы выбираются в браузере; список загруженных - в stdout, отмена - код 1'
+kt_meta "[<dir>]" "файлы с устройства в машину" "$@"
+[ $# -le 1 ] || kt_usage "[<dir>]"
 dir=$(realpath "${1:-.}" 2>/dev/null)
-[ -d "$dir" ] || { echo "kt up: нет папки ${1:-.}" >&2; exit 1; }
-[ -w "$dir" ] || { echo "kt up: нельзя писать в $dir" >&2; exit 1; }
+[ -d "$dir" ] || kt_die "нет каталога ${1:-.}"
+[ -w "$dir" ] || kt_die "нельзя писать в $dir"
 rm -f $KT_RUN/upload.done
 echo "$dir" > $KT_RUN/upload.dir
-trap 'rm -f $KT_RUN/upload.dir "$KT_REPLY" "$KT_REPLY.part"; echo; exit 130' INT TERM
-echo "выбери файлы в браузере (Ctrl+C - отмена)"
+trap 'rm -f $KT_RUN/upload.dir $KT_RUN/upload.done "$KT_REPLY" "$KT_REPLY.part"; echo >&2; exit 130' INT TERM
+echo "выбери файлы в браузере (Ctrl+C - отмена)" >&2
 kt_send upload ""
-rm -f "$KT_REPLY"
-while [ ! -f $KT_RUN/upload.done ]; do usleep 200000; done
-if [ -s $KT_RUN/upload.done ]; then
-  while IFS= read -r f; do
-    [ -n "$f" ] && printf '%s (%s байт)\n' "$f" "$(wc -c < "$f")"
-  done < $KT_RUN/upload.done
-fi
+kt_until $KT_RUN/upload.done
+got=$(cat $KT_RUN/upload.done)
 rm -f $KT_RUN/upload.done
+kt_status > /dev/null || exit 1
+printf '%s\n' "$got" | while IFS= read -r f; do
+  [ -n "$f" ] && printf '%s, %s\n' "$f" "$(kt_size "$(wc -c < "$f")")"
+done

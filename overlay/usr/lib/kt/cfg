@@ -1,14 +1,22 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  список ключей и значений
-key             вывод значения
-key value       установка значения
--r key          сброс ключа к значению по умолчанию
--r              сброс всех ключей
-имя.ключ        свой ключ, пустое значение удаляет его
-описания ключей в /usr/share/kt/cfg'
-kt_meta "[key [value]] [-r [key]]" "настройки" "$@"
+KT_HELP='без аргументов  ключи, значения и описания; * - не по умолчанию, умолчание - в скобках
+<key>  значение ключа
+<key> <value>  новое значение
+rm <key>...  вернуть ключи к умолчанию, свой ключ - удалить
+rm [-y]  вернуть к умолчанию все ключи страницы; свои ключи пакетов (ai.key) остаются
+свой ключ - вида имя.ключ: строка до 64 КБ, пустое значение удаляет его
+описания лежат в /usr/share/kt/cfg: в файле kt - ключи страницы, в файлах пакетов - их ключи;
+строка там - «ключ описание» или «ключ=умолчание описание»'
+kt_meta "[<key> [<value>] | rm [-y] [<key>...]]" "настройки" "$@"
 D=/usr/share/kt/cfg
+
+# умолчание ключа пакета из его описания: «ключ=умолчание описание», без = - пустая строка
+declared() {
+  for f in $D/*; do [ "$f" = $D/kt ] || cat "$f"; done 2>/dev/null |
+    awk -v k="$1" '$1 == k { found = 1; exit } index($1, k "=") == 1 { print substr($1, length(k) + 2); found = 1; exit } END { exit !found }'
+}
+
 case "$1" in
   "")
     w=$(stty size 2>/dev/null | cut -d" " -f2)
@@ -18,36 +26,81 @@ case "$1" in
     set -- "$list" $D/kt
     for f in $D/*; do [ "$f" = $D/kt ] || set -- "$@" "$f"; done
     awk -v w="${w:-80}" '
+      function len(s, t) { t = s; return length(s) - gsub(/[\200-\277]/, "", t) }
+      function pad(s, n, p) { p = s; while (len(p) < n) p = p " "; return p }
       function cut(x) {
         if (x == "") return "\"\""
-        if (length(x) <= 20) return x
-        x = substr(x, 1, 18)
+        if (len(x) <= 20) return x
+        x = substr(x, 1, 24)
+        while (len(x) > 19) x = substr(x, 1, length(x) - 1)
         sub(/[\300-\377][\200-\277]*$/, "", x)
         return x "…"
       }
-      function row(k,  line) {
-        line = sprintf("%-12s %-9s", k, cut(k in val ? val[k] : ""))
-        if (w >= 60 && desc[k] != "") printf "%s \033[90m%s\033[0m\n", line, desc[k]
+      # строки страницы: «ключ<TAB>значение<TAB>умолчание» у её ключей, «ключ<TAB>значение» у своих
+      FILENAME == ARGV[1] {
+        i = index($0, "\t"); k = substr($0, 1, i - 1); r = substr($0, i + 1)
+        j = index(r, "\t")
+        if (j) { val[k] = substr(r, 1, j - 1); def[k] = substr(r, j + 1); page[k] = 1 } else val[k] = r
+        ord[++n] = k
+        next
+      }
+      # описания ключей страницы - только тех, что она знает (экран - в сборках с VGA)
+      FILENAME == ARGV[2] {
+        if ($1 == "" || !($1 in page)) next
+        d = $0; sub(/^[^ ]+ */, "", d); desc[$1] = d; dord[++m] = $1
+        next
+      }
+      $1 != "" {
+        k = $1; dv = ""
+        if ((e = index(k, "=")) > 0) { dv = substr(k, e + 1); k = substr(k, 1, e - 1) }
+        if ((k in desc) || (k in page)) next
+        d = $0; sub(/^[^ ]+ */, "", d); desc[k] = d; dord[++m] = k; def[k] = dv
+      }
+      function add(k) { row[++nr] = k; if (len(k) > kw) kw = len(k); v = cut((k in val) ? val[k] : def[k]); if (len(v) > vw) vw = len(v) }
+      function show(k,  v, mark, line, d) {
+        v = (k in val) ? val[k] : def[k]
+        mark = v != def[k] ? "*" : " "
+        line = mark " " pad(k, kw) " " pad(cut(v), vw)
+        d = desc[k]
+        if (mark == "*" && ((k in page) || def[k] != "")) d = d (d != "" ? " " : "") "(" cut(def[k]) ")"
+        if (w >= 60 && d != "") printf "%s  \033[90m%s\033[0m\n", line, d
         else { sub(/ +$/, "", line); print line }
       }
-      FILENAME == ARGV[1] { i = index($0, "\t"); k = substr($0, 1, i - 1); val[k] = substr($0, i + 1); ord[++n] = k; next }
-      $1 != "" && !($1 in desc) { d = $0; sub(/^[^ ]+ */, "", d); desc[$1] = d; dord[++m] = $1 }
       END {
-        for (i = 1; i <= m; i++) row(dord[i])
-        for (i = 1; i <= n; i++) if (!(ord[i] in desc)) row(ord[i])
+        for (i = 1; i <= m; i++) add(dord[i])
+        for (i = 1; i <= n; i++) if (!(ord[i] in desc)) add(ord[i])
+        for (i = 1; i <= nr; i++) show(row[i])
       }
     ' "$@"
     rm -f "$list"
     exit 0 ;;
-  -r) arg="reset $2" ;;
+  rm)
+    shift
+    y=
+    while getopts :y o; do
+      case $o in
+        y) y=1 ;;
+        *) kt_usage "rm [-y] [<key>...]" ;;
+      esac
+    done
+    shift $((OPTIND - 1))
+    if [ $# -eq 0 ] && [ -z "$y" ]; then
+      kt_ask "вернуть к умолчанию все настройки страницы?" || exit 1
+    fi
+    kt_page cfg "$(kt_b64 "rm $*")" ;;
+  -*) kt_usage "[<key> [<value>] | rm [-y] [<key>...]]" ;;
   *)
     if [ $# -ge 2 ]; then
       k=$1
       shift
-      arg="set $k $*"
+      # своё значение, равное объявленному умолчанию, не хранится: ключ просто снимается
+      if [ "$(declared "$k")" = "$*" ] && [ -n "$*" ]; then
+        kt_page cfg "$(kt_b64 "rm $k")" > /dev/null && printf '%s\n' "$*"
+        exit
+      fi
+      kt_page cfg "$(kt_b64 "set $k $*")"
     else
-      arg="get $1"
+      kt_page cfg "$(kt_b64 "get $1")" && exit 0
+      declared "$1"
     fi ;;
 esac
-kt_send cfg "$(kt_b64 "$arg")"
-kt_status
