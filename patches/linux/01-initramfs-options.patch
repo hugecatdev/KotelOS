@@ -1,0 +1,28 @@
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -4690,6 +4690,16 @@
+ 	return err;
+ }
+ 
++/* initramfs_options= из 6.18: опции корня (rootfs), например size= и nr_inodes= у tmpfs */
++static char * __initdata initramfs_options;
++static int __init initramfs_options_setup(char *str)
++{
++	initramfs_options = str;
++	return 1;
++}
++
++__setup("initramfs_options=", initramfs_options_setup);
++
+ static void __init init_mount_tree(void)
+ {
+ 	struct vfsmount *mnt;
+@@ -4697,7 +4707,7 @@
+ 	struct mnt_namespace *ns;
+ 	struct path root;
+ 
+-	mnt = vfs_kern_mount(&rootfs_fs_type, 0, "rootfs", NULL);
++	mnt = vfs_kern_mount(&rootfs_fs_type, 0, "rootfs", initramfs_options);
+ 	if (IS_ERR(mnt))
+ 		panic("Can't create rootfs");
+ 

@@ -14,6 +14,10 @@ if [ ! -d $SRC ]; then
   [ -f $CACHE/linux-$VER.tar.xz ] || curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$VER.tar.xz -o $CACHE/linux-$VER.tar.xz
   tar -xJf $CACHE/linux-$VER.tar.xz -C $CACHE
 fi
+# свои правки ядра; уже наложенную (дерево распаковано раньше) второй раз не накладывать
+for p in patches/linux/*.patch; do
+  patch -d $SRC -p1 -R -s -f --dry-run < $p > /dev/null 2>&1 || patch -d $SRC -p1 -s -N < $p
+done
 
 export PATH="$PWD/$TC/bin:$PATH"
 K="make -C $SRC ARCH=x86 CROSS_COMPILE=i686-linux-musl- KBUILD_BUILD_USER=kotel KBUILD_BUILD_HOST=kotel"

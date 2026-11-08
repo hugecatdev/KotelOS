@@ -898,6 +898,56 @@ def main():
         assert gone("kt pkg rm -cy ktb") == ["ktb", "ktuser", "kttop"]
         assert "/bin/busybox" in s.ok("kt pkg files base"), "каскад задел base"
 
+    def pkg_memory():
+        # корень - tmpfs: вся память без 16 МБ и без предела файлов (S01mount)
+        total = int(s.ok("sed -n 's/^MemTotal: *\\([0-9]*\\) kB/\\1/p' /proc/meminfo"))
+        dev, path, fs, opts = s.ok("head -n 1 /proc/mounts").split()[:4]
+        assert path == "/" and "size=%dk" % (total - 16384) in opts.split(",") and "nr_inodes=0" in opts.split(","), opts
+        room = int(s.ok("awk '/^MemAvailable:/ { print $2 - 16384 }' /proc/meminfo"))
+        repo = os.path.join(www, "memrepo")
+        os.makedirs(repo, exist_ok=True)
+
+        def pack(name, files, cut=False):
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:xz") as t:
+                for d in sorted({"/".join(p.split("/")[:i]) for p in files for i in range(1, p.count("/") + 1)}):
+                    info = tarfile.TarInfo(d)
+                    info.type = tarfile.DIRTYPE
+                    info.mode = 0o755
+                    t.addfile(info)
+                for p, body in files.items():
+                    info = tarfile.TarInfo(p)
+                    info.size = len(body)
+                    t.addfile(info, io.BytesIO(body))
+            data = buf.getvalue()
+            with open(os.path.join(repo, name + ".tar.xz"), "wb") as f:
+                f.write(data[:len(data) // 2] if cut else data)
+
+        pack("ktsmall", {"usr/share/ktsmall/x": b"x\n"})
+        pack("ktbad", {"usr/share/ktbad/a": b"a\n", "usr/share/ktbad/r": os.urandom(300000)}, cut=True)
+        shutil.copy(os.path.join(www, "repo", "index.txt"), repo)
+        with open(os.path.join(repo, "index.txt"), "a") as f:
+            f.write("kthuge\t1/%d\t\tне влезет\n" % (room * 2))
+            f.write("ktbig\t1/%d\t\tпочти вся память\n" % (room - 8192))
+            f.write("ktsmall\t1/4\t\tзависимость\nktbad\t1/4\tktsmall\tбитый архив\n")
+        code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
+        assert code == 1 and "не хватит памяти: нужно" in err and "свободно" in out, (code, out, err)
+        for answer in ("", "echo n | "):
+            code, out, err = s.sh(answer + "KT_REPO=/memrepo kt pkg add ktbig")
+            assert code == 1 and "свободной памяти останется" in err and "[y/N]" in err, (code, out, err)
+        code, out, err = s.sh("KT_REPO=/memrepo kt pkg add -y ktbig")
+        assert code == 1 and "не скачать ktbig" in err and "останется" not in err, (code, out, err)
+        # архив не распаковался - убрано всё, что поставила эта команда, и зависимость тоже
+        code, out, err = s.sh("KT_REPO=/memrepo kt pkg add ktbad")
+        assert code == 1 and "не распаковать ktbad, установка отменена" in err, (code, out, err)
+        code, out, err = s.sh("ls -d /var/lib/kt/pkg/ktsmall /var/lib/kt/pkg/ktbad /usr/share/ktsmall /usr/share/ktbad")
+        assert code != 0 and not out, out
+        assert "ktsmall" not in s.ok("cat /var/lib/kt/world")
+        # корень полон - запись упирается в предел, машина жива
+        out = s.ok("dd if=/dev/zero of=/root/fill bs=1M count=%d 2>/dev/shm/e; rm -f /root/fill; cat /dev/shm/e; rm /dev/shm/e" % (total // 1024))
+        assert "No space left on device" in out, out
+        s.ok("kt pkg > /dev/null")
+
     def chawan():
         s.ok("kt pkg add chawan", 180)
         Server.cha_log.clear()
@@ -1317,7 +1367,7 @@ def main():
         ("cpython 8 потоков", cpython_threads), ("requests и curl", requests_shim),
         ("alert/confirm/prompt", dialogs), ("kt notify", notify), ("pack/unpack", pack), ("sync", sync),
         ("kt cfg свои ключи", cfg_custom), ("рендер терминала", render), ("ai инструменты", ai_tool), ("ai сжатие контекста", ai_context),
-        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade),
+        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade), ("kt pkg add и память", pkg_memory),
         ("chawan", chawan), ("в /run/kt нет мусора", run_clean),
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),

@@ -51,6 +51,13 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   него chawan не запускает процессы страниц. И `CONFIG_SYSVIPC` (+12 КБ): с ним
   в X работает MIT-SHM - кадры OpenGL-программ и Qt идут общей памятью, а не
   через сокет (у OpenGL доля Xorg вдвое меньше, `virgl/harness/glsplit.sh`).
+- `patches/linux/*.patch` `scripts/build-kernel.sh` накладывает на дерево ядра
+  (уже наложенный второй раз не трогает). Там один патч -
+  `initramfs_options=` из Linux 6.18, опции корня: корень - tmpfs, и initramfs
+  распаковывается с `size=100%,nr_inodes=0` из командной строки (`page.html`),
+  а не под пределом tmpfs по умолчанию, половиной памяти: в него не влезали
+  бандлы dwm, sqlite и qt. Точный предел корня ставит `S01mount`, см.
+  [packages.md](packages.md).
 - `overlay/` - всё своё: `kt`, модули, агент, init-скрипты, `kt.py`.
 - `images/` - собранные bzImage, rootfs.cpio, build.json; `vendor/v86/` -
   libv86.js, v86.wasm и BIOS из проекта v86. Из них и собирается бандл

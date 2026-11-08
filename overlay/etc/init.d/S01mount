@@ -1,5 +1,11 @@
 #!/bin/sh
 mountpoint -q /proc || mount -t proc proc /proc
+# корень - tmpfs (ядро без root=): все файлы в ОЗУ. Ему - вся память без 16 МБ, иначе (как было с
+# ramfs) файлы съедают её целиком, OOM убивает процессы, но память не освобождается, и ядро паникует;
+# с пределом запись упирается в «No space left on device». Число файлов не ограничено. До этой строки
+# действует предел распаковки initramfs из командной строки ядра (page.html)
+mem=$(sed -n 's/^MemTotal: *\([0-9]*\) kB/\1/p' /proc/meminfo)
+mount -o remount,size=$((mem - 16384))k,nr_inodes=0 /
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
 mkdir -p /dev/pts /dev/shm

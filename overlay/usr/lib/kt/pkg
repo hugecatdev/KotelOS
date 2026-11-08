@@ -2,9 +2,10 @@
 . /usr/lib/kt.sh
 KT_HELP='без аргументов  установленные явно; размер - вместе с зависимостями
 -a  все установленные, и зависимости тоже; * - установленные явно
-<name>...  что поставится и сколько займёт
+<name>...  что поставится, сколько займёт и сколько памяти свободно
 search [-r] <word>  поиск по имени и описанию в репозитории и Alpine; -r - только в репозитории
-add [-q] <name>...  установка с зависимостями из репозитория или Alpine; -q - без вывода
+add [-qy] <name>...  установка с зависимостями из репозитория или Alpine; -q - без вывода, -y - без вопроса о памяти
+файлы пакетов лежат в памяти машины: если свободной останется меньше 16 МБ, add спросит, а если не влезет - откажет
 rm [-y] <name>...  удаление, зависимости остаются; -y - без вопроса
 rm -d <name>...  удаление вместе с зависимостями, которые больше никому не нужны
 rm -c <name>...  удаление вместе с пакетами, которым он нужен
@@ -21,6 +22,10 @@ MIR=/var/lib/kt/mirror
 TRIG=/var/lib/kt/trigger
 WORLD=/var/lib/kt/world
 T=/tmp/.kt-pkg.$$
+# память, КБ: файлы лежат в ОЗУ, корню не дают последние RESERVE (предел в S01mount); если после
+# установки свободной останется меньше LOW, add спросит
+RESERVE=16384
+LOW=16384
 q=
 ALP=
 DEAD=
@@ -135,10 +140,35 @@ check() {
 }
 
 total() {
-  awk "$H"'
+  awk -v free="$(room)" "$H"'
     $4 == 0 { n++; dl += $2; mem += $3 }
-    END { if (n) printf "пакетов: %d, скачать %s, в памяти %s\n", n, h(dl), h(mem) }
+    END { if (n) printf "пакетов: %d, скачать %s, в памяти %s, свободно %s\n", n, h(dl), h(mem), h(free > 0 ? free : 0) }
   '
+}
+
+# сколько памяти можно занять файлами, КБ: свободная без запаса корня
+room() {
+  awk -v r=$RESERVE '/^MemAvailable:/ { print $2 - r }' /proc/meminfo
+}
+
+# пик памяти при установке, КБ: сначала скачиваются все архивы, потом распаковываются по одному,
+# архив удаляется после своей распаковки
+peak() {
+  awk '$4 == 0 { n++; dl[n] = $2; mem[n] = $3; left += $2 }
+    END { for (i = 1; i <= n; i++) { got += mem[i]; if (got + left > p) p = got + left; left -= dl[i] } print p + 0 }'
+}
+
+kb() {
+  kt_size $(($1 > 0 ? $1 * 1024 : 0))
+}
+
+# удалить файлы пакета, которых нет у других, и записи о нём
+wipe() {
+  others=$(ls $DB | grep -vxF "$1" | sed "s|^|$DB/|")
+  { echo @; cat $others /dev/null; } | awk 'NR == FNR { k[$0]; next } !($0 in k)' - $DB/$1 | sort -r | while read -r f; do
+    if [ -d "/$f" ] && [ ! -L "/$f" ]; then rmdir "/$f" 2>/dev/null; else rm -f "/$f"; fi
+  done
+  rm -f $DB/$1 $TRIG/$1 $TRIG/$1.dirs
 }
 
 mirrors() {
@@ -245,14 +275,16 @@ case "$1" in
     ' - $(files) ;;
   add)
     shift
-    while getopts :q opt; do
+    y=
+    while getopts :qy opt; do
       case $opt in
         q) q=1 ;;
-        *) kt_usage "add [-q] <name>..." ;;
+        y) y=1 ;;
+        *) kt_usage "add [-qy] <name>..." ;;
       esac
     done
     shift $((OPTIND - 1))
-    [ $# -gt 0 ] || kt_usage "add [-q] <name>..."
+    [ $# -gt 0 ] || kt_usage "add [-qy] <name>..."
     index
     want "$@"
     check "$list"
@@ -264,6 +296,17 @@ case "$1" in
       exit 0
     fi
     [ -n "$q" ] || echo "$new" | total
+    free=$(room)
+    need=$(echo "$new" | peak)
+    left=$((free - $(echo "$new" | awk '{ m += $3 } END { print m + 0 }')))
+    if [ "$need" -gt "$free" ]; then
+      clr
+      kt_die "не хватит памяти: нужно $(kb $need) вместе с архивами, свободно $(kb $free)"
+    fi
+    if [ -z "$y" ] && [ $left -lt $LOW ]; then
+      clr
+      kt_ask "свободной памяти останется $(kb $left), программам её может не хватить. ставить?" || exit 1
+    fi
     trap 'rm -f $T.*' EXIT
     for p in $(echo "$new" | cut -d" " -f1); do
       s=$(echo "$new" | awk -v p="$p" '$1 == p { print $5 }')
@@ -275,9 +318,12 @@ case "$1" in
       fi
       [ -n "$q" ] || printf '\r+\n'
     done
+    put=
     for p in $(echo "$new" | cut -d" " -f1); do
       if [ -n "$(echo "$new" | awk -v p="$p" '$1 == p { print $5 }')" ]; then
-        tar -xzvf $T.p.$p -C / 2>/dev/null | grep -v '^\.' > $DB/$p
+        tar -xzvf $T.p.$p -C / > $T.l 2> $T.e
+        ok=$?
+        grep -v '^\.' $T.l > $DB/$p
         if [ -f /.trigger ]; then
           mkdir -p $TRIG
           mv /.trigger $TRIG/$p
@@ -285,9 +331,18 @@ case "$1" in
         fi
         rm -f /.PKGINFO /.SIGN.* /.pre-* /.post-* /.trigger
       else
-        xz -dc $T.p.$p | tar -xvf - -C / > $DB/$p
+        xz -dc $T.p.$p | tar -xvf - -C / > $DB/$p 2> $T.e
+        ok=$?
       fi
-      rm -f $T.p.$p
+      rm -f $T.p.$p $T.l
+      put="$p $put"
+      # не распаковался (кончилось место) - убрать всё, что поставлено этой командой
+      if [ $ok != 0 ]; then
+        clr
+        cat $T.e >&2
+        for x in $put; do wipe $x; done
+        kt_die "не распаковать $p, установка отменена"
+      fi
       if [ -x /var/lib/kt/post/$p ]; then
         clr
         /var/lib/kt/post/$p
@@ -376,12 +431,8 @@ case "$1" in
       kt_ask "удалить $(echo $gone)?" || exit 1
     fi
     for p in $gone; do
-      others=$(ls $DB | grep -vx "$p" | sed "s|^|$DB/|")
-      { echo @; cat $others /dev/null; } | awk 'NR == FNR { k[$0]; next } !($0 in k)' - $DB/$p | sort -r | while read -r f; do
-        if [ -d "/$f" ] && [ ! -L "/$f" ]; then rmdir "/$f" 2>/dev/null; else rm -f "/$f"; fi
-      done
       cp $DB/$p /tmp/.kt-pkg.$$.rm.$p
-      rm -f $DB/$p $TRIG/$p $TRIG/$p.dirs
+      wipe $p
       grep -vxF "$p" $WORLD > $WORLD.new; mv $WORLD.new $WORLD
       echo "- $p"
     done

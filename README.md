@@ -163,7 +163,7 @@ src/                              свои бинарники на C: kt-net, kt
 base/rootfs.base.cpio             базовый rootfs из Buildroot
 config/                           конфиги ядра и busybox, base.exclude, описания пакетов, Buildroot
 scripts/                          сборка ядра, busybox, CPython, openblas, X, mesa, v86, virgl
-patches/                          правки сторонних пакетов (v86, virgl, mesa, matplotlib, dwm, Xorg)
+patches/                          правки сторонних пакетов (ядро, v86, virgl, mesa, matplotlib, dwm, Xorg)
 vendor/                           собранные v86 и virglrenderer
 bundles/                          описания сборок сайта для release.py
 tests/                            тесты в headless Chromium

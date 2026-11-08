@@ -2276,7 +2276,10 @@
         opts.initrd = { url: initrd + "#initrd.zst", size: BUNDLE.files.initrd.size };
         opts.cmdline = [
           "tsc=reliable mitigations=off random.trust_cpu=on init_on_free=1",
-          "console=ttyS0 root=/dev/ram0 rw init=/sbin/init",
+          // без root= корень у ядра - tmpfs, а не ramfs: ему можно задать предел, его ставит S01mount.
+          // До того initramfs распаковывается под initramfs_options (patches/linux): по умолчанию у
+          // tmpfs половина памяти и 12 тысяч файлов на 128 МБ, большие бандлы в это не влезают
+          "console=ttyS0 rw init=/sbin/init initramfs_options=size=100%,nr_inodes=0",
           cfg.get("boot.log") === "on" || qs.has("log") ? "" : "quiet loglevel=1",
           `tsize=${term.cols}x${term.rows}`,
           ...Object.entries(browserEnv()).map(([k, v]) => `${k}=${v}`),
