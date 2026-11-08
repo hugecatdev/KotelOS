@@ -1,5 +1,17 @@
-# сессия бандла dwm (startx): два терминала st и dwm; новый терминал - Alt+Shift+Enter,
-# выход из X - Alt+Shift+Q
-st &
-st &
+#!/bin/sh
+# сессия бандла dwm (startx): обои, часы в панели, st с neofetch, на широком экране справа второй st;
+# новый терминал - Alt+Shift+Enter, программы - Alt+p (dmenu), выход из X - Alt+Shift+Q
+# обои - кот в котле по центру, остальное - цветом панели dwm
+feh --no-fehbg --bg-center --image-bg '#0e1225' /usr/share/backgrounds/kotelos.png
+# статус dwm - имя корневого окна: дата и время раз в 10 с
+while xsetroot -name " $(date '+%a %d %b  %H:%M') "; do sleep 10; done &
+size=$(kt screen size 2>/dev/null) || size=800x600
+w=${size%x*} h=${size#*x}
+# st с neofetch - вторым: новое окно dwm ставит главным (слева); на экране выше, чем шире (телефон
+# стоя), два столбца слишком узкие - один терминал. neofetch - когда dwm уже разложил окно, в узком
+# окне - маленький логотип
+(
+  [ "$w" -gt "$h" ] && { st & sleep 3; }
+  st -e sh -c 'sleep 1; set -- $(stty size); if [ "$2" -ge 75 ]; then neofetch; else neofetch --ascii_distro kotelos_small; fi; exec sh' &
+) &
 exec dwm

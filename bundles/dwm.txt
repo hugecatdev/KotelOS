@@ -1,8 +1,15 @@
-# экран с dwm: видеопамять 8 МБ, startx - dwm и два терминала st (~/.xinitrc), xcalc, xeyes, feh;
-# клавиша dwm - Alt, консоли с экрана - Ctrl+Alt+1..9; --prep строит кэш fontconfig (его триггер
+# максимальный: экран с dwm, при открытии сразу startx (--cmd): обои, часы в панели, st с neofetch и
+# второй st (~/.xinitrc из bundles/dwm/xinitrc); xcalc, xeyes, xclock, шахматы (xboard и gnuchess),
+# OpenGL (mesa-xlib, glxgears; mesa-demos - из /usr/share/mesa-demos: там их данные) - Alt+p (dmenu).
+# X не в снимке: обои и neofetch - под настоящий экран, а не под окно сборки.
+# Клавиша dwm - Alt, консоли с экрана - Ctrl+Alt+1..9; --prep строит кэш fontconfig (его триггер
 # в перепакованном fontconfig не срабатывает), без него первые окна st появляются на 2-5 с позже;
-# v86 в Web Worker (--worker): страница и экран не ждут эмуляцию, по-старому - kt cfg boot.worker off
---snap --vga 8 --worker
+# обои - scripts/wallpaper.py; v86 в Web Worker (--worker): страница и экран не ждут эмуляцию,
+# по-старому - kt cfg boot.worker off
+--snap --vga 8 --mem 256 --worker
 --prep fc-cache
+--cmd startx
 --file bundles/dwm/xinitrc:/root/.xinitrc
-fun nano htop curl wget pack notify kt-ttyd xorg dwm st xcalc xeyes feh
+--file bundles/dwm/logo.png:/usr/share/backgrounds/kotelos.png
+fun nano htop curl wget pack notify kt-ttyd xorg dwm st feh xsetroot neofetch
+xcalc xeyes xclock xboard gnuchess mesa-utils mesa-demos

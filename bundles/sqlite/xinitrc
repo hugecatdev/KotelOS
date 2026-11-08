@@ -1,0 +1,6 @@
+#!/bin/sh
+# сессия бандла sqlite (startx): DB Browser for SQLite с демо-базой ~/packages.db во весь экран (dwm);
+# терминал - Alt+Shift+Enter, выход из X - Alt+Shift+Q; вывод программы - в ~/.cache/sqlitebrowser.log
+mkdir -p ~/.cache
+sqlitebrowser ~/packages.db > ~/.cache/sqlitebrowser.log 2>&1 &
+exec dwm

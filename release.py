@@ -27,6 +27,10 @@ def main():
         subprocess.run(["./build.sh"], check=True)
     for name in names:
         args = shlex.split(open(defs[name]).read(), comments=True)
+        # бандл лежит в ИМЯ/, репозиторий - рядом: относительный адрес годится и для корня сайта, и
+        # для github.io/<репозиторий>/, где /repo указал бы мимо
+        if "--repo" not in args:
+            args += ["--repo", "../repo"]
         out = os.path.join(SITE, name, "index.html")
         tmp = out + ".tmp"
         # сайт может раздаваться прямо сейчас: старый бандл заменяется только готовым новым

@@ -29,7 +29,9 @@ scripts/build-virgl.sh          # virglrenderer и libepoxy в wasm + patches/vi
 python3 scripts/jdk8.py --cds   # архив классов CDS для jdk8: снимается в госте (после build.sh, потом build.sh ещё раз)
 python3 tests/run.py            # тесты моста в headless Chromium (--build - сначала собрать, -k имя - выборочно)
 python3 tests/mpl.py            # matplotlib с patches/matplotlib.patch против исходного: те же картинки (--time - время кадров на хосте)
-./release.py                    # бандлы сайта из bundles/ (standard, micro, python, vga, dwm) -> site/ИМЯ/index.html
+./release.py                    # бандлы сайта из bundles/ (python, standard, micro, xorg, dwm, sqlite, qt) -> site/ИМЯ/index.html
+python3 tests/shots.py          # снимки бандлов сайта для README -> docs/img/ (на ПК и телефоне, -l - список сцен)
+python3 scripts/wallpaper.py    # обои бандла dwm (кот в котле, прозрачный фон) -> bundles/dwm/logo.png
 python3 tests/mem.py site/standard/index.html  # память вкладки с бандлом (--save - всплеск при kt save, --profile папка - возврат из сохранения)
 python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сборок v86: одни нагрузки в госте, время и процессор вкладки (-k имя, -n кругов)
 ```

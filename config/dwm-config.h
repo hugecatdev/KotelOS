@@ -21,7 +21,7 @@ static const unsigned int systrayspacing = 2;   /* systray spacing */
 static const int systraypinningfailfirst = 1;   /* 1: if pinning fails, display systray on the first monitor, False: display systray on the last monitor*/
 static const int showsystray = 1;               /* 0 means no systray */
 
-static const unsigned int gappx = 8;
+static const unsigned int gappx = 0;  /* без отступов между окнами, как в обычном dwm: на телефоне место дороже */
 
 /* palette matched to wallpaper */
 static const char col_bg[] = "#0e1225";        /* deep navy, dark base */

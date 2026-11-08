@@ -1,0 +1,23 @@
+#!/bin/sh
+# сессия бандла xorg (startx): twm и окна вразброс - xeyes справа сверху, xcalc справа ниже, xterm слева
+# поверх всех; выход из X - exit в xterm
+if [ -f "$HOME/.twmrc" ]; then twm & else twm -f /etc/X11/twmrc & fi
+size=$(kt screen size 2>/dev/null) || size=800x600
+w=${size%x*} h=${size#*x}
+# места - в долях экрана, чтобы и на телефоне ничего не уехало за край (xcalc ~240x425 с рамкой)
+ex=$((w * 55 / 100)) ey=$((h * 8 / 100))
+[ $((ex + 190)) -le $w ] || ex=$((w - 190))
+cx=$((w * 62 / 100)) cy=$((h * 40 / 100))
+[ $((cx + 240)) -le $w ] || cx=$((w - 240))
+[ $((cy + 425)) -le $h ] || cy=$((h - 425))
+[ $cx -ge 0 ] || cx=0
+[ $cy -ge 0 ] || cy=0
+tx=$((w * 6 / 100)) ty=$((h * 22 / 100))
+# xterm - на ширину экрана, не больше 80x24 (шрифт 6x13), и не ниже нижнего края
+cols=$(((w - tx - 30) / 6)) rows=$(((h - ty - 40) / 13))
+[ $cols -le 80 ] || cols=80
+[ $rows -le 24 ] || rows=24
+[ $rows -ge 5 ] || rows=5
+xeyes -geometry 180x135+$ex+$ey &
+xcalc -geometry +$cx+$cy &
+xterm -geometry ${cols}x${rows}+$tx+$ty
