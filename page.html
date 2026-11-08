@@ -253,6 +253,22 @@
     // машина (revs); сохранение не от этого файла уступает ему и уходит в снимок с именем бандла
     const SENT = (BUNDLE && BUNDLE.state && BUNDLE.state.rev) || null;
     let revs = [], stashed = false;
+    // исходник страницы для kt share: копия - эта же страница с другим снимком, а части бандла страница после
+    // загрузки удаляет из DOM. Берётся сейчас, пока DOM нетронут (до терминала), без снимка и ядра: ~2 МБ в
+    // хранилище браузера (Blob), на их местах - комментарии kt-state, kt-meta. Только там, где kt-share есть:
+    // отметка SRCKEY "1" - пакет был в прошлый раз (готовность машины ставит "0", хук пакета - снова "1",
+    // kt.keepSource), отметки нет - бандл собран с ним (BUNDLE.share, у копий тоже)
+    const SRCKEY = "kt.source." + NAME, srcMark = store.get(SRCKEY);
+    const SOURCE = BUNDLE && (srcMark === null ? !!BUNDLE.share : srcMark === "1") ? (() => {
+      const swap = [[document.currentScript.previousElementSibling, document.createComment("kt-meta")]];
+      for (const el of document.querySelectorAll('script[type="application/base64"]')) {
+        if (/^kt-(state|bzimage|initrd)$/.test(el.id)) swap.push([el, document.createComment(el.id)]);
+      }
+      for (const [el, c] of swap) el.replaceWith(c);
+      const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+      for (const [el, c] of swap) c.replaceWith(el);
+      return new Blob([html], { type: "text/html" });
+    })() : null;
     const HOME = location.pathname;
     const hasKernel = !!(BUNDLE && BUNDLE.files.bzimage);
     const coldBoot = qs.has("boot") && hasKernel;
@@ -963,7 +979,9 @@
         hello();
         if (!ttyLink) ttyConnect();
         if (onReady) { const f = onReady; onReady = null; f(); }
-        // пакеты дорисовывают своё на странице (кнопка kt-share): при каждом открытии и восстановлении
+        // пакеты дорисовывают своё на странице (кнопка kt-share): при каждом открытии и восстановлении;
+        // исходник со следующего открытия - только если хук kt-share снова попросит (kt.keepSource)
+        store.set(SRCKEY, "0");
         exec('for f in /etc/kt/page.d/*; do [ -x "$f" ] && "$f"; done; true');
         if (startCmd) typeWhenIdle(startCmd);
         startCmd = null;
@@ -1475,6 +1493,10 @@
       },
       /* #endif */
       get emulator() { return emulator; },
+      // исходник страницы без снимка для kt share (null - не брался), см. SOURCE; keepSource - брать его со
+      // следующего открытия (хук kt-share зовёт при каждом)
+      get source() { return SOURCE; },
+      keepSource: () => { store.set(SRCKEY, "1"); },
     };
     window.kt = api;
 

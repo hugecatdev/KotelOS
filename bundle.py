@@ -228,12 +228,6 @@ def assemble(html, bundle, minify):
     parts = dict(bundle["files"], **({"state": bundle["state"]} if bundle["state"] else {}))
     blocks = "".join('<script type="application/base64" id="kt-%s">%s</script>' % (k, v["data"]) for k, v in parts.items())
     meta = dict(bundle, files={k: nodata(v) for k, v in bundle["files"].items()}, state=nodata(bundle["state"]))
-    # отпечаток страницы: шаблон, v86, bios, ядро - всё, кроме снимка. kt share сверяет по нему файл,
-    # из которого собирает копию, с открытой страницей (сайт мог обновиться)
-    h = hashlib.sha256(html.encode())
-    for k in sorted(bundle["files"]):
-        h.update(k.encode() + b"\0" + bundle["files"][k]["data"].encode())
-    meta["id"] = h.hexdigest()[:16]
     data = "window.KT_BUNDLE = %s;" % json.dumps(meta, separators=(",", ":"))
     i = html.index('<script>\n    "use strict";')
     j = html.index("</script>", i)
@@ -452,6 +446,8 @@ def main():
         bundle["cmd"] = a.cmd
     if a.version:
         bundle["version"] = a.version
+    if "kt-share" in names:  # страница сразу берёт свой исходник для kt share (см. SOURCE в page.html)
+        bundle["share"] = True
     # функции бандла: блоки страницы /* #if имя */ без них вырезаются
     have = {x for x in ("vga", "virgl", "virtio_gpu") if getattr(a, x)}
     if a.virgl or a.virtio_gpu or gpu3d:

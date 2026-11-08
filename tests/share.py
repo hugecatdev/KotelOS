@@ -114,9 +114,20 @@ def main():
 
     A = B = None
     try:
-        A, B = Person(tmp, "A", url), Person(tmp, "B", url)
+        # A - с сервера, B - файлы с диска (file://): исходник для копии страница берёт у себя, без сети и без выбора файла
+        A, B = Person(tmp, "A", url), Person(tmp, "B", "file://" + www + "/")
 
+        # пакет положен --file, бандл о нём не знает (нет BUNDLE.share): исходника нет, пока хук не отметится
         A.go("t.html")
+        check("A: без исходника - не взят", A.eval("kt.source === null"))
+        A.click()
+        time.sleep(1.5)
+        msg = A.eval("$('#ask').classList.contains('open') && $('#ask p').textContent")
+        check("A: в первый раз - обнови страницу", bool(msg) and "обнови страницу" in msg, msg)
+        A.eval("$('#ask [data-m=\"cancel\"]').click()")
+        A.go("t.html")
+        check("A: после отметки хука исходник взят", A.eval("kt.source instanceof Blob && kt.source.size > 100000"),
+              A.eval("kt.source && kt.source.size"))
         A.sh("echo A1 > /root/a.txt")
         A.eval("send('kt share proj\\r')")
         p1 = A.take(www, "p1.html")
@@ -125,7 +136,7 @@ def main():
         s1 = m1["state"]
         check("A: p1 - имя proj-*, gzip, ревизия, без cmd, полный repo, заголовок",
               re.fullmatch(r"proj-[a-z2-9]{6}", m1["name"]) and s1["gz"] and s1["revs"] == [s1["rev"]] and "cmd" not in m1
-              and m1["repo"] == url + "repo" and title == "KotelOS proj" and m1["id"] == A.eval("BUNDLE.id"),
+              and m1["repo"] == url + "repo" and title == "KotelOS proj" and "bzimage" not in m1["files"],
               (m1["name"], s1.get("revs"), m1.get("repo"), title))
         check("A: kt share в шелле закончился с итогом", "proj.html," in A.screen() and "скачивается" in A.screen(), A.screen())
         print("     t.html %.1f МБ, p1 %.1f МБ" % (os.path.getsize(www + "/t.html") / 1048576, os.path.getsize(p1) / 1048576))
