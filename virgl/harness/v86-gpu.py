@@ -2,7 +2,8 @@
 """virtio-gpu в машине: видит ли ядро устройство, X на нём, снимки страницы (CDP, холст WebGL
 через toDataURL не снять) - build/virgl/gpu-ИМЯ.png, сообщения virglrenderer со страницы.
   python3 virgl/harness/v86-gpu.py БАНДЛ ['sh: команда' | 'js: выражение' | 'shot: имя' | 'sleep: с' | 'reload: ' ...]
-'mem: метка' - RssAnon процессов своего Chrome по типам (renderer - страница и v86, gpu-process -
+'prof: секунд' - профиль процессора вкладки (CDP Profiler): доли модулей JIT (код гостя), v86.wasm,
+virgl.wasm, JS, сборки мусора, (program) - нативное, в т.ч. WebGL. 'mem: метка' - RssAnon процессов своего Chrome по типам (renderer - страница и v86, gpu-process -
 WebGL), МБ. Без шагов: сведения о DRM, startx, снимок."""
 import base64
 import json
@@ -54,6 +55,46 @@ def chrome_mem(profile):
     return out
 
 
+def prof(secs):
+    """Профиль основного потока вкладки за secs: собственное время по модулям wasm и скриптам"""
+    s.c.call("Profiler.enable")
+    s.c.call("Profiler.setSamplingInterval", interval=200)
+    s.c.call("Profiler.start")
+    time.sleep(secs)
+    p = s.c.call("Profiler.stop")["profile"]
+    nodes = {n["id"]: n for n in p["nodes"]}
+    self_us = {}
+    for sid, dt in zip(p["samples"], p["timeDeltas"]):
+        self_us[sid] = self_us.get(sid, 0) + dt
+    # wasm-модули: у модуля JIT (страница кода гостя) одна-две функции, у v86.wasm и virgl.wasm - сотни
+    funcs = {}
+    for n in p["nodes"]:
+        url = n["callFrame"]["url"]
+        if url.startswith("wasm://"):
+            funcs.setdefault(url, set()).add(n["callFrame"]["functionName"])
+    groups, top = {}, {}
+    total = sum(self_us.values()) or 1
+    for nid, us in self_us.items():
+        cf = nodes[nid]["callFrame"]
+        url, fn = cf["url"], cf["functionName"]
+        if url.startswith("wasm://"):
+            g = "JIT (код гостя)" if len(funcs[url]) <= 3 else "wasm " + url[-8:] + " (%d функций)" % len(funcs[url])
+        elif url:
+            g = "JS " + url.rsplit("/", 1)[-1][:40]
+        else:
+            g = fn or "?"
+        groups[g] = groups.get(g, 0) + us
+        if not g.startswith("JIT"):
+            k = "%s | %s" % (g[:28], fn[:40])
+            top[k] = top.get(k, 0) + us
+    print("профиль %.0f с:" % secs, flush=True)
+    for g, us in sorted(groups.items(), key=lambda kv: -kv[1])[:12]:
+        print("  %-48s %5.1f%%" % (g, 100 * us / total))
+    print("  функции:")
+    for k, us in sorted(top.items(), key=lambda kv: -kv[1])[:15]:
+        print("    %-72s %5.1f%%" % (k, 100 * us / total))
+
+
 # бандл: файл или адрес http(s) (тогда работает kt pkg add из репозитория того же сервера)
 page = sys.argv[1] if sys.argv[1].startswith("http") else "file://" + os.path.abspath(sys.argv[1])
 steps = sys.argv[2:] or DEFAULT
@@ -94,6 +135,8 @@ try:
             time.sleep(2)
         elif kind == "sleep":
             time.sleep(float(what))
+        elif kind == "prof":
+            prof(float(what))
         elif kind == "mem":
             m = chrome_mem(tmp)
             print("память %s: %s" % (what, ", ".join("%s %.0f" % kv for kv in sorted(m.items()))), flush=True)

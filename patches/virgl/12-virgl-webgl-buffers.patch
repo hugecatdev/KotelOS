@@ -298,7 +298,29 @@
     if (has_feature(feat_multisample)) {
        if (state->alpha_to_coverage)
           glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-@@ -9303,9 +9429,11 @@
+@@ -7516,6 +7642,13 @@
+ 
+ bool vrend_check_no_error(struct vrend_context *ctx)
+ {
++#if defined(__EMSCRIPTEN__) && !defined(CHECK_GL_ERRORS)
++   /* WebGL getError is a synchronous round trip to the GPU process, and this runs after every
++    * decoded command (a quarter of the time of glxgears); without CHECK_GL_ERRORS the answer only
++    * went to the log */
++   (void)ctx;
++   return true;
++#else
+    GLenum err;
+ 
+    err = glGetError();
+@@ -7536,6 +7669,7 @@
+ #else
+    return true;
+ #endif
++#endif
+ }
+ 
+ const struct virgl_resource_pipe_callbacks *
+@@ -9303,9 +9437,11 @@
           map_flags |= GL_MAP_UNSYNCHRONIZED_BIT;
  
        glBindBufferARB(res->target, res->gl_id);
@@ -312,7 +334,7 @@
           vrend_read_from_iovec_cb(iov, num_iovs, info->offset, info->box->width, &iov_buffer_upload, &d);
        } else {
           vrend_read_from_iovec(iov, num_iovs, info->offset, data, info->box->width);
-@@ -9946,12 +10074,21 @@
+@@ -9946,12 +10082,21 @@
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
        glBindBufferARB(res->target, res->gl_id);

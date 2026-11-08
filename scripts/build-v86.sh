@@ -46,7 +46,11 @@ mkdir -p $SRC/closure-compiler
 ln -f $JAR $SRC/closure-compiler/compiler.jar
 
 # без отладки и секции имён: 1.6 МБ вместо 2.0, в бандле это gzip 300 КБ вместо 377
-CARGO_PROFILE_RELEASE_STRIP=symbols make -C $SRC -j"$(nproc)" STRIP_DEBUG=true build/libv86.js build/v86.wasm \
+# PROFILER=1 - со счётчиками JIT и опкодов (profiler_stat_get, get_opstats_buffer; tests/jitprof.py):
+# медленнее, только для замеров
+WASM=build/v86.wasm
+[ -n "$PROFILER" ] && WASM=with-profiler
+CARGO_PROFILE_RELEASE_STRIP=symbols make -C $SRC -j"$(nproc)" STRIP_DEBUG=true build/libv86.js $WASM \
   > $CACHE/v86-build.log 2>&1 || { tail -30 $CACHE/v86-build.log; exit 1; }
 
 mkdir -p "$OUT"
