@@ -23,7 +23,7 @@ PAGE = "page.html"
 CACHE = ".cache/cdn"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
 DEFAULT = ["fun", "nano", "htop", "minipython", "lua5.4", "pyzygote",
-           "curl", "wget", "python-requests", "pack", "notify", "ai", "examples-python", "examples-lua", "kt-ttyd", "tk-desktop", "tk-term"]
+           "curl", "wget", "python-requests", "pack", "notify", "kt-share", "ai", "examples-python", "examples-lua", "kt-ttyd", "tk-desktop", "tk-term"]
 
 
 def fetch(url):

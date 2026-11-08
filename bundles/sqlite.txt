@@ -9,4 +9,4 @@
 --run startx
 --file bundles/sqlite/xinitrc:/root/.xinitrc
 --file bundles/sqlite/packages.sql:/root/packages.sql
-fun nano htop pack notify kt-ttyd xorg dwm st sqlite sqlitebrowser
+fun nano htop pack notify kt-share kt-ttyd xorg dwm st sqlite sqlitebrowser

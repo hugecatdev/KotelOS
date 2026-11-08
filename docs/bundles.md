@@ -20,7 +20,7 @@ python3 bundle.py -o java.html -n java --mem 384 --file bundles/java/Hello.java 
 
 | ключ | что делает |
 |---|---|
-| `пакеты...` | что поставить в rootfs (по умолчанию fun nano htop minipython lua5.4 pyzygote curl wget python-requests pack notify ai examples-python examples-lua kt-ttyd tk-desktop tk-term) |
+| `пакеты...` | что поставить в rootfs (по умолчанию fun nano htop minipython lua5.4 pyzygote curl wget python-requests pack notify kt-share ai examples-python examples-lua kt-ttyd tk-desktop tk-term) |
 | `--bare` | без пакетов: только busybox и `kt`, остальное - `kt pkg add` из репозитория |
 | `-o файл` | куда (по умолчанию `site/index.html`); чужой не-бандл не перезаписывает |
 | `-n имя` | имя бандла: своё сохранение у каждого имени, видно в `kt info` и заголовке вкладки |

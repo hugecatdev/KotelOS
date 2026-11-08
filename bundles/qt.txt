@@ -14,4 +14,4 @@
 --file bundles/qt/xinitrc:/root/.xinitrc
 --file bundles/qt/fs:/
 --file bundles/qt/dwm-studio:/usr/bin/dwm-studio
-fun nano htop pack notify kt-ttyd xorg dmenu st libx11 libxinerama fontconfig libxft python3 python-qt5 qt5-qttools-dev
+fun nano htop pack notify kt-share kt-ttyd xorg dmenu st libx11 libxinerama fontconfig libxft python3 python-qt5 qt5-qttools-dev

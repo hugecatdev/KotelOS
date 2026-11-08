@@ -4,7 +4,7 @@
 --snap --mem 384
 --prep "python3 -c 'import matplotlib.pyplot'"
 --prep "python3 -c 'from mpldemo.__main__ import Demo; d = Demo(); d.root.after(120000, d.root.destroy); d.root.mainloop()'"
-fun nano htop tmux curl wget pack notify ai
+fun nano htop tmux curl wget pack notify kt-share ai
 python3 python3-sqlite python3-curses pip pyzygote python-requests python-numpy
 python-tkinter python-idle python-turtle python-turtledemo
 python-matplotlib python-matplotlib-tk python-matplotlib-demo
