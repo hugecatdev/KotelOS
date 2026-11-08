@@ -149,8 +149,9 @@ async (cmd = "", arg = "") => {
     W.busy = on;
     const b = document.getElementById("kt-share");
     if (b) {
-      b.disabled = on;
-      b.style.opacity = on ? "1" : "";
+      b.classList.toggle("busy", on);
+      if (on) b.classList.add("open");
+      else if (b.shut) b.shut(1500);
     }
   }
 
@@ -181,21 +182,57 @@ async (cmd = "", arg = "") => {
     return "";
   }
 
+  // кнопка - язычок у правого края над рядом клавиш, поверх терминала и экрана X (у #screen z-index 16):
+  // свёрнутая почти не занимает места, наведение или касание раскрывает, нажатие на раскрытую - kt share
+  const CSS = `#kt-share { position: absolute; right: 0; bottom: 8px; z-index: 17; width: 12px; height: 40px; padding: 0;
+  border: 0; background: none; display: flex; align-items: center; justify-content: flex-end; color: var(--text); cursor: pointer;
+  touch-action: none; user-select: none; -webkit-user-select: none; }
+#kt-share::before { content: ""; width: 5px; height: 100%; border-radius: 3px 0 0 3px; background: #888; opacity: .7; }
+#kt-share svg { display: none; }
+#kt-share.open { width: 40px; justify-content: center; background: var(--bg); border: 1px solid #777; border-right: 0; border-radius: 8px 0 0 8px; }
+body.mobile #kt-share.open { width: 44px; height: 52px; }
+#kt-share.open::before { display: none; }
+#kt-share.open svg { display: block; }
+#kt-share.busy { opacity: .6; cursor: wait; }
+body.mobile #kt-share:not(.open) { width: 20px; height: 52px; }`;
+
   if (cmd === "button") {
     document.getElementById("kt-share")?.remove();
+    document.getElementById("kt-share-css")?.remove();
+    if (W.keys) W.keys.disconnect();
+    const css = document.createElement("style");
+    css.id = "kt-share-css";
+    css.textContent = CSS;
+    document.head.append(css);
     const b = document.createElement("button");
     b.id = "kt-share";
+    b.tabIndex = -1;
     b.setAttribute("aria-label", "kt share");
-    b.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
-    b.style.cssText = "position:absolute;top:6px;right:6px;z-index:15;width:30px;height:30px;padding:0;display:flex;" +
-      "align-items:center;justify-content:center;background:var(--bg);color:var(--text);border:1px solid var(--line);" +
-      "border-radius:6px;opacity:.35;cursor:pointer";
-    b.onmouseenter = () => { if (!W.busy) b.style.opacity = ".9"; };
-    b.onmouseleave = () => { if (!W.busy) b.style.opacity = ""; };
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+    let t = 0, wasOpen = false;
+    const open = () => { clearTimeout(t); b.classList.add("open"); };
+    b.shut = (ms) => { clearTimeout(t); t = setTimeout(() => { if (!W.busy) b.classList.remove("open"); }, ms); };
+    // фокус остаётся у терминала или экрана X, клавиатура телефона не закрывается (как у ряда клавиш)
+    b.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
     b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.onpointerenter = (e) => { if (e.pointerType === "mouse") open(); };
+    b.onpointerleave = (e) => { if (e.pointerType === "mouse") b.shut(1000); };
+    b.onpointerdown = (e) => {
+      wasOpen = b.classList.contains("open");
+      open();
+      if (e.pointerType !== "mouse") b.shut(4000);
+    };
     // без функции gesture показывает окно всегда (с функцией сразу после нажатия - только вызывает её)
-    b.onclick = () => share(false).catch((e) => kt.gesture("kt share: " + e.message, "OK").catch(() => {}));
-    document.getElementById("app").append(b);
+    b.onpointerup = () => {
+      if (wasOpen && !W.busy) share(false).catch((e) => kt.gesture("kt share: " + e.message, "OK").catch(() => {}));
+      wasOpen = false;
+    };
+    const app = document.getElementById("app"), keys = document.getElementById("keys");
+    app.append(b);
+    // над рядом клавиш телефона (на ПК его нет)
+    W.keys = new ResizeObserver(() => { b.style.bottom = (keys ? keys.offsetHeight : 0) + 8 + "px"; });
+    if (keys) W.keys.observe(keys);
+    else b.style.bottom = "8px";
     busy(W.busy);
     return W.busy ? "busy" : "";
   }

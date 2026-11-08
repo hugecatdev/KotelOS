@@ -64,7 +64,13 @@ class Person(bundle.Chrome):
         return self.eval("screenText()")
 
     def click(self):
-        self.call("Runtime.evaluate", expression="document.getElementById('kt-share').click()", userGesture=True)
+        # как человек: мышь на язычок (раскрывается), нажать и отпустить
+        x, y = self.eval("(() => { const r = document.getElementById('kt-share').getBoundingClientRect(); "
+                         "return [r.right - 3, r.top + r.height / 2]; })()")
+        self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+        time.sleep(0.3)
+        for t in ("mousePressed", "mouseReleased"):
+            self.call("Input.dispatchMouseEvent", type=t, x=x, y=y, button="left", clickCount=1)
 
     def take(self, www, as_name, t=120):
         t0 = time.time()
