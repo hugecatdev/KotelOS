@@ -14,6 +14,7 @@ import time
 import urllib.request
 import alpine
 from cond import preprocess
+from html import escape as html_escape
 
 IMG = "images"  # собирают build.sh и scripts/build-kernel.sh
 V86 = "vendor/v86"  # libv86.js, v86.wasm и BIOS из проекта v86 (scripts/build-v86.sh)
@@ -233,7 +234,9 @@ def assemble(html, bundle, minify):
     j = html.index("</script>", i)
     main = html[i + 8:j]
     html = html[:i] + blocks + script(data) + script(terser(main) if minify else main) + html[j + 9:]
-    if bundle["name"] != "kotelos":
+    if bundle.get("title"):
+        html = html.replace("<title>KotelOS</title>", "<title>%s</title>" % html_escape(bundle["title"]))
+    elif bundle["name"] != "kotelos":
         html = html.replace("<title>KotelOS</title>", "<title>KotelOS %s</title>" % bundle["name"])
     if minify:
         html = re.sub(r"<style>\n(.*?)</style>", lambda m: "<style>" + re.sub(r"\s*\n\s*", "", m.group(1)) + "</style>", html, flags=re.S)
@@ -386,6 +389,7 @@ def options(argv=None):
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/); папку - её содержимое в ПУТЬ")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
+    ap.add_argument("--title", help="имя системы на странице вместо KotelOS: заголовок вкладки, строка загрузки")
     ap.add_argument("--kernel", metavar="ФАЙЛ", help="ядро (по умолчанию %s/bzImage): частное, для пробы" % IMG)
     ap.add_argument("--no-3d", action="store_true",
                     help="без 3D: бандл с --vga без virtio-gpu и virglrenderer (иначе программы OpenGL рисуют "
@@ -449,6 +453,8 @@ def main():
         bundle["cmd"] = a.cmd
     if a.version:
         bundle["version"] = a.version
+    if a.title:
+        bundle["title"] = a.title
     if "kt-share" in names:  # страница сразу берёт свой исходник для kt share (см. SOURCE в page.html)
         bundle["share"] = True
     # функции бандла: блоки страницы /* #if имя */ без них вырезаются

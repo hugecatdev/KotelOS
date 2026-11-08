@@ -2298,7 +2298,7 @@
         term.write("\x1b[90mэто шаблон, файл для браузера собирает ./bundle.py\x1b[0m\r\n");
         return;
       }
-      bootlog(`KotelOS ${build.build}${NAME !== "kotelos" ? ", " + NAME : ""}`);
+      bootlog(BUNDLE.title ? `${BUNDLE.title} ${build.build}` : `KotelOS ${build.build}${NAME !== "kotelos" ? ", " + NAME : ""}`);
 
       let saved = null, image = null;
       if (!qs.has("fresh") && !coldBoot) saved = await kv.get(SLOT).catch(() => null);

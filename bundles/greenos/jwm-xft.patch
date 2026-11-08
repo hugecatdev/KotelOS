@@ -1,0 +1,127 @@
+--- a/src/font.c
++++ b/src/font.c
+@@ -34,6 +34,8 @@
+ 
+ #ifdef USE_PANGO
+ static const char *DEFAULT_FONT = "12";
++#elif defined(USE_XFT)
++static const char *DEFAULT_FONT = "sans-10";
+ #else
+ static const char *DEFAULT_FONT = "fixed";
+ #endif
+@@ -63,12 +65,14 @@
+ static int font_ascents[FONT_COUNT];
+ static PangoFontMap *font_map;
+ static PangoContext *font_context;
++#elif defined(USE_XFT)
++static XftFont *fonts[FONT_COUNT];
+ #else
+ static XFontStruct *fonts[FONT_COUNT];
+ #endif
+ static char *fontNames[FONT_COUNT];
+ 
+-#ifdef USE_PANGO
++#if defined(USE_PANGO) || defined(USE_XFT)
+ static int IsXlfd(const char *str);
+ #endif
+ 
+@@ -167,6 +171,22 @@
+         font_ascents[x] = 0;
+         font_heights[x] = 0;
+       }
++#elif defined(USE_XFT)
++      /* Xft without Pango: anti-aliased fonts without glib, harfbuzz and cairo. */
++      if(fontNames[x]) {
++         if(IsXlfd(fontNames[x])) {
++            fonts[x] = JXftFontOpenXlfd(display, rootScreen, fontNames[x]);
++         }
++         if(!fonts[x]) {
++            fonts[x] = JXftFontOpenName(display, rootScreen, fontNames[x]);
++         }
++         if(JUNLIKELY(!fonts[x])) {
++            Warning(_("could not load font: %s"), fontNames[x]);
++         }
++      }
++      if(!fonts[x]) {
++         fonts[x] = JXftFontOpenName(display, rootScreen, DEFAULT_FONT);
++      }
+ #else /* USE_PANGO */
+       if(fontNames[x]) {
+          fonts[x] = JXLoadQueryFont(display, fontNames[x]);
+@@ -194,6 +214,9 @@
+ #ifdef USE_PANGO
+          g_object_unref(fonts[x]);
+          fonts[x] = NULL;
++#elif defined(USE_XFT)
++         JXftFontClose(display, fonts[x]);
++         fonts[x] = NULL;
+ #else
+          JXFreeFont(display, fonts[x]);
+          fonts[x] = NULL;
+@@ -229,7 +252,7 @@
+ }
+ 
+ /** Determine if a font string is likely XLFD. */
+-#ifdef USE_PANGO
++#if defined(USE_PANGO) || defined(USE_XFT)
+ int IsXlfd(const char *str)
+ {
+    /* Valid XLFD should have 14 '-'s. */
+@@ -328,6 +351,13 @@
+    pango_layout_set_width(fonts[ft], -1);
+    pango_layout_get_extents(fonts[ft], NULL, &rect);
+    result = (rect.width + PANGO_SCALE - 1) / PANGO_SCALE;
++#elif defined(USE_XFT)
++   {
++      XGlyphInfo extents;
++      JXftTextExtentsUtf8(display, fonts[ft], (const unsigned char*)utf8String,
++                          strlen(utf8String), &extents);
++      result = extents.xOff;
++   }
+ #else
+    result = XTextWidth(fonts[ft], utf8String, strlen(utf8String));
+ #endif
+@@ -373,6 +403,9 @@
+    XftDraw *xd;
+    PangoLayoutLine *line;
+    XftColor *xc;
++#elif defined(USE_XFT)
++   XftDraw *xd;
++   char *cut = NULL;
+ #else
+    XGCValues gcValues;
+    unsigned long gcMask;
+@@ -415,6 +448,33 @@
+       y * PANGO_SCALE + font_ascents[font]);
+ 
+    JXftDrawDestroy(xd);
++#elif defined(USE_XFT)
++
++   /* Too wide: cut at a character boundary and end with an ellipsis,
++    * as Pango does. */
++   if(GetStringWidth(font, utf8String) > width) {
++      static const char ELLIPSIS[] = "\xe2\x80\xa6";
++      int n = len;
++      cut = Allocate(len + sizeof(ELLIPSIS));
++      do {
++         do {
++            n -= 1;
++         } while(n > 0 && (utf8String[n] & 0xC0) == 0x80);
++         memcpy(cut, utf8String, n);
++         memcpy(cut + n, ELLIPSIS, sizeof(ELLIPSIS));
++      } while(n > 0 && GetStringWidth(font, cut) > width);
++   }
++
++   xd = JXftDrawCreate(display, d, rootVisual, rootColormap);
++   JXftDrawSetClip(xd, renderRegion);
++   JXftDrawStringUtf8(xd, GetXftColor(color), fonts[font],
++                      x, y + fonts[font]->ascent,
++                      (const unsigned char*)(cut ? cut : utf8String),
++                      strlen(cut ? cut : utf8String));
++   JXftDrawDestroy(xd);
++   if(cut) {
++      Release(cut);
++   }
+ #else
+ 
+    gcMask = GCGraphicsExposures;

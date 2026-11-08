@@ -1,0 +1,191 @@
+<?xml version="1.0"?>
+<!-- GreenOS: рабочий стол на JWM. Своё - в ~/.jwmrc (cp /etc/system.jwmrc ~/.jwmrc), применить - меню,
+     «Перезапустить JWM». Тема «Трава»: белая панель, зелёные заголовки и выделение, всё плоское, без
+     скруглений. -->
+<JWM>
+
+    <!-- меню «Пуск» (кнопка-кубик на панели, Alt+F1, правый щелчок по столу): только установленные
+         программы - собирает greenos-menu -->
+    <Include>exec:greenos-menu</Include>
+
+    <Group>
+        <Class>GreenAbout</Class>
+        <Option>centered</Option>
+        <Option>nomax</Option>
+        <Option>noresize</Option>
+    </Group>
+    <Group>
+        <Name>xcalc</Name>
+        <Name>calculator</Name>
+        <Name>xeyes</Name>
+        <Option>nomax</Option>
+    </Group>
+
+    <Tray x="0" y="-1" height="36" autohide="off">
+        <TrayButton icon="greenos.png" popup="Меню">root:3</TrayButton>
+        <Spacer width="4"/>
+        <TrayButton icon="/usr/share/pixmaps/xterm-color_48x48.xpm" popup="xterm">exec:greenos-run terminal</TrayButton>
+        <Spacer width="6"/>
+        <TaskList maxwidth="220"/>
+        <Pager labeled="true"/>
+        <Dock/>
+        <Clock format="%H:%M" popup="%A, %d %B %Y"><Button mask="1">exec:xclock</Button></Clock>
+        <TrayButton icon="desktop.png" popup="Показать рабочий стол">showdesktop</TrayButton>
+    </Tray>
+
+    <TitleButtonOrder>wtimx</TitleButtonOrder>
+
+    <WindowStyle decorations="flat">
+        <Font align="center">Cantarell-10:bold</Font>
+        <Width>4</Width>
+        <Height>28</Height>
+        <Corner>0</Corner>
+        <Foreground>#6f7c69</Foreground>
+        <Background>#eef2ea</Background>
+        <Outline>#c5d2bc</Outline>
+        <Opacity>1.0</Opacity>
+        <Active>
+            <Foreground>#ffffff</Foreground>
+            <Background>#3dbb2b</Background>
+            <Outline>#2e9a1f</Outline>
+            <Opacity>1.0</Opacity>
+        </Active>
+    </WindowStyle>
+    <TrayStyle decorations="flat">
+        <Font>Cantarell-10</Font>
+        <Background>#ffffff</Background>
+        <Foreground>#24301f</Foreground>
+        <Outline>#cfe0c6</Outline>
+        <Opacity>1.0</Opacity>
+    </TrayStyle>
+    <TrayButtonStyle>
+        <Font>Cantarell-10</Font>
+        <Background>#ffffff</Background>
+        <Foreground>#24301f</Foreground>
+        <Active>
+            <Background>#e6f8df</Background>
+            <Foreground>#24301f</Foreground>
+        </Active>
+    </TrayButtonStyle>
+    <TaskListStyle list="desktop" group="false">
+        <Font>Cantarell-10</Font>
+        <Background>#ffffff</Background>
+        <Foreground>#24301f</Foreground>
+        <Active>
+            <Background>#d8f5cf</Background>
+            <Foreground>#24301f</Foreground>
+            <Outline>#3dbb2b</Outline>
+        </Active>
+        <Minimized>
+            <Background>#ffffff</Background>
+            <Foreground>#8a9784</Foreground>
+        </Minimized>
+    </TaskListStyle>
+    <PagerStyle>
+        <Font>Cantarell-9</Font>
+        <Background>#eef2ea</Background>
+        <Foreground>#cfe0c6</Foreground>
+        <Outline>#b0d0a0</Outline>
+        <Text>#24301f</Text>
+        <Active>
+            <Background>#9be888</Background>
+            <Foreground>#5fd64a</Foreground>
+        </Active>
+    </PagerStyle>
+    <ClockStyle>
+        <Font>Cantarell-11:bold</Font>
+        <Foreground>#24301f</Foreground>
+    </ClockStyle>
+    <MenuStyle decorations="flat">
+        <Font>Cantarell-10</Font>
+        <Foreground>#24301f</Foreground>
+        <Background>#ffffff</Background>
+        <Outline>#b0d0a0</Outline>
+        <Opacity>1.0</Opacity>
+        <Active>
+            <Foreground>#ffffff</Foreground>
+            <Background>#3dbb2b</Background>
+        </Active>
+    </MenuStyle>
+    <PopupStyle>
+        <Font>Cantarell-9</Font>
+        <Foreground>#24301f</Foreground>
+        <Background>#ffffff</Background>
+        <Outline>#9cc98a</Outline>
+    </PopupStyle>
+
+    <IconPath>/usr/share/greenos/icons</IconPath>
+    <DefaultIcon>executable.png</DefaultIcon>
+
+    <!-- два рабочих стола; обои - greenos-wallpaper (feh): JWM зовёт его на старте и после смены
+         размера экрана (тогда он перезапускается сам). Background - до Desktop: JWM читает Desktops,
+         пока не насчитает столько столов, сколько задано, остальное пропускает -->
+    <Desktops width="2" height="1">
+        <Background type="command">greenos-wallpaper</Background>
+        <Desktop name="1"/>
+        <Desktop name="2"/>
+    </Desktops>
+
+    <DoubleClickSpeed>400</DoubleClickSpeed>
+    <DoubleClickDelta>4</DoubleClickDelta>
+    <FocusModel>click</FocusModel>
+    <SnapMode distance="10">border</SnapMode>
+    <MoveMode mask="A">opaque</MoveMode>
+    <ResizeMode>opaque</ResizeMode>
+
+    <!-- клавиши - как в KDE: Alt+Tab, Alt+F4, Ctrl+Alt+T, Ctrl+Alt+стрелки - столы, Print - снимок экрана -->
+    <Key key="Up">up</Key>
+    <Key key="Down">down</Key>
+    <Key key="Right">right</Key>
+    <Key key="Left">left</Key>
+    <Key key="Return">select</Key>
+    <Key key="Escape">escape</Key>
+
+    <Key mask="A" key="Tab">nextstacked</Key>
+    <Key mask="AS" key="Tab">prevstacked</Key>
+    <Key mask="A" key="F1">root:3</Key>
+    <Key key="Super_L">root:3</Key>
+    <Key mask="A" key="F3">window</Key>
+    <Key mask="A" key="F4">close</Key>
+    <Key mask="A" key="F9">minimize</Key>
+    <Key mask="A" key="F10">maximize</Key>
+    <Key mask="CA" key="Right">rdesktop</Key>
+    <Key mask="CA" key="Left">ldesktop</Key>
+    <Key mask="CA" key="d">showdesktop</Key>
+    <Key mask="CA" key="t">exec:greenos-run terminal</Key>
+    <Key mask="CA" key="Escape">exec:xkill</Key>
+    <Key key="Print">exec:greenos-run screenshot</Key>
+
+    <Mouse context="root" button="3">root:3</Mouse>
+    <Mouse context="root" button="4">ldesktop</Mouse>
+    <Mouse context="root" button="5">rdesktop</Mouse>
+
+    <Mouse context="title" button="1">move</Mouse>
+    <Mouse context="title" button="2">move</Mouse>
+    <Mouse context="title" button="3">window</Mouse>
+    <Mouse context="title" button="4">shade</Mouse>
+    <Mouse context="title" button="5">shade</Mouse>
+    <Mouse context="title" button="11">maximize</Mouse>
+
+    <Mouse context="icon" button="1">window</Mouse>
+    <Mouse context="icon" button="2">move</Mouse>
+    <Mouse context="icon" button="3">window</Mouse>
+    <Mouse context="icon" button="11">close</Mouse>
+
+    <Mouse context="border" button="1">resize</Mouse>
+    <Mouse context="border" button="2">move</Mouse>
+    <Mouse context="border" button="3">window</Mouse>
+
+    <Mouse context="close" button="-1">close</Mouse>
+    <Mouse context="close" button="2">move</Mouse>
+    <Mouse context="close" button="-3">close</Mouse>
+
+    <Mouse context="maximize" button="-1">maximize</Mouse>
+    <Mouse context="maximize" button="-2">maxv</Mouse>
+    <Mouse context="maximize" button="-3">maxh</Mouse>
+
+    <Mouse context="minimize" button="-1">minimize</Mouse>
+    <Mouse context="minimize" button="2">move</Mouse>
+    <Mouse context="minimize" button="-3">shade</Mouse>
+
+</JWM>

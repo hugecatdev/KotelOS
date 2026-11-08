@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Собрать бандлы сайта по описаниям bundles/ИМЯ.txt в site/ИМЯ/index.html."""
+"""Собрать бандлы сайта по описаниям bundles/ИМЯ.txt в site/ИМЯ/index.html. Описание можно дать и путём
+(./release.py bundles/greenos/greenos.txt) - свои сборки вне bundles/*.txt: scripts/pages.sh их не выкладывает."""
 import argparse
 import glob
 import os
@@ -13,13 +14,16 @@ SITE = "site"
 
 def main():
     ap = argparse.ArgumentParser(description="собрать бандлы по описаниям %s/ИМЯ.txt в %s/ИМЯ/index.html" % (DEFS, SITE))
-    ap.add_argument("bundles", nargs="*", help="какие бандлы собрать (по умолчанию все)")
+    ap.add_argument("bundles", nargs="*", help="какие бандлы собрать: ИМЯ или путь к описанию .txt (по умолчанию все из %s/)" % DEFS)
     ap.add_argument("--build", action="store_true", help="сначала пересобрать образ и пакеты: ./build.sh")
     a = ap.parse_args()
+    paths = [os.path.abspath(n) for n in a.bundles if n.endswith(".txt") and os.path.isfile(n)]
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     sys.stdout.reconfigure(line_buffering=True)
     defs = {os.path.basename(p)[:-4]: p for p in sorted(glob.glob(DEFS + "/*.txt"))}
-    names = a.bundles or list(defs)
+    for p in paths:
+        defs[os.path.basename(p)[:-4]] = p
+    names = [os.path.basename(n)[:-4] if n.endswith(".txt") else n for n in a.bundles] or list(defs)
     unknown = [n for n in names if n not in defs]
     if unknown:
         sys.exit("нет описания %s (есть: %s)" % (" ".join(unknown), " ".join(defs)))

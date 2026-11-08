@@ -1,0 +1,13 @@
+#!/bin/sh
+# программы GreenOS, которым нужны ключи или выбор (панель, клавиши, меню): terminal, screenshot, images
+has() { command -v "$1" > /dev/null; }
+cd "$HOME" || exit 1
+case $1 in
+  terminal) exec xterm ;;
+  screenshot)
+    has shutterbug && exec shutterbug
+    mkdir -p "$HOME/Снимки"
+    exec scrot -e 'feh --scale-down -g 900x600 $f' "$HOME/Снимки/%Y-%m-%d_%H%M%S.png" ;;
+  images) exec feh --scale-down -g 900x600 -. "${2:-/usr/share/backgrounds}" ;;
+  *) echo "greenos-run terminal|screenshot|images" >&2; exit 1 ;;
+esac

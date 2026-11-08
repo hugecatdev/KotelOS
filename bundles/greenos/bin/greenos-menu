@@ -1,0 +1,31 @@
+#!/bin/sh
+# меню «Пуск» GreenOS для JWM (<Include>exec:greenos-menu</Include> в /etc/system.jwmrc): программы под
+# своими именами, только установленные, пустые разделы не показываются. Значки - родные значки программ,
+# где они есть, иначе KDE Breeze (/usr/share/greenos/icons)
+item() {  # item программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
+  command -v "$1" > /dev/null || return 0
+  case $2 in /*) i=$2 ;; *) i=$2.png ;; esac
+  echo "<Program icon=\"$i\" label=\"$1\">${3:-$1}</Program>"
+}
+menu() {  # menu значок название пункты: раздел, если в нём что-то есть
+  [ -z "$3" ] || printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$1" "$2" "$3"
+}
+cat <<EOF
+<?xml version="1.0"?>
+<JWM>
+<RootMenu onroot="3" label="GreenOS" labeled="true" height="28">
+$(item xterm /usr/share/pixmaps/xterm-color_48x48.xpm)
+$(item PathFinder /usr/share/greenos/icons/fox/pathfinder.png 'PathFinder ~')
+$(item adie /usr/share/greenos/icons/fox/adie.png)
+<Separator/>
+$(menu office Офис "$(item abiword /usr/share/icons/hicolor/48x48/apps/abiword.png; item gnumeric /usr/share/icons/hicolor/48x48/apps/gnumeric.png)")
+$(menu utilities Стандартные "$(item calculator /usr/share/greenos/icons/fox/calculator.png; item xcalc calc; item xclock clock; item feh /usr/share/feh/images/feh.png 'greenos-run images'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png; item scrot screenshot 'greenos-run screenshot')")
+$(menu games Развлечения "$(item xeyes eyes)")
+$(menu system Система "$(item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
+<Separator/>
+<Program icon="about.png" label="О системе">greenos-about</Program>
+<Restart icon="restart.png" label="Перезапустить JWM"/>
+<Exit icon="exit.png" label="Выйти" confirm="true"/>
+</RootMenu>
+</JWM>
+EOF

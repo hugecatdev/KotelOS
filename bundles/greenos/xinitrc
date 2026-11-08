@@ -1,0 +1,4 @@
+#!/bin/sh
+# сессия GreenOS (startx): JWM - панель, меню «Пуск», обои (/etc/system.jwmrc, своё - ~/.jwmrc).
+# Выход - меню, «Выйти»
+exec jwm

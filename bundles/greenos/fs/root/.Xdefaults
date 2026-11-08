@@ -1,0 +1,82 @@
+! GreenOS, тема «Трава» для программ X (xterm, xcalc, xclock, xeyes). Xlib читает этот файл сам, пока
+! никто не положил ресурсы на сервер (xrdb), - правка действует на новые окна
+
+Xft.antialias: true
+Xft.hinting: true
+Xft.hintstyle: hintslight
+Xft.rgba: none
+
+*background: #eef2ea
+*foreground: #24301f
+*borderColor: #b0d0a0
+
+! терминал: шрифт Hack, тёмно-зелёный фон, копирование - в общий буфер (и браузера, kt-xclipd);
+! Ctrl+Shift+C / Ctrl+Shift+V - как в Konsole
+XTerm*faceName: Hack
+XTerm*faceSize: 10
+XTerm*renderFont: true
+XTerm*locale: true
+XTerm*utf8Title: true
+XTerm*termName: xterm-256color
+XTerm*internalBorder: 8
+XTerm*borderWidth: 0
+XTerm*scrollBar: false
+XTerm*saveLines: 4000
+XTerm*selectToClipboard: true
+XTerm*cursorBlink: true
+XTerm*background: #1f281c
+XTerm*foreground: #e3ecdc
+XTerm*cursorColor: #5fd64a
+XTerm*pointerColorBackground: #1f281c
+XTerm*pointerColor: #e3ecdc
+XTerm*VT100.translations: #override \n\
+    Ctrl Shift <Key>C: copy-selection(CLIPBOARD) \n\
+    Ctrl Shift <Key>V: insert-selection(CLIPBOARD)
+XTerm*color0: #2a3327
+XTerm*color1: #e05a4f
+XTerm*color2: #5fd64a
+XTerm*color3: #e8c25a
+XTerm*color4: #4fa3d8
+XTerm*color5: #b67ad6
+XTerm*color6: #4fc0b0
+XTerm*color7: #d8e2d2
+XTerm*color8: #5b6656
+XTerm*color9: #f07a6f
+XTerm*color10: #8ef07a
+XTerm*color11: #f4d67c
+XTerm*color12: #7cc0ea
+XTerm*color13: #cc9ce4
+XTerm*color14: #7ad8ca
+XTerm*color15: #ffffff
+
+! калькулятор: светлый корпус, белые кнопки, зелёное табло
+XCalc*background: #eef2ea
+XCalc*foreground: #24301f
+XCalc*Command.background: #ffffff
+XCalc*Command.foreground: #24301f
+XCalc*Command.borderColor: #b0d0a0
+XCalc*Command.highlightThickness: 0
+XCalc*bevel.background: #2b8a1d
+XCalc*bevel.borderColor: #2b8a1d
+XCalc*bevel.screen.background: #dcf6d2
+XCalc*bevel.screen.borderColor: #2b8a1d
+XCalc*bevel.screen*background: #dcf6d2
+XCalc*bevel.screen*foreground: #24301f
+
+! часы: сглаженные, секундная стрелка - зелёная
+XClock*render: true
+XClock*geometry: 200x200
+XClock*update: 1
+XClock*background: #fbfcfa
+XClock*hourColor: #24301f
+XClock*minuteColor: #24301f
+XClock*secondColor: #3dbb2b
+XClock*majorColor: #2b8a1d
+XClock*minorColor: #9fb894
+
+XEyes*render: true
+XEyes*geometry: 160x110
+XEyes*background: #eef2ea
+XEyes*outline: #2b8a1d
+XEyes*center: #ffffff
+XEyes*foreground: #24301f

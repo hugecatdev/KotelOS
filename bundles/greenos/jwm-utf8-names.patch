@@ -1,0 +1,26 @@
+--- a/src/main.c
++++ b/src/main.c
+@@ -165,7 +165,8 @@
+       break;
+    }
+ 
+-#if defined(HAVE_SETLOCALE) && (defined(ENABLE_NLS) || defined(ENABLE_ICONV))
++#if defined(HAVE_SETLOCALE)
++   /* Also without NLS: window names in COMPOUND_TEXT are decoded via the locale. */
+    setlocale(LC_ALL, "");
+ #endif
+ #ifdef HAVE_GETTEXT
+--- a/src/hint.c
++++ b/src/hint.c
+@@ -766,8 +766,9 @@
+          tprop.encoding = atoms[ATOM_COMPOUND_TEXT];
+          tprop.format = realFormat;
+          tprop.nitems = count;
+-         if(XmbTextPropertyToTextList(display, &tprop, &tlist, &tcount)
+-            == Success && tcount > 0) {
++         /* UTF-8 whatever the locale: that is what the fonts draw. */
++         if(Xutf8TextPropertyToTextList(display, &tprop, &tlist, &tcount)
++            >= Success && tcount > 0) {
+             const size_t len = strlen(tlist[0]) + 1;
+             np->name = Allocate(len);
+             memcpy(np->name, tlist[0], len);

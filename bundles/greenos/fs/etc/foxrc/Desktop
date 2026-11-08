@@ -1,0 +1,14 @@
+[SETTINGS]
+normalfont = "Cantarell,100"
+basecolor = #eef2ea
+bordercolor = #8fa684
+hilitecolor = #ffffff
+shadowcolor = #b9c7b0
+backcolor = #ffffff
+forecolor = #24301f
+selforecolor = #ffffff
+selbackcolor = #3dbb2b
+tipforecolor = #24301f
+tipbackcolor = #f6f9f3
+selmenutextcolor = #ffffff
+selmenubackcolor = #3dbb2b
