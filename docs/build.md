@@ -21,6 +21,7 @@ scripts/build-openblas.sh       # openblas под SSE2, LAPACK на C -> build/p
 scripts/build-numpy.sh          # numpy под SSE2 с этим openblas -> build/packages/python-numpy (его зовёт get-packages.sh)
 scripts/build-doom.sh           # doom -> packages/doom, doom1.wad -> build/packages/doom-shareware (его зовёт get-packages.sh)
 scripts/build-xorg.sh           # Xorg без OpenGL -> packages/xorg (его зовёт get-packages.sh)
+scripts/build-xclipd.sh         # kt-xclipd, общий буфер обмена X и браузера -> packages/kt-xclipd (его зовёт get-packages.sh)
 scripts/build-mesa.sh           # libGL без LLVM (GLX через Xlib, драйверы virgl и softpipe) -> packages/mesa-xlib (его зовёт get-packages.sh)
 scripts/build-dwm.sh            # dwm, st, feh -> packages/..., dwm-studio -> bundles/qt (его зовёт get-packages.sh)
 scripts/check-isa.sh ФАЙЛ...    # нет ли в ELF инструкций, которых v86 не умеет (SSSE3, SSE4, AVX, addsubps/pd, lddqu)

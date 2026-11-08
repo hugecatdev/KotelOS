@@ -486,6 +486,9 @@
     // высота страницы без экранной клавиатуры телефона (наибольшая при этой ширине) и где касались
     // экрана (точки CSS от верха холста) - см. layoutScreen
     let fullW = 0, fullH = 0, tapY = 0;
+    // буфер обмена X (kt-xclipd, см. clipKey): текст в X, каким его знает страница, и буфер браузера,
+    // каким она его видела последним
+    let clipX = null, clipB = null;
     /* #endif */
     let screenOn = false;
     let screenSent = "";  // размер X, о котором знает гость (kt screen size, событие screen-size); помнят сохранения
@@ -1368,6 +1371,14 @@
       async copyscreen(arg, id) {
         say(id, await copyText(screenText()) ? "" : "нажми «Копировать» внизу экрана");
       },
+      /* #if vga */
+      // скопированное в X (kt-xclipd: "xclip - длина" + текст) - в буфер браузера
+      async xclip(arg, id, body) {
+        const text = dec.decode(body);
+        clipX = text;
+        if (await copyText(text)) clipB = text;
+      },
+      /* #endif */
     };
 
     term.parser.registerOscHandler(52, (data) => {
@@ -1855,6 +1866,69 @@
         if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
       }, { passive: false });
     }
+
+    // общий буфер обмена с X - пакет kt-xclipd в машине (его ставит xorg, запускает startx). Скопированное
+    // в X демон присылает командой xclip. Ctrl+V и Ctrl+Shift+V на экране: клавиша ждёт, браузер отдаёт
+    // свой буфер событием paste (оно приходит раньше задачи из keydown); там новое - не то, что в X, и не
+    // то, что страница уже видела (скопированное в X, не попавшее в браузер, этим не затирается), - текст
+    // сначала уходит демону (порт 7703), он становится владельцем буфера X, и только потом клавиша - в
+    // машину. Нажатое за это время ждёт в очереди и уходит следом тем же порядком; демона нет - соединение
+    // сразу закрывается, клавиша уходит как есть
+    const CLIP_PORT = 7703;
+    let clipHeld = null, clipText = null;  // нажатия, которые ждут, и буфер браузера из события paste
+    function clipPush(text) {
+      const net = emulator && emulator.network_adapter;
+      if (!net) return Promise.resolve(false);
+      return new Promise((done) => {
+        const b = enc.encode(text);
+        let c = null, over = false;
+        const finish = (ok) => {
+          if (over) return;
+          over = true;
+          clearTimeout(timer);
+          if (c) c.close();
+          done(ok);
+        };
+        const timer = setTimeout(() => { if (c) c.release(); c = null; finish(false); }, 2000 + b.length / 100);
+        try { c = net.connect(CLIP_PORT); } catch { c = null; finish(false); return; }
+        c.on("connect", () => { c.write(enc.encode(`SET ${b.length}\n`)); c.write(b); });
+        c.on("data", (d) => finish(dec.decode(d).startsWith("OK")));
+        c.on("shutdown", () => finish(false));
+        c.on("close", () => { c = null; finish(false); });
+      });
+    }
+    const keyCopy = (e) => ({ key: e.key, code: e.code, keyCode: e.keyCode, location: e.location, repeat: e.repeat,
+      ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, bubbles: true, cancelable: true });
+    // раньше клавиатуры v86 (она слушает window без захвата); повтор из очереди (isTrusted false) - уже ей
+    function clipKey(e) {
+      if (!screenOn || !e.isTrusted || /^(INPUT|TEXTAREA)$/.test(e.target && e.target.nodeName)) return;
+      if (clipHeld) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        clipHeld.push([e.type, keyCopy(e)]);
+        return;
+      }
+      if (e.type !== "keydown" || e.code !== "KeyV" || !e.ctrlKey || e.altKey || e.metaKey) return;
+      e.stopImmediatePropagation(); // без preventDefault: браузер вставит - придёт paste
+      clipHeld = [[e.type, keyCopy(e)]];
+      clipText = null;
+      setTimeout(async () => {
+        const b = clipText;
+        if (b && b !== clipX && b !== clipB) {
+          if (await clipPush(b)) clipX = clipB = b;
+        } else if (b !== null) clipB = b;
+        const q = clipHeld;
+        clipHeld = null;
+        for (const [type, init] of q) document.body.dispatchEvent(new KeyboardEvent(type, init));
+      });
+    }
+    window.addEventListener("keydown", clipKey, true);
+    window.addEventListener("keyup", clipKey, true);
+    document.addEventListener("paste", (e) => {
+      if (!clipHeld) return;
+      e.preventDefault();
+      clipText = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+    });
     /* #endif */
 
     let moreBtn = null;

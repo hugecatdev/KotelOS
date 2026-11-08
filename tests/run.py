@@ -380,7 +380,7 @@ def main():
     worker = ["--worker"] if WORKER else []
     for args in (["-o", www + "/t.html", "-n", "test"] + worker + PKGS,
                  ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"] + worker,
-                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg"] + worker):
+                 ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg", "xclip"] + worker):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -1174,6 +1174,73 @@ def main():
         assert s.sh("pgrep tail")[0] != 0, "слушатель размера остался"
         return "окно xterm через %.1f с, потом %s" % (ready, resized)
 
+    def screen_clip():
+        # общий буфер обмена X и браузера (kt-xclipd из xorg, его запускает startx); xclip - программа X
+        # со своим буфером
+        if s.ev("typeof kt.screen") == "undefined":  # запущен один, без «экран и doom»
+            s.open(base + "vga.html")
+        s.c.call("Browser.grantPermissions", session=False, origin=base.rstrip("/"), permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
+        s.c.call("Emulation.setFocusEmulationEnabled", enabled=True)
+        s.ev("send('startx\\r')")
+        # демон готов, когда слушает порт 7703 (0x1E17): тогда буфер X уже под присмотром
+        t0 = time.time()
+        while s.sh("grep -q ':1E17 00000000:0000 0A' /proc/net/tcp")[0]:
+            assert time.time() - t0 < 60, "kt-xclipd не запустился: %s" % s.sh("tail -5 /var/log/Xorg.0.log")[1]
+            time.sleep(0.5)
+        # X -> браузер
+        s.ok("printf 'из X\\nвторая' | DISPLAY=:0 xclip -selection clipboard")
+        t1 = time.time()
+        while s.ev("navigator.clipboard.readText()") != "из X\nвторая":
+            assert time.time() - t1 < 10, "скопированное в X не попало в браузер: %r" % s.ev("navigator.clipboard.readText()")
+            time.sleep(0.3)
+        copied = time.time() - t1
+        # браузер -> X: Ctrl+V на экране ждёт, пока текст уйдёт в X, нажатое следом (x) - за ним
+        s.ev("navigator.clipboard.writeText('из браузера ё')")
+        key = lambda t_, code, k, vk, m=0: s.c.call("Input.dispatchKeyEvent", type=t_, modifiers=m, code=code, key=k, windowsVirtualKeyCode=vk)
+
+        def ctrl_v():
+            key("rawKeyDown", "ControlLeft", "Control", 17, 2)
+            key("rawKeyDown", "KeyV", "v", 86, 2)
+            key("keyUp", "KeyV", "v", 86, 2)
+            key("keyUp", "ControlLeft", "Control", 17)
+            key("rawKeyDown", "KeyX", "x", 88)
+            key("keyUp", "KeyX", "x", 88)
+        got = keys_in(ctrl_v)
+        assert got == [(29, 1), (47, 1), (47, 0), (29, 0), (45, 1), (45, 0)], got
+        out = s.ok("DISPLAY=:0 xclip -o -selection clipboard")
+        assert out == "из браузера ё", out
+        # то же в браузере - в X не уходит: буфер X снова у xclip и остаётся у него
+        s.ok("printf 'снова X' | DISPLAY=:0 xclip -selection clipboard")
+        t1 = time.time()
+        while s.ev("navigator.clipboard.readText()") != "снова X":
+            assert time.time() - t1 < 10, "второе скопированное в X не попало в браузер"
+            time.sleep(0.3)
+        keys_in(ctrl_v)
+        assert s.ok("pgrep -x xclip").strip(), "буфер X забрали, хотя в браузере то же"
+        # программа с буфером закрылась - текст остаётся у демона
+        s.ok("killall xclip")
+        time.sleep(1)
+        out = s.ok("DISPLAY=:0 xclip -o -selection clipboard")
+        assert out == "снова X", out
+        s.ok("killall xterm")
+        t1 = time.time()
+        while s.ev("document.querySelector('#screen').classList.contains('on')"):
+            assert time.time() - t1 < 15, "экран не спрятался после выхода из сессии"
+            time.sleep(0.3)
+        t1 = time.time()
+        while not s.sh("pgrep -x kt-xclipd")[0]:
+            assert time.time() - t1 < 5, "kt-xclipd остался после X"
+            time.sleep(0.3)
+        # экран без демона (doom): соединение сразу закрыто, Ctrl+V уходит как есть
+        s.ok("kt screen on")
+        s.ev("navigator.clipboard.writeText('без демона')")
+        try:
+            got = keys_in(ctrl_v)
+        finally:
+            s.ok("kt screen off")
+        assert got == [(29, 1), (47, 1), (47, 0), (29, 0), (45, 1), (45, 0)], got
+        return "из X в браузер за %.1f с" % copied
+
     def snap_bundle():
         t = s.open(base + "snap.html")
         tz = s.ok("date +%z").strip()
@@ -1200,7 +1267,7 @@ def main():
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("kt reset", reset),
-        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("бандл со снимком", snap_bundle),
+        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]
     try:

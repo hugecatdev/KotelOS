@@ -12,6 +12,7 @@
 /overlay/usr/sbin/kt-net
 /overlay/usr/sbin/kt-seed
 /packages/kt-ttyd/usr/sbin/kt-ttyd
+/packages/kt-xclipd/usr/bin/kt-xclipd
 /packages/doom/usr/lib/doom/doom
 /packages/xorg/usr/bin/Xorg
 /packages/xorg/usr/lib/

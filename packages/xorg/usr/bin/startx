@@ -117,6 +117,8 @@ until [ -S /tmp/.X11-unix/X0 ]; do
   usleep 100000
 done
 export DISPLAY=:0
+# общий с браузером буфер обмена (пакет kt-xclipd); X закрылся - демон выходит сам
+if command -v kt-xclipd > /dev/null; then kt-xclipd & fi
 # размер за страницей: событие screen-size (агент пишет события в /run/kt/events, пока есть
 # слушатель - отметка /run/kt/ev.<pid>) -> новый режим через xrandr
 if [ -n "$follow" ]; then
