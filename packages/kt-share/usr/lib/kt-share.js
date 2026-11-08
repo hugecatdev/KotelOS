@@ -49,52 +49,65 @@ async (cmd = "", arg = "") => {
     return f;
   }
 
-  // где в файле заголовок, блок снимка и KT_BUNDLE: файл читается кусками по байту на символ (latin1),
-  // индексы - смещения в байтах. Блок снимка - последний перед KT_BUNDLE (bundle.py), его может не быть
-  async function scan(blob) {
-    const dec = new TextDecoder("latin1"), CH = 4 << 20, LAP = 128;
-    const marks = [["title", "<title>"], ["titleEnd", "</title>"], ["state", STATE], ["meta", META], ["metaEnd", END]];
-    const at = {};
-    let i = 0, pos = 0;
-    for (let off = 0; off < blob.size && i < marks.length; off += CH) {
-      const start = Math.max(0, off - LAP);
-      const text = dec.decode(new Uint8Array(await blob.slice(start, off + CH).arrayBuffer()));
-      while (i < marks.length) {
-        const [k, s] = marks[i], from = Math.max(0, pos - start);
-        const j = text.indexOf(s, from);
-        if (k === "state") {
-          const m = text.indexOf(META, from);
-          if (m >= 0 && (j < 0 || m < j)) {
-            at.state = start + m;
-            i++;
-            continue;
-          }
-        }
-        if (j < 0) break;
-        at[k] = start + j;
-        pos = start + j + s.length;
-        i++;
+  // где в файле заголовок, блок снимка и KT_BUNDLE. Файл - в хранилище браузера (Blob), читаются только
+  // нужные места кусками по 64 КБ, по байту на символ (latin1): индексы - смещения в байтах, а мелкие куски
+  // убирает сборка мусора молодого поколения, большие копились бы поверх снимка машины. Порядок от
+  // bundle.py: шаблон, мелкие части (wasm, bios), блок снимка, KT_BUNDLE, код страницы
+  const CH = 65536, LAP = 128, dec = new TextDecoder("latin1");
+  const read = async (blob, a, b) => dec.decode(new Uint8Array(await blob.slice(a, b).arrayBuffer()));
+  async function find(blob, needles, from) { // первая из строк после from: [индекс, какая] или [-1]
+    for (let off = from; off < blob.size; off += CH) {
+      const text = await read(blob, off, off + CH + LAP);
+      let best = [-1];
+      for (const s of needles) {
+        const i = text.indexOf(s);
+        if (i >= 0 && i < CH && (best[0] < 0 || i < best[0] - off)) best = [off + i, s];
       }
+      if (best[0] >= 0) return best;
     }
-    if (i < marks.length) throw new Error("это не файл KotelOS");
+    return [-1];
+  }
+  async function findLast(blob, s) {
+    for (let end = blob.size; end > 0; end -= CH) {
+      const a = Math.max(0, end - CH - LAP), i = (await read(blob, a, end)).lastIndexOf(s);
+      if (i >= 0) return a + i;
+    }
+    return -1;
+  }
+  async function scan(blob) {
+    const at = {};
+    at.title = (await find(blob, ["<title>"], 0))[0];
+    at.titleEnd = at.title < 0 ? -1 : (await find(blob, ["</title>"], at.title))[0];
+    // блока снимка нет (бандл только с ядром) - на его месте KT_BUNDLE
+    const [s, which] = at.titleEnd < 0 ? [-1] : await find(blob, [STATE, META], at.titleEnd);
+    at.state = s;
+    at.meta = which === META ? s : s < 0 ? -1 : await findLast(blob, META);
+    at.metaEnd = at.meta < 0 ? -1 : (await find(blob, [END], at.meta))[0];
+    if (Object.values(at).some((x) => x < 0) || at.meta < at.state) throw new Error("это не файл KotelOS");
     const meta = JSON.parse((await blob.slice(at.meta + META.length, at.metaEnd).text()).replace(/;\s*$/, ""));
     if (meta.id !== B.id) throw new Error("файл не от этой страницы" + (/^https?:$/.test(location.protocol) ? " - сайт обновился, открой страницу заново" : ""));
     return at;
   }
 
+  // base64 потоком, кусками по 48 КБ - кратно 3, так куски стыкуются без '=' (и мусор мелкий, см. выше)
   async function b64(blob) {
-    const parts = [], CH = 3 << 20; // кратно 3: куски base64 стыкуются без '='
-    for (let o = 0; o < blob.size; o += CH) {
-      const u = new Uint8Array(await blob.slice(o, o + CH).arrayBuffer());
-      let s;
-      if (u.toBase64) s = u.toBase64();
-      else {
-        let t = "";
-        for (let i = 0; i < u.length; i += 0x8000) t += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
-        s = btoa(t);
+    const parts = [], rd = blob.stream().getReader(), N = 49152;
+    const enc = (u) => u.toBase64 ? u.toBase64() : btoa(String.fromCharCode.apply(null, u));
+    let rest = new Uint8Array(0);
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      let u = value;
+      if (rest.length) {
+        u = new Uint8Array(rest.length + value.length);
+        u.set(rest);
+        u.set(value, rest.length);
       }
-      parts.push(new Blob([s]));
+      const n = u.length - (u.length % 3);
+      for (let o = 0; o < n; o += N) parts.push(new Blob([enc(u.subarray(o, Math.min(n, o + N)))]));
+      rest = u.slice(n);
     }
+    if (rest.length) parts.push(new Blob([enc(rest)]));
     return new Blob(parts);
   }
 

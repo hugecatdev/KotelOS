@@ -2193,7 +2193,8 @@
         memSize = image.mem;
         vgaSize = image.vga || VGA_OFF;
         // bundle.py кладёт zstd (его v86 разжимает сам), kt share в браузере - gzip
-        state = image.gz ? await gunzip(new Blob([take("state")])) : take("state").buffer;
+        state = take("state").buffer;
+        if (image.gz) state = await new Response(chunks(state).pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
         revs = image.revs || [];
         bootEnd();
         if (image.screen) term.write(image.screen);
