@@ -5,4 +5,4 @@
 --snap --vga 8 --mem 256 --worker
 --cmd startx
 --file bundles/xorg/xinitrc:/root/.xinitrc
-fun nano htop curl wget pack notify kt-ttyd xorg xeyes xcalc
+fun nano htop curl wget pack notify kt-share kt-ttyd xorg xeyes xcalc

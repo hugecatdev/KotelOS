@@ -11,5 +11,5 @@
 --cmd startx
 --file bundles/dwm/xinitrc:/root/.xinitrc
 --file bundles/dwm/logo.png:/usr/share/backgrounds/kotelos.png
-fun nano htop curl wget pack notify kt-ttyd xorg dwm st feh xsetroot neofetch
+fun nano htop curl wget pack notify kt-share kt-ttyd xorg dwm st feh xsetroot neofetch
 xcalc xeyes xclock xboard gnuchess mesa-utils mesa-demos
