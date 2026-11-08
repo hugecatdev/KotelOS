@@ -86,6 +86,9 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
     [screen.md](screen.md)).
   - `11-jit-threshold.patch` - порог компиляции страницы 400k вместо 200k: та же
     скорость, на 13-20% меньше процессора на фоновую компиляцию (Designer, CPython).
+  - `12-jit-fxhash.patch` - FxHash вместо SipHash в хеш-таблицах JIT (учёт нагрева
+    страниц на каждый запуск интерпретатора, анализ и сборка модулей): Designer
+    открывается на 12% быстрее, перерисовка -3.5%.
 
   Профили: `PROFILER=1 OUT=build/v86-prof scripts/build-v86.sh` - сборка со
   счётчиками JIT (в 2.6 раза медленнее), `python3 tests/jitprof.py БАНДЛ НАГРУЗКА` -

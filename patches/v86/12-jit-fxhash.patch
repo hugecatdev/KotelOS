@@ -1,0 +1,300 @@
+JIT: FxHash вместо SipHash в хеш-таблицах (jit.rs, control_flow.rs, wasm_builder.rs, cpu.rs)
+
+Ключи таблиц JIT - страницы, адреса, индексы модулей, метки - небольшие целые;
+SipHash стандартного HashMap защищает от подобранных ключей, которых здесь нет,
+и стоит дорого. Учёт нагрева страницы (jit_increase_hotness_and_maybe_compile:
+поиск страницы и вставка точки входа) идёт на каждый запуск интерпретатора: в
+профиле Designer (сборка без встраивания) hashbrown и hash_one - ~5%, ещё 2% -
+сама функция. Анализ страниц и сборка модуля при компиляции - тоже на таблицах.
+src/rust/fxhash.rs - хешер как в rustc-hash 2 (сложение, умножение, поворот в
+finish: hashbrown берёт номер корзины из младших бит), HashMap/HashSet с ним.
+
+Замер: два бандла Designer одновременно (одна нагрузка хоста), 4 пары: окно через
+11.1-11.4 с против 12.4-13.1 (-12%), тики запуска -9%, 14 смен размера окна -3.5%,
+процессор Chrome -2.5%.
+
+--- a/src/rust/control_flow.rs
++++ b/src/rust/control_flow.rs
+@@ -1,4 +1,4 @@
+-use std::collections::HashSet;
++use crate::fxhash::HashSet;
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::iter;
+ 
+@@ -125,7 +125,7 @@
+             }
+         }
+ 
+-        let mut result = HashSet::new();
++        let mut result = HashSet::default();
+         handle(self, edges, &mut result);
+         result
+     }
+@@ -202,7 +202,7 @@
+     }
+ 
+     let mut l = Vec::new();
+-    let mut visited = HashSet::new();
++    let mut visited = HashSet::default();
+     for &node in edges.keys() {
+         visit(node, edges, rev_edges, &mut visited, &mut l);
+     }
+@@ -225,7 +225,7 @@
+             }
+         }
+     }
+-    let mut assigned = HashSet::new();
++    let mut assigned = HashSet::default();
+     let mut assignment = Vec::new();
+     for &node in l.iter().rev() {
+         let mut group = Vec::new();
+@@ -407,7 +407,7 @@
+         }
+ 
+         {
+-            let replacement = HashSet::new();
++            let replacement = HashSet::default();
+             let children: Vec<HashSet<u32>> = cached_branches
+                 .splice(source..i, iter::once(replacement))
+                 .collect();
+--- a/src/rust/cpu/cpu.rs
++++ b/src/rust/cpu/cpu.rs
+@@ -23,7 +23,7 @@
+ use crate::softfloat;
+ use crate::state_flags::CachedStateFlags;
+ 
+-use std::collections::HashSet;
++use crate::fxhash::HashSet;
+ use std::ptr;
+ 
+ mod wasm {
+--- a/src/rust/fxhash.rs
++++ b/src/rust/fxhash.rs
+@@ -0,0 +1,42 @@
++//! FxHash (как rustc-hash 2): ключи JIT - страницы, адреса, индексы, метки - небольшие целые, а
++//! SipHash стандартного HashMap защищает от подобранных ключей, которых здесь нет. Учёт нагрева
++//! страниц идёт на каждый запуск интерпретатора: с SipHash это было ~5% времени Designer.
++
++use std::hash::{BuildHasherDefault, Hasher};
++
++const K: u64 = 0xf1357aea2e62a9c5;
++
++#[derive(Default, Clone, Copy)]
++pub struct FxHasher {
++    hash: u64,
++}
++
++impl FxHasher {
++    #[inline]
++    fn add(&mut self, word: u64) { self.hash = self.hash.wrapping_add(word).wrapping_mul(K); }
++}
++
++impl Hasher for FxHasher {
++    #[inline]
++    fn write(&mut self, bytes: &[u8]) {
++        for &b in bytes {
++            self.add(b as u64)
++        }
++    }
++    #[inline]
++    fn write_u8(&mut self, i: u8) { self.add(i as u64) }
++    #[inline]
++    fn write_u16(&mut self, i: u16) { self.add(i as u64) }
++    #[inline]
++    fn write_u32(&mut self, i: u32) { self.add(i as u64) }
++    #[inline]
++    fn write_u64(&mut self, i: u64) { self.add(i) }
++    #[inline]
++    fn write_usize(&mut self, i: usize) { self.add(i as u64) }
++    // старшие биты произведения перемешаны лучше младших: hashbrown берёт индекс из младших
++    #[inline]
++    fn finish(&self) -> u64 { self.hash.rotate_left(26) }
++}
++
++pub type HashMap<K, V> = std::collections::HashMap<K, V, BuildHasherDefault<FxHasher>>;
++pub type HashSet<K> = std::collections::HashSet<K, BuildHasherDefault<FxHasher>>;
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -1,4 +1,6 @@
+-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
++use std::collections::{BTreeMap, VecDeque};
++
++use crate::fxhash::{HashMap, HashSet};
+ use std::iter::FromIterator;
+ use std::mem::{self, MaybeUninit};
+ use std::ops::{Deref, DerefMut};
+@@ -223,14 +225,14 @@
+         JitState {
+             wasm_builder: WasmBuilder::new(),
+ 
+-            entry_points: HashMap::new(),
+-            pages: HashMap::new(),
++            entry_points: HashMap::default(),
++            pages: HashMap::default(),
+ 
+             wasm_table_index_free_list: Vec::from_iter(wasm_table_indices),
+             compiling: None,
+ 
+             #[cfg(debug_assertions)]
+-            wasm_table_index_to_page: HashMap::new(),
++            wasm_table_index_to_page: HashMap::default(),
+         }
+     }
+ }
+@@ -471,7 +473,7 @@
+                     Some(PageInfo { entry_points, .. }) => {
+                         HashSet::from_iter(entry_points.iter().map(|x| x.0))
+                     },
+-                    None => HashSet::new(),
++                    None => HashSet::default(),
+                 };
+ 
+                 if entry_points
+@@ -512,10 +514,10 @@
+     }
+ 
+     let mut to_visit_stack: Vec<i32> = Vec::new();
+-    let mut marked_as_entry: HashSet<i32> = HashSet::new();
++    let mut marked_as_entry: HashSet<i32> = HashSet::default();
+     let mut basic_blocks: BTreeMap<u32, BasicBlock> = BTreeMap::new();
+-    let mut pages: HashSet<Page> = HashSet::new();
+-    let mut page_blacklist = HashSet::new();
++    let mut pages: HashSet<Page> = HashSet::default();
++    let mut page_blacklist = HashSet::default();
+ 
+     // 16-bit doesn't work correctly, most likely due to instruction pointer wrap-around
+     let max_pages = if cpu.state_flags.is_32() { unsafe { MAX_PAGES } } else { 1 };
+@@ -859,7 +861,7 @@
+ 
+     let existing_entry_points = match ctx.pages.get(&page) {
+         Some(PageInfo { entry_points, .. }) => HashSet::from_iter(entry_points.iter().map(|x| x.0)),
+-        None => HashSet::new(),
++        None => HashSet::default(),
+     };
+ 
+     if entry_points
+@@ -900,7 +902,7 @@
+         .collect();
+     let basic_blocks = jit_find_basic_blocks(ctx, entry_points, cpu.clone());
+ 
+-    let mut pages = HashSet::new();
++    let mut pages = HashSet::default();
+ 
+     for b in basic_blocks.iter() {
+         // Remove this assertion once page-crossing jit is enabled
+@@ -1029,7 +1031,7 @@
+     );
+     dbg_assert!(!entries.is_empty());
+ 
+-    let mut page_info = HashMap::new();
++    let mut page_info = HashMap::default();
+     for &p in &pages {
+         page_info.entry(p).or_insert_with(|| PageInfo {
+             wasm_table_index,
+@@ -1039,7 +1041,7 @@
+         });
+         ctx.entry_points
+             .entry(p)
+-            .or_insert_with(|| (0, HashSet::new()));
++            .or_insert_with(|| (0, HashSet::default()));
+     }
+     for &(addr, state) in &entries {
+         let code = page_info.get_mut(&Page::page_of(addr)).unwrap();
+@@ -1117,7 +1119,7 @@
+             .insert(wasm_table_index, pages.keys().copied().collect());
+     }
+ 
+-    let mut check_for_unused_wasm_table_index = HashSet::new();
++    let mut check_for_unused_wasm_table_index = HashSet::default();
+ 
+     for (page, mut info) in pages {
+         dbg_assert!(info.state_flags == state_flags);
+@@ -1290,7 +1292,7 @@
+         result
+     };
+ 
+-    let mut index_for_addr = HashMap::new();
++    let mut index_for_addr = HashMap::default();
+     for (i, &addr) in entry_blocks.iter().enumerate() {
+         dbg_assert!(i < 0x10000);
+         index_for_addr.insert(addr, i as u16);
+@@ -1303,7 +1305,7 @@
+         }
+     }
+ 
+-    let mut label_for_addr: HashMap<u32, (Label, Option<u16>)> = HashMap::new();
++    let mut label_for_addr: HashMap<u32, (Label, Option<u16>)> = HashMap::default();
+ 
+     enum Work {
+         WasmStructure(WasmStructure),
+@@ -1880,7 +1882,7 @@
+                     codegen::gen_profiler_stat_increment(ctx.builder, stat::DISPATCHER_SMALL);
+                     let nexts: HashSet<u32> = next_addr
+                         .as_ref()
+-                        .map_or(HashSet::new(), |nexts| nexts.iter().copied().collect());
++                        .map_or(HashSet::default(), |nexts| nexts.iter().copied().collect());
+                     for &addr in &entries {
+                         if nexts.contains(&addr) {
+                             continue;
+@@ -1922,7 +1924,7 @@
+                     }
+                 }
+ 
+-                let mut olds = HashMap::new();
++                let mut olds = HashMap::default();
+                 for &target in entries.iter() {
+                     let index = if entries.len() == 1 {
+                         None
+@@ -1966,7 +1968,7 @@
+ 
+                 let targets = next_addr.clone().unwrap();
+                 let label = ctx.builder.block_void();
+-                let mut olds = HashMap::new();
++                let mut olds = HashMap::default();
+                 for &target in targets.iter() {
+                     let index = if targets.len() == 1 {
+                         None
+@@ -2171,7 +2173,7 @@
+     let (hotness, entry_points) = ctx.entry_points.entry(page).or_insert_with(|| {
+         cpu::tlb_set_has_code(page, true);
+         profiler::stat_increment(stat::RUN_INTERPRETED_NEW_PAGE);
+-        (0, HashSet::new())
++        (0, HashSet::default())
+     });
+ 
+     if !is_near_end_of_page(phys_address) {
+@@ -2384,7 +2386,7 @@
+ pub fn jit_clear_cache_js() { jit_clear_cache(&mut get_jit_state()) }
+ 
+ fn jit_clear_cache(ctx: &mut JitState) {
+-    let mut pages_with_code = HashSet::new();
++    let mut pages_with_code = HashSet::default();
+ 
+     for &p in ctx.entry_points.keys() {
+         pages_with_code.insert(p);
+--- a/src/rust/lib.rs
++++ b/src/rust/lib.rs
+@@ -1,5 +1,6 @@
+ #[macro_use]
+ mod dbg;
++mod fxhash;
+ 
+ #[macro_use]
+ mod paging;
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -1,4 +1,4 @@
+-use std::collections::HashMap;
++use crate::fxhash::HashMap;
+ use std::mem::transmute;
+ 
+ use crate::leb::{
+@@ -129,7 +129,7 @@
+ 
+             initial_static_size: 0,
+ 
+-            label_to_depth: HashMap::new(),
++            label_to_depth: HashMap::default(),
+             label_stack: Vec::new(),
+             next_label: Label::ZERO,
+ 
