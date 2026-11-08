@@ -1,17 +1,22 @@
-save.auto сохранять при сворачивании
-save.timer сохранять каждые N минут
-term.font размер шрифта
-term.family шрифт
-term.theme тема
-term.cursor курсор
+save.auto сохранять машину при сворачивании вкладки
+save.timer сохранять каждые N минут, 0 - нет
+term.font размер шрифта, px; на телефоне его меняет и щипок
+term.family шрифт: system, из kt font или с Google Fonts по имени
+term.theme тема, kt theme - с образцами
+term.render чем рисовать терминал: dom или canvas
+term.cursor курсор: block, bar, underline
 term.blink мигание курсора
-term.scroll прокрутка, строк
+term.scroll строк в прокрутке
 term.mobile интерфейс телефона
-keys.main раскладка
-keys.more раскладка под ⋯
-keys.open открыть ⋯
-keys.size размер кнопок
-boot.mem память, МБ
-boot.log лог загрузки
-boot.cmd команда при загрузке
-pkg.repo репозиторий
+keys.main кнопки под терминалом
+keys.more кнопки под ⋯
+keys.screen кнопки под экраном
+keys.open кнопки под ⋯ открыты; запоминает и сама кнопка ⋯
+keys.size размер подписей кнопок, px
+screen.scale экран X: точек страницы на его точку, auto или 0.25..4
+boot.mem память новой машины, МБ
+boot.vga видеопамять новой машины: off, on (8 МБ), 4, 8 или 16
+boot.log лог загрузки новой машины
+boot.cmd команда в новой машине
+boot.worker v86 в отдельном потоке со следующего открытия; не запустился - выключается сам
+pkg.repo откуда kt pkg берёт пакеты

@@ -16,7 +16,7 @@ try:
   return { size: m.size, bits: Array.from(m.data, (b) => (b ? "1" : "0")).join("") };
 }""", text, timeout=60)
 except kt.JSError as e:
-    print("qr: " + str(e).split(": ", 1)[-1], file=sys.stderr)
+    print("qr: %s" % e, file=sys.stderr)
     sys.exit(1)
 
 size, bits = r["size"], r["bits"]

@@ -186,7 +186,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
 
 `python3 tests/run.py` собирает два тестовых бандла (с python3, micropython,
 pack, sync, notify и маленький со снимком), поднимает локальный http-сервер и
-гоняет в headless Chromium 44 проверки, ~3.5 минуты: `kt js` во всех формах и из
+гоняет в headless Chromium проверки, ~3.5 минуты: `kt js` во всех формах и из
 фона, `kt.exec`, `kt.read`/`kt.write` с md5 и скоростью, `kt dl` (файл, папка,
 stdin), `kt up` через кнопку и сразу после Enter, буфер обмена, события,
 MicroPython, CPython в 8 потоков, `requests`/`curl`, alert/confirm/prompt,

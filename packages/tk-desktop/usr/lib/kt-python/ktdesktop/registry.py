@@ -1,29 +1,15 @@
 # реестр: ключи kt cfg таблицей - ключ, значение (правится на месте), описание, «↺» - вернуть умолчание.
 # Какие значения бывают у ключей, он не знает: тип берёт у текущего значения
-import os
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
 import kt
 
-from . import read
-from .entry import DATA_DIRS
 
-
-def descriptions():
-    """«ключ описание» из /usr/share/kt/cfg/*: kt - встроенные, пакеты кладут свои (ai)."""
-    out = {}
-    for base in reversed(DATA_DIRS):
-        try:
-            names = sorted(os.listdir(base + "/kt/cfg"))
-        except OSError:
-            continue
-        for n in names:
-            for line in read(base + "/kt/cfg/" + n).split("\n"):
-                k, _, d = line.strip().partition(" ")
-                if k:
-                    out[k] = d.strip()
-    return out
+def descriptions(vals):
+    """Описания из /usr/share/kt/cfg (kt.cfg.describe): ключи страницы (умолчание None) - только те, что она
+    знает, - экрана в сборке без VGA нет."""
+    return {k: d for k, (v, d) in kt.cfg.describe().items() if v is not None or k in vals}
 
 
 def show(v):
@@ -74,7 +60,7 @@ class Registry:
         except Exception as e:
             messagebox.showerror("Реестр", str(e), parent=self.w)
             self.vals = {}
-        descs = descriptions()
+        descs = descriptions(self.vals)
         for r in self.rows:
             for x in r:
                 x.destroy()

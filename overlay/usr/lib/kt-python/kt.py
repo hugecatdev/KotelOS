@@ -7,6 +7,10 @@ import time
 
 RUN = "/run/kt"
 PAGE = ("192.168.86.1", 7771)
+CFG = "/usr/share/kt/cfg"
+# как KT_WAIT в kt.sh: ответа ждём, пока соединение со страницей живо; машину восстановили посреди
+# запроса (сменился агент) - ответ ждётся ещё столько секунд, по соединению или файлом от агента
+WAIT = 30
 
 try:
     _ms, _diff, _sleep = time.ticks_ms, time.ticks_diff, time.sleep_ms
@@ -21,8 +25,12 @@ except AttributeError:
         time.sleep(ms / 1000)
 
 
-class JSError(Exception):
-    pass
+class Error(Exception):
+    """Страница ответила ошибкой или отменой - как код 1 у команд kt."""
+
+
+class JSError(Error):
+    """Ошибка в коде JavaScript."""
 
 
 def _b64(data):
@@ -31,11 +39,49 @@ def _b64(data):
     return binascii.b2a_base64(data).decode().replace("\n", "")
 
 
-def _request(verb, arg="", rid="-", body=b"", timeout=30):
+def _rid():
+    return str(random.getrandbits(24) + 1)
+
+
+def _take(path):
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        os.remove(path)
+        return data
+    except OSError:
+        return None
+
+
+def _until(path):
+    start = _ms()
+    while True:
+        data = _take(path)
+        if data is not None:
+            return data
+        if _diff(_ms(), start) > WAIT * 1000:
+            raise OSError("браузер не ответил")
+        _sleep(30)
+
+
+def _agent():
+    try:
+        with open(RUN + "/agent.pid") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _timedout(e):
+    t = getattr(socket, "timeout", None)
+    return (t is not None and isinstance(e, t)) or (bool(e.args) and e.args[0] in (11, 110))
+
+
+def _request(verb, arg="", body=b"", timeout=None):
+    """Запрос к странице; ответ - байты, первый - статус (0 - успех). timeout - общий предел, секунд."""
+    rid = _rid()
     s = socket.socket()
     try:
-        if timeout:
-            s.settimeout(timeout)
         try:
             s.connect(socket.getaddrinfo(PAGE[0], PAGE[1])[0][-1])
         except OSError:
@@ -45,106 +91,153 @@ def _request(verb, arg="", rid="-", body=b"", timeout=30):
             s.sendall(data)
         else:
             s.write(data)
-        out = []
+        s.settimeout(1)
+        agent, start, lost, out = _agent(), _ms(), None, []
         while True:
             try:
                 b = s.recv(65536)
-            except OSError:
-                raise OSError("браузер не ответил")
-            if not b:
+            except OSError as e:
+                if not _timedout(e):
+                    raise OSError("браузер не ответил")
+                b = None
+            if b:
+                out.append(b)
+                continue
+            if b is not None:
                 return b"".join(out)
-            out.append(b)
+            if lost is None and _agent() != agent:
+                lost = _ms()
+            if lost is not None:
+                r = _take("%s/reply.%s" % (RUN, rid))
+                if r is not None:
+                    return r
+                if _diff(_ms(), lost) > WAIT * 1000:
+                    raise OSError("браузер не ответил")
+            if timeout and _diff(_ms(), start) > timeout * 1000:
+                raise OSError("браузер не ответил за %d с" % timeout)
     finally:
         s.close()
 
 
-def _rid():
-    return str(random.getrandbits(24) + 1)
+def _status(r, cls=Error):
+    text = r[1:].decode()
+    if r[:1] == b"0":
+        return text[:-1] if text.endswith("\n") else text
+    text = text.strip()
+    if text.startswith("Error: "):
+        text = text[7:]
+    raise cls(text or "браузер не ответил")
 
 
-def _wait(path, timeout):
-    start = _ms()
-    while True:
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            os.remove(path)
-            return data
-        except OSError:
-            pass
-        if timeout and _diff(_ms(), start) > timeout * 1000:
-            raise OSError("браузер не ответил")
-        _sleep(30)
-
-
-def call(verb, arg="", timeout=30):
-    return _request(verb, arg, _rid(), timeout=timeout)
+def call(verb, arg="", timeout=None):
+    """Команда страницы (как kt_page в kt.sh): текст ответа, при ошибке или отмене - kt.Error."""
+    return _status(_request(verb, arg, timeout=timeout))
 
 
 def _upload(verb, arg, d):
+    """Файлы от страницы в каталог d (upload, paste, fetch): (пути, текст ошибки или "")."""
     try:
         os.remove(RUN + "/upload.done")
     except OSError:
         pass
     with open(RUN + "/upload.dir", "w") as f:
         f.write(d + "\n")
-    err = _request(verb, arg, _rid(), timeout=0)[1:].decode().strip()
+    r = _request(verb, arg)
+    done = _until(RUN + "/upload.done").decode()
     try:
-        done = _wait(RUN + "/upload.done", 5).decode()
-    except OSError:
-        done = ""
+        _status(r)
+        err = ""
+    except Error as e:
+        err = str(e)
     return [p for p in done.split("\n") if p], err
 
 
 def _receive(verb, arg=""):
     d = "%s/in.%s.d" % (RUN, _rid())
     os.mkdir(d)
-    paths, err = _upload(verb, arg, d)
     data = None
-    for name in os.listdir(d):
-        if data is None:
+    try:
+        paths, err = _upload(verb, arg, d)
+        for name in os.listdir(d):
             with open(d + "/" + name, "rb") as f:
                 data = f.read()
-        os.remove(d + "/" + name)
-    os.rmdir(d)
-    if data is None and err:
-        raise OSError(err)
-    return data
+            break
+    finally:
+        for name in os.listdir(d):
+            os.remove(d + "/" + name)
+        os.rmdir(d)
+    if err:
+        raise Error(err)
+    return data or b""
 
 
 def q(value):
     return json.dumps(value)
 
 
-def js(code, *args, timeout=30):
+def js(code, *args, timeout=None):
+    """Выполнить JS на странице, результат - через JSON. Ответа ждёт, сколько нужно; timeout - предел, секунд."""
     if args:
         code = "(%s)(%s)" % (code, ", ".join(q(a) for a in args))
-    r = call("jsjson", _b64(code), timeout)
-    body = r[1:].decode().strip()
-    if r[:1] != b"0":
-        raise JSError(body)
+    body = _status(_request("jsjson", _b64(code), timeout=timeout), JSError).strip()
     return json.loads(body) if body else None
 
 
 class Cfg:
+    """kt.cfg: как kt cfg. Ключи страницы - её умолчания, свои ключи пакетов - умолчания из их описаний."""
+
     def __call__(self, key=None, value=None):
         if key is None:
-            return js("kt.cfg()")
+            out = js("kt.cfg()")
+            for k, (v, _) in self.describe().items():
+                if v is not None and k not in out:
+                    out[k] = v
+            return out
         if value is not None:
             self[key] = value
         return self[key]
 
+    def describe(self):
+        """{ключ: (умолчание, описание)} из /usr/share/kt/cfg. У ключей страницы (файл kt) умолчание знает
+        она - здесь None; у ключа пакета - «ключ=умолчание» в его описании, без него - пустая строка."""
+        out = {}
+        try:
+            names = sorted(os.listdir(CFG))
+        except OSError:
+            return out
+        for n in (["kt"] if "kt" in names else []) + [n for n in names if n != "kt"]:
+            try:
+                with open(CFG + "/" + n) as f:
+                    lines = f.read().split("\n")
+            except OSError:
+                continue
+            for line in lines:
+                k, _, d = line.strip().partition(" ")
+                k, eq, v = k.partition("=")
+                if k and k not in out:
+                    out[k] = (None if n == "kt" else v, d.strip())
+        return out
+
+    def _default(self, key):
+        return self.describe().get(key, (None, ""))[0]
+
     def __getitem__(self, key):
         v = js("(k) => k in kt.cfg ? [kt.cfg[k]] : null", key)
-        if v is None:
+        if v is not None:
+            return v[0]
+        d = self._default(key)
+        if d is None:
             raise KeyError(key)
-        return v[0]
+        return d
 
     def __setitem__(self, key, value):
         try:
-            js("(k, v) => { kt.cfg[k] = v }", key, value)
+            if self._default(key) == str(value):
+                js("(k) => { delete kt.cfg[k] }", key)
+            else:
+                js("(k, v) => kt.cfg(k, v)", key, value)
         except JSError as e:
-            raise ValueError(str(e).replace("Error: ", ""))
+            raise ValueError(str(e))
 
     def __delitem__(self, key):
         if key not in self:
@@ -152,7 +245,7 @@ class Cfg:
         js("(k) => { delete kt.cfg[k] }", key)
 
     def __contains__(self, key):
-        return bool(js("(k) => k in kt.cfg", key))
+        return bool(js("(k) => k in kt.cfg", key)) or self._default(key) is not None
 
     def __iter__(self):
         return iter(self.keys())
@@ -186,13 +279,17 @@ def dl(data, name=None):
             data = f.read()
     if isinstance(data, str):
         data = data.encode()
-    _request("dl", _b64(name), _rid(), bytes(data), timeout=120)
+    _status(_request("dl", _b64(name), bytes(data)))
 
 
 def up(path="."):
+    """Файлы с устройства в каталог path: пути; отмена - kt.Error."""
     if path == ".":
         path = os.getcwd()
-    return _upload("upload", "", path)[0]
+    paths, err = _upload("upload", "", path)
+    if err:
+        raise Error(err)
+    return paths
 
 
 def copy(value):
@@ -200,26 +297,26 @@ def copy(value):
 
 
 def paste():
-    data = _receive("paste")
-    return data.decode() if data else ""
+    """Текст из буфера обмена; пустой буфер или отмена - kt.Error."""
+    return _receive("paste").decode()
 
 
 def notify(message="готово"):
     try:
         f = open("/usr/lib/kt-notify.js")
     except OSError:
-        raise JSError("kt.notify: нужен пакет notify (kt pkg add notify)")
+        raise Error("kt.notify: нужен пакет notify (kt pkg add notify)")
     with f:
-        js(f.read(), message, timeout=120)
+        js(f.read(), message)
 
 
 def save(name=""):
-    return call("save", _b64(name), timeout=120).decode().strip()
+    return call("save", _b64(name))
 
 
 def info():
     out = {}
-    for line in call("info").decode().split("\n"):
+    for line in call("info").split("\n"):
         if ": " in line:
             k, v = line.split(": ", 1)
             out[k] = v

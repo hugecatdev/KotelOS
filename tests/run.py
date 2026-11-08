@@ -456,7 +456,12 @@ def main():
         assert s.ok("kt js -f /tmp/f.js привет").strip() == "ПРИВЕТ"
         assert s.ok("echo '[1,2].length' | kt js").strip() == "2"
         code, out, err = s.sh("kt js 'throw new Error(\"бум\")'")
-        assert code == 1 and "бум" in err, (code, out, err)
+        assert (code, out, err) == (1, "", "kt js: бум\n"), (code, out, err)
+        # аргументы - только у функции: код, разбитый на слова, не склеивается молча
+        code, out, err = s.sh("kt js 1 + 2")
+        assert code == 1 and "только у функции" in err, (code, out, err)
+        code, out, err = s.sh("kt help nosuch")
+        assert code == 1 and "нет модуля nosuch" in err, (code, out, err)
         big = "x" * 100000
         assert s.ok("kt js '(s) => s.length' %s" % big).strip() == "100000"
 
@@ -644,8 +649,10 @@ def main():
         assert s.ev("__notes") == ["готово-тест"], s.ev("__notes")
 
     def pack():
-        out = s.ok("mkdir -p /tmp/p/a && echo 1 > /tmp/p/a/x && kt pack tp /tmp/p/a && rm -rf /tmp/p && kt unpack tp && cat /tmp/p/a/x && kt unpack tp /tmp/q && cat /tmp/q/a/x && kt pack rm tp")
-        assert out.count("1\n") >= 2, out
+        out = s.ok("mkdir -p /tmp/p/a && echo 1 > /tmp/p/a/x && kt pack tp /tmp/p/a && rm -rf /tmp/p && kt unpack tp && cat /tmp/p/a/x && kt unpack tp /tmp/q && cat /tmp/q/a/x && kt pack rm -y tp")
+        assert out.count("1\n") >= 2 and out.endswith("- tp\n"), out
+        code, out, err = s.sh("kt pack rm tp")
+        assert code == 1 and "нет архива tp" in err, (code, out, err)
 
     def sync():
         s.ev("""(async () => {
@@ -656,7 +663,7 @@ def main():
           await w.write('hello'); await w.close();
           window.showDirectoryPicker = async () => d;
         })()""")
-        s.start("kt sync /mnt/proj")
+        s.start("kt sync add /mnt/proj")
         time.sleep(1.5)
         if s.ev("$('#ask').classList.contains('open')"):
             s.click_ok()
@@ -666,7 +673,9 @@ def main():
         files = s.ev("""(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('proj'); const o = [];
           for await (const [n, h] of d.entries()) o.push(n + '=' + (await (await h.getFile()).text()).trim()); return o.sort().join(' ') })()""")
         assert files == "a.txt=changed b.txt=new", files
-        s.ok("kt sync -u /mnt/proj")
+        assert s.ok("kt sync").strip() == "/mnt/proj <- proj"
+        s.ok("kt sync rm /mnt/proj")
+        assert s.ok("kt sync").strip() == ""
 
     def wait_screen(text, timeout=60):
         t = time.time()
@@ -677,13 +686,31 @@ def main():
         raise AssertionError("на экране нет %r: %s" % (text, s.screen()[-300:]))
 
     def cfg_custom():
+        def rows():
+            # «* ключ значение  описание»: * - не по умолчанию
+            lst = re.sub(r"\x1b\[[0-9;]*m", "", s.ok("kt cfg"))
+            out = {}
+            for line in lst.splitlines():
+                f = line[2:].split(None, 2) + [""]
+                out[f[0]] = (line[0], f[1], f[2].strip())
+            return out
+
         assert s.ok("kt cfg ai.key test-key") == "test-key\n"
         assert s.ok("kt cfg boot.mem 128") == "128\n"
-        lst = re.sub(r"\x1b\[[0-9;]*m", "", s.ok("kt cfg"))
-        rows = [r.split(None, 2) for r in lst.splitlines()]
-        assert rows[0][:2] == ["save.auto", "on"] and ["ai.key", "test-key", "ключ API"] in rows, lst
-        assert ["ai.ctx", '""', "предел контекста, тыс. токенов"] in rows, lst
-        assert s.ok("kt cfg ai.key").strip() == "test-key"
+        assert s.ok("kt cfg term.scroll 100") == "100\n"
+        r = rows()
+        assert list(r)[0] == "save.auto" and r["save.auto"][:2] == (" ", "on"), r
+        assert r["ai.key"] == ("*", "test-key", "ключ API, хранится только в браузере"), r["ai.key"]
+        # умолчание ключа пакета - из его описания (ai.ctx=32), у изменённого ключа страницы - в скобках
+        assert r["ai.ctx"] == (" ", "32", "предел контекста, тыс. токенов"), r["ai.ctx"]
+        assert r["term.scroll"] == ("*", "100", "строк в прокрутке (5000)"), r["term.scroll"]
+        assert r["term.render"][2] and r["boot.worker"][2] and "screen.scale" not in r, r
+        assert s.ok("kt cfg ai.ctx") == "32\n"
+        code, out, err = s.sh("kt cfg rm")
+        assert code == 1 and "[y/N]" in err, (code, out, err)
+        assert s.ok("kt cfg rm -y") == "- term.scroll\n"
+        assert s.ok("kt cfg rm -y") == ""
+        assert s.ok("kt cfg ai.key").strip() == "test-key", "kt cfg rm задел свой ключ пакета"
         assert s.ok("kt js 'kt.cfg[\"ai.key\"]'").strip() == "test-key"
         code, out, err = s.sh("kt cfg x.y")
         assert (code, out, err) == (1, "", ""), (code, out, err)
@@ -694,7 +721,8 @@ def main():
         assert s.ok("kt cfg x.y") == "a  b\n"
         out = s.ok("micropython -c 'import kt; print(kt.cfg[\"x.y\"]); kt.cfg[\"x.z\"] = 5; print(kt.cfg[\"x.z\"], \"x.q\" in kt.cfg)'")
         assert out == "a  b\n5 False\n", repr(out)
-        s.ok("kt cfg -r x.y && kt cfg x.z ''")
+        assert s.ok("kt cfg rm x.y x.q") == "- x.y\n"
+        s.ok("kt cfg x.z ''")
         assert "x." not in s.ok("kt cfg")
 
     def ai_tool():
@@ -706,7 +734,7 @@ def main():
         out = s.ok("echo 123 | ai 'скажи'", 120)
         assert out.strip() == "эхо mock: скажи  123", out
         code, out, err = s.sh("kt cfg ai.auto off >/dev/null && ai 'выполни команду'", 120)
-        s.ok("kt cfg ai.auto ''")
+        s.ok("kt cfg rm ai.auto")
         assert code == 1 and "ai.auto on" in err, (code, out, err)
         assert s.ok("ai -l").split() == ["*", "mock", "other"]
         s.ok("mkdir -p /tmp/pj/.ai/skills/demo && echo 'Проект X' > /tmp/pj/AGENTS.md")
@@ -729,7 +757,7 @@ def main():
             code, out, err = s.sh("ai 'выполни команду'", 120)
         finally:
             Server.ai_tokens = 0
-            s.ok("kt cfg ai.ctx ''")
+            s.ok("kt cfg rm ai.ctx")
         assert code == 0 and "сжат" in err, (code, out, err)
         packed = Server.ai_log[-2]
         assert "tools" not in packed and "User: выполни команду" in packed["messages"][1]["content"], packed
@@ -773,7 +801,9 @@ def main():
         s.ev("send('\\x04')")
         time.sleep(1)
         assert s.ok("kt cfg ai.model").strip() == "mock"
-        assert s.sh("kt cfg ai.effort")[0] == 1
+        # описанный ключ пакета без умолчания: пустая строка, а на странице ключа нет
+        assert s.ok("kt cfg ai.effort") == ""
+        assert s.ok("kt js 'kt.cfg[\"ai.effort\"] === undefined'").strip() == "true"
 
     def pip_shim():
         idx = "-i %spypi" % base
@@ -859,10 +889,10 @@ def main():
         assert "ktuser нужен для kttop" in err and "- " not in out, (out, err)
         for answer in ("", "echo n | "):
             code, out, err = s.sh(answer + "kt pkg rm -c kta")
-            assert code == 1 and out.startswith("удалить kta? [y/N] ") and "- " not in out, (code, out, err)
+            assert code == 1 and err.startswith("удалить kta? [y/N] ") and "- " not in out, (code, out, err)
             assert s.sh("ls /var/lib/kt/pkg/kta")[0] == 0, "kta удалён без согласия"
-        out = s.ok("echo y | kt pkg rm -c kta")
-        assert out == "удалить kta? [y/N] - kta\n", "ktuser хватает ktb, а удалено: " + out
+        code, out, err = s.sh("echo y | kt pkg rm -c kta")
+        assert (code, out, err) == (0, "- kta\n", "удалить kta? [y/N] "), "ktuser хватает ktb, а удалено: %r" % ((code, out, err),)
         assert gone("kt pkg rm -cy ktb") == ["ktb", "ktuser", "kttop"]
         assert "/bin/busybox" in s.ok("kt pkg files base"), "каскад задел base"
 
@@ -901,7 +931,9 @@ def main():
         assert Server.ai_log[-1]["messages"][1]["content"] == "выполни команду", Server.ai_log[-1]["messages"][1]
         s.ev("send('/auto\\r')")
         wait_screen("без подтверждения")
-        assert s.sh("kt cfg ai.auto")[0] == 1
+        # on - объявленное умолчание (ai.auto=on): ключ снят, а не записан
+        assert s.ok("kt cfg ai.auto") == "on\n"
+        assert s.ok("kt js 'kt.cfg[\"ai.auto\"] === undefined'").strip() == "true"
         s.ev("send('/he\\t\\r')")
         wait_screen("системный промпт")
         s.ev("send('!echo hi-$((1+1))\\r')")
@@ -915,8 +947,13 @@ def main():
         time.sleep(2)
         assert len(Server.ai_log) == n + 2 and Server.ai_log[-1]["messages"] == Server.ai_log[-2]["messages"]
         s.ev("send('/copy\\r')")
-        time.sleep(1)
-        assert "скопировано" in s.screen() or "Копировать" in s.screen(), s.screen()[-200:]
+        # без жеста браузер просит подтвердить: kt.copy ждёт кнопку «Копировать» внизу страницы
+        t = time.time()
+        while "скопировано" not in s.screen() and time.time() - t < 5:
+            if s.ev("$('#toast').classList.contains('open')"):
+                s.ev("$('#toast button').click()")
+            time.sleep(0.3)
+        wait_screen("скопировано", 10)
         s.ev("send('/ctx\\r')")
         wait_screen("контекст ~")
         s.ev("send('/nope\\r')")
@@ -943,6 +980,20 @@ def main():
         assert s.ok("kt js 1+1").strip() == "2"
         return "восстановление %.1f с" % t
 
+    def snap_rules():
+        # ошибка и отмена - код 1: kt export без снимка, kt load/reset без -y и без ответа
+        code, out, err = s.sh("kt export nosuch")
+        assert (code, out, err) == (1, "", "kt export: нет снимка nosuch\n"), (code, out, err)
+        for cmd in ("kt load", "kt reset", "kt save 'bad name'"):
+            code, out, err = s.sh(cmd)
+            assert code == 1 and not out, (cmd, code, out, err)
+        assert "сохранён" in s.ok("kt save tsnap", 120)
+        assert "tsnap" in s.ok("kt snap")
+        code, out, err = s.sh("kt snap rm tsnap nosuch")
+        assert code == 1 and "нет снимка nosuch" in err and "[y/N]" not in err, (code, out, err)
+        assert s.ok("kt snap rm -y tsnap") == "- tsnap\n"
+        assert "tsnap" not in s.ok("kt snap")
+
     def reset():
         s.typed("kt reset -y")
         time.sleep(2)
@@ -965,7 +1016,9 @@ def main():
         assert "save: нет" in s.ok("kt info"), "сохранение осталось"
         for k, v in want.items():
             assert s.ok("kt cfg " + k.replace("_", ".")).strip() == v, k
-        assert s.sh("kt cfg test.key")[0] == 1, "свой ключ остался"
+        # как kt cfg rm: сбрасываются ключи страницы, свои ключи пакетов (ai.key) остаются
+        assert s.ok("kt cfg test.key").strip() == "1", "свой ключ пропал"
+        s.ok("kt cfg rm test.key")
 
     def secret_reset():
         s.ok("kt cfg term.theme amber && kt cfg test.key 1 && kt save")
@@ -1266,7 +1319,7 @@ def main():
         ("chawan", chawan), ("в /run/kt нет мусора", run_clean),
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
-        ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("kt reset", reset),
+        ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("снимки и коды выхода", snap_rules), ("kt reset", reset),
         ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]

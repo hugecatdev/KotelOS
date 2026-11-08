@@ -1,7 +1,9 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без имени  текущее сохранение
-name       снимок
-формат файла: .v86state.gz'
-kt_meta "[name]" "сохранение в файл" "$@"
-kt_call export "$(kt_b64 "$1")"
+KT_HELP='без аргументов  сохранение
+<name>  снимок
+файл .v86state.gz - в загрузки браузера, обратно - kt import'
+kt_meta "[<name>]" "сохранение в файл" "$@"
+[ $# -le 1 ] || kt_usage "[<name>]"
+[ -z "$1" ] || kt_name "$1"
+kt_page export "$(kt_b64 "$1")"

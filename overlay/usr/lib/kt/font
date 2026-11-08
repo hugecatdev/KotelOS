@@ -1,10 +1,11 @@
 #!/bin/sh
 . /usr/lib/kt.sh
 KT_CONSOLE=1
-KT_HELP='без аргументов  список шрифтов и текущий размер
-name            имя из списка или имя шрифта Google Fonts
-size            размер, от 8 до 32'
-kt_meta "[name] [size]" "шрифт" "$@"
+KT_HELP='без аргументов  шрифты и размер
+<name>  шрифт из списка или любой с Google Fonts по имени, как kt cfg term.family
+<size>  размер, 8..32, как kt cfg term.font
+можно вместе: kt font jetbrains 15'
+kt_meta "[<name>] [<size>]" "шрифт" "$@"
 name= size=
 for a in "$@"; do
   case $a in
@@ -13,15 +14,8 @@ for a in "$@"; do
   esac
 done
 if [ -z "$name$size" ]; then
-  kt_send font ""
-  kt_status
+  kt_page font ""
   exit
 fi
-if [ -n "$name" ]; then
-  kt_send font "$(kt_b64 "$name")"
-  kt_status || exit 1
-fi
-if [ -n "$size" ]; then
-  kt_send cfg "$(kt_b64 "set term.font $size")"
-  kt_status > /dev/null || exit 1
-fi
+[ -z "$name" ] || kt_page cfg "$(kt_b64 "set term.family $name")" > /dev/null || exit 1
+[ -z "$size" ] || kt_page cfg "$(kt_b64 "set term.font $size")" > /dev/null

@@ -1,7 +1,7 @@
-ai.url адрес API, совместимого с OpenAI
-ai.key ключ API
+ai.url=https://api.openai.com/v1 адрес API, совместимого с OpenAI
+ai.key ключ API, хранится только в браузере
 ai.model модель
-ai.effort уровень рассуждения
-ai.auto off - подтверждать команды
-ai.api протокол: chat или responses
-ai.ctx предел контекста, тыс. токенов
+ai.effort уровень рассуждения: none, minimal, low, medium, high, xhigh
+ai.auto=on команды и правки без подтверждения: on или off
+ai.api протокол: chat или responses, без значения выбирается сам
+ai.ctx=32 предел контекста, тыс. токенов

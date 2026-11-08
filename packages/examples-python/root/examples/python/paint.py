@@ -74,9 +74,9 @@ try:
     last = p;
   };
   c.onpointerup = () => { last = null; };
-}""", path, exists, timeout=60)
+}""", path, exists)
 except kt.JSError as e:
-    print("paint: " + str(e).split(": ", 1)[-1], file=sys.stderr)
+    print("paint: %s" % e, file=sys.stderr)
     sys.exit(1)
 
 for ev in kt.events():

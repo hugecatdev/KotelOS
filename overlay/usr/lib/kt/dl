@@ -1,32 +1,30 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='file...  файлы
-dir      каталог, упаковывается в .tar.gz
-name     имя файла для данных из stdin'
-kt_meta "<file|dir>..." "файл в браузер" "$@"
+KT_HELP='<file>...  файлы
+<dir>  каталог, упаковывается в имя.tar.gz
+<name>  имя для данных из stdin: команда | kt dl name, по умолчанию output.txt'
+kt_meta "<file | dir>... | <name>" "файл из машины в загрузки браузера" "$@"
 
 send() {
-  { printf 'dl %s - %s\n' "$KT_ID" "$(kt_b64 "$1")"; cat; } | kt-net $KT_PAGE > /dev/null || {
-    echo "kt dl: нет связи с браузером" >&2
-    return 1
-  }
+  kt_send dl "$(kt_b64 "$1")" -
+  kt_status
 }
 
 if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ ! -e "$1" ] && [ ! -t 0 ]; }; then
-  [ -t 0 ] && kt_usage "<file|dir>..."
+  [ -t 0 ] && kt_usage "<file | dir>... | <name>"
   send "${1:-output.txt}"
-  exit 0
+  exit
 fi
 
 rc=0
 for f in "$@"; do
   if [ -d "$f" ]; then
     n=$(basename "$(realpath "$f")")
-    tar -czf - -C "$(dirname "$(realpath "$f")")" "$n" 2>/dev/null | send "$n.tar.gz"
+    tar -czf - -C "$(dirname "$(realpath "$f")")" "$n" 2>/dev/null | send "$n.tar.gz" || rc=1
   elif [ -f "$f" ]; then
-    send "$(basename "$f")" < "$f"
+    send "$(basename "$f")" < "$f" || rc=1
   else
-    echo "kt dl: нет файла $f" >&2
+    kt_err "нет файла $f"
     rc=1
   fi
 done

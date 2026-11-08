@@ -1,21 +1,18 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='удаляет сохранение текущего бандла, снимки сохраняются
--y  без подтверждения
--b  загрузка с ядра вместо встроенного снимка'
+KT_HELP='без аргументов  удалить сохранение бандла и начать со встроенного снимка; снимки остаются
+-b  начать с ядра, а не со встроенного снимка
+-y  без вопроса'
 kt_meta "[-y] [-b]" "новая машина" "$@"
 y= b=
-for a; do
-  case $a in
-    -y) y=1 ;;
-    -b) b=boot ;;
+while getopts :yb o; do
+  case $o in
+    y) y=1 ;;
+    b) b=boot ;;
     *) kt_usage "[-y] [-b]" ;;
   esac
 done
-if [ -z "$y" ]; then
-  printf 'удалить сохранение и перезагрузить? [y/N] '
-  read -r a
-  case "$a" in y|Y|yes|д|Д|да) ;; *) exit 1 ;; esac
-fi
-kt_send new "$(kt_b64 "$b")"
-kt_status
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || kt_usage "[-y] [-b]"
+[ -n "$y" ] || kt_ask "удалить сохранение и начать новую машину?" || exit 1
+kt_page new "$(kt_b64 "$b")"

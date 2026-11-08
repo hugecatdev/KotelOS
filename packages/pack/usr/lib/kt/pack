@@ -1,59 +1,65 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  список архивов
-name path...    упаковка файлов и каталогов в архив name
-rm name         удаление архива
-dl name         скачивание архива в .tar.gz'
-kt_meta "[name path... | rm name | dl name]" "файлы в браузер" "$@"
+KT_HELP='без аргументов  архивы: имя, когда, размер, сколько файлов, откуда
+<name> <path>...  упаковать файлы и каталоги в архив name; rm и dl - не имена
+rm [-y] <name>...  удалить архивы
+dl <name>  скачать архив в загрузки браузера как name.tar.gz
+архивы лежат в браузере, их видит любая машина этого сайта; распаковать - kt unpack'
+kt_meta "[<name> <path>... | rm [-y] <name>... | dl <name>]" "архивы в хранилище браузера" "$@"
 H=$(cat /usr/lib/kt-pack.js)
-
-size() {
-  awk -v n="$1" 'BEGIN { if (n < 1048576) printf "%d КБ\n", (n + 1023) / 1024; else printf "%.1f МБ\n", n / 1048576 }'
-}
-
-fail() {
-  echo "kt pack: ${1#Error: }" >&2
-  exit 1
-}
 
 case "$1" in
   "")
-    r=$(kt js "async () => { $H
-      return (await list()).map((p) => [p.name, new Date(p.created).toLocaleString('ru', { dateStyle: 'short', timeStyle: 'short' }), p.blob.size, p.files, p.origin].join('\t')).join('\n') }" 2>&1) || fail "$r"
+    r=$(kt_js "async () => { $H
+      return (await list()).map((p) => [p.name, new Date(p.created).toLocaleString('ru', { dateStyle: 'short', timeStyle: 'short' }), p.blob.size, p.files, p.origin].join('\t')).join('\n') }") || exit 1
     printf '%s\n' "$r" | while IFS="$(printf '\t')" read -r n d s f o; do
-      [ -n "$n" ] && printf '%-12s %-18s %8s  %s из %s\n' "$n" "$d" "$(size "$s")" "$(kt_files "$f")" "$o"
+      [ -n "$n" ] && printf '%-12s %-18s %8s  %s из %s\n' "$n" "$d" "$(kt_size "$s")" "$(kt_files "$f")" "$o"
     done
-    exit ;;
+    exit 0 ;;
   rm)
-    [ -n "$2" ] || kt_usage "rm <name>"
-    r=$(kt js "async (n) => { $H
-      await get(n); await del(n) }" "$2" 2>&1) || fail "$r"
-    echo "$2 удалён"
-    exit ;;
+    shift
+    y=
+    while getopts :y o; do
+      case $o in
+        y) y=1 ;;
+        *) kt_usage "rm [-y] <name>..." ;;
+      esac
+    done
+    shift $((OPTIND - 1))
+    [ $# -gt 0 ] || kt_usage "rm [-y] <name>..."
+    for n; do kt_name "$n"; done
+    kt_js "async (...names) => { $H
+      for (const n of names) await get(n) }" "$@" > /dev/null || exit 1
+    [ -n "$y" ] || kt_ask "удалить архивы $*?" || exit 1
+    rc=0
+    for n; do
+      kt_js "async (n) => { $H
+        await get(n); await del(n) }" "$n" > /dev/null && echo "- $n" || rc=1
+    done
+    exit $rc ;;
   dl)
-    [ -n "$2" ] || kt_usage "dl <name>"
-    r=$(kt js "async (n) => { $H
+    [ $# -eq 2 ] || kt_usage "dl <name>"
+    kt_name "$2"
+    kt_js "async (n) => { $H
       const a = document.createElement('a');
       a.href = URL.createObjectURL((await get(n)).blob);
       a.download = n + '.tar.gz';
       a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000) }" "$2" 2>&1) || fail "$r"
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000) }" "$2" > /dev/null || exit 1
     echo "скачиваю $2.tar.gz"
     exit ;;
 esac
 name=$1
 shift
 [ $# -gt 0 ] || kt_usage "<name> <path>..."
-case $name in
-  *[!A-Za-z0-9._-]*) echo "kt pack: имя - буквы, цифры, . _ -" >&2; exit 1 ;;
-esac
+kt_name "$name"
 L=$KT_RUN/pack.$$
 trap 'rm -f "$L" "$L.rel" "$L.tgz"' EXIT
 : > "$L"
 for p in "$@"; do
   a=$(realpath "$p" 2>/dev/null)
-  [ -n "$a" ] && [ -e "$a" ] || { echo "kt pack: нет $p" >&2; exit 1; }
-  [ "$a" = / ] && { echo "kt pack: / целиком не упаковать" >&2; exit 1; }
+  [ -n "$a" ] && [ -e "$a" ] || kt_die "нет $p"
+  [ "$a" = / ] && kt_die "/ целиком не упаковать"
   echo "$a" >> "$L"
 done
 parent=$(awk -F/ '{
@@ -67,6 +73,6 @@ while IFS= read -r a; do
 done < "$L" > "$L.rel"
 tar -czf "$L.tgz" -C "$parent" -T "$L.rel" || exit 1
 n=$(tar -tzf "$L.tgz" | grep -vc '/$')
-r=$(kt js "async (n, p, o, c) => { $H
-  await put(n, { blob: new Blob([await kt.read(p)]), origin: o, files: +c, created: Date.now() }) }" "$name" "$L.tgz" "$parent" "$n" 2>&1) || fail "$r"
-echo "$name: $(kt_files "$n"), $(size "$(wc -c < "$L.tgz")")"
+kt_js "async (n, p, o, c) => { $H
+  await put(n, { blob: new Blob([await kt.read(p)]), origin: o, files: +c, created: Date.now() }) }" "$name" "$L.tgz" "$parent" "$n" > /dev/null || exit 1
+echo "$name: $(kt_files "$n"), $(kt_size "$(wc -c < "$L.tgz")")"

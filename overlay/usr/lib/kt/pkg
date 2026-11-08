@@ -1,17 +1,15 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  установленное
-search word     поиск по имени и описанию в репозитории и Alpine
-search -r word  поиск только в репозитории
-name...         состав и размер установки
-add name...     установка с зависимостями из репозитория или Alpine
-add -q name...  установка без вывода
-rm name...      удаление, зависимости остаются
-rm -d name...   удаление с неиспользуемыми зависимостями
-rm -c name...   удаление вместе с пакетами, которым он нужен
-rm -y name...   удаление без вопроса
-files name...   файлы установленного пакета'
-kt_meta "[search|add|rm|files] [name...]" "пакеты" "$@"
+KT_HELP='без аргументов  что установлено (без зависимостей): скачать и в памяти - вместе с ними
+<name>...  что поставится и сколько займёт
+search [-r] <word>  поиск по имени и описанию в репозитории и Alpine; -r - только в репозитории
+add [-q] <name>...  установка с зависимостями из репозитория или Alpine; -q - без вывода
+rm [-y] <name>...  удаление, зависимости остаются; -y - без вопроса
+rm -d <name>...  удаление вместе с зависимостями, которые больше никому не нужны
+rm -c <name>...  удаление вместе с пакетами, которым он нужен
+files <name>...  файлы установленного пакета
+репозиторий - kt cfg pkg.repo, на одну команду - KT_REPO=адрес kt pkg ...'
+kt_meta "[<name>... | search | add | rm | files]" "пакеты" "$@"
 REPO=${KT_REPO:-$(kt cfg pkg.repo 2>/dev/null)}
 REPO=${REPO:-/repo}
 DB=/var/lib/kt/pkg
@@ -37,7 +35,7 @@ index() {
     mv $IDX.new $IDX
   elif [ ! -s $IDX ]; then
     clr
-    echo "kt pkg: нет $REPO/index.txt" >&2
+    kt_err "нет $REPO/index.txt"
     exit 1
   fi
 }
@@ -132,7 +130,7 @@ want() {
 
 check() {
   bad=$(echo "$1" | sed -n 's/^?//p')
-  [ -z "$bad" ] || { clr; echo "kt pkg: нет пакета" $bad >&2; exit 1; }
+  [ -z "$bad" ] || { clr; kt_die "нет пакета" $bad; }
 }
 
 total() {
@@ -162,7 +160,7 @@ apk() {
       return 0
     fi
     case "$e" in
-      *"fetch: 404"*) live=1 ;;
+      *": 404"*) live=1 ;;
       *) DEAD="$DEAD $m"; continue ;;
     esac
     i=$T.i.$(echo "$m/$d" | tr -c 'a-zA-Z0-9\n' _)
@@ -179,7 +177,7 @@ apk() {
 
 fail() {
   if [ -n "$q" ]; then clr; else printf '\r!\n'; fi
-  if [ "$2" = 2 ]; then echo "kt pkg: Alpine недоступен" >&2; else echo "kt pkg: не скачать $1" >&2; fi
+  if [ "$2" = 2 ]; then kt_err "Alpine недоступен"; else kt_err "не скачать $1"; fi
   exit 1
 }
 
@@ -221,8 +219,14 @@ case "$1" in
   search)
     shift
     r=
-    [ "$1" = -r ] && r=1 && shift
-    [ -n "$1" ] || kt_usage "search [-r] <word>"
+    while getopts :r opt; do
+      case $opt in
+        r) r=1 ;;
+        *) kt_usage "search [-r] <word>" ;;
+      esac
+    done
+    shift $((OPTIND - 1))
+    [ $# -eq 1 ] && [ -n "$1" ] || kt_usage "search [-r] <word>"
     index
     if [ -z "$r" ] && alpine; then ALP=1; fi
     installed | awk -F'\t' -v w="$(width)" -v s="$1" "$H$U"'
@@ -240,7 +244,13 @@ case "$1" in
     ' - $(files) ;;
   add)
     shift
-    [ "$1" = -q ] && q=1 && shift
+    while getopts :q opt; do
+      case $opt in
+        q) q=1 ;;
+        *) kt_usage "add [-q] <name>..." ;;
+      esac
+    done
+    shift $((OPTIND - 1))
     [ $# -gt 0 ] || kt_usage "add [-q] <name>..."
     index
     want "$@"
@@ -288,18 +298,17 @@ case "$1" in
   rm)
     shift
     d= c= y=
-    while :; do
-      case "$1" in
-        -[cdy]|-[cdy][cdy]|-[cdy][cdy][cdy])
-          case "$1" in *c*) c=1 ;; esac
-          case "$1" in *d*) d=1 ;; esac
-          case "$1" in *y*) y=1 ;; esac ;;
-        *) break ;;
+    while getopts :cdy opt; do
+      case $opt in
+        c) c=1 ;;
+        d) d=1 ;;
+        y) y=1 ;;
+        *) kt_usage "rm [-cdy] <name>..." ;;
       esac
-      shift
     done
-    [ $# -gt 0 ] || kt_usage "rm [-c] [-d] [-y] <name>..."
-    case " $* " in *" $BASE "*) echo "kt pkg: $BASE удалить нельзя, это сама система" >&2; exit 1 ;; esac
+    shift $((OPTIND - 1))
+    [ $# -gt 0 ] || kt_usage "rm [-cdy] <name>..."
+    case " $* " in *" $BASE "*) kt_die "$BASE удалить нельзя, это сама система" ;; esac
     cut -f1 $IDX > /tmp/.kt-pkg.$$.idx 2>/dev/null
     if [ -s $AIDX ] || ls $DB | grep -qvxF -f /tmp/.kt-pkg.$$.idx; then alpine > /dev/null 2>&1 && ALP=1; fi
     rm -f /tmp/.kt-pkg.$$.idx
@@ -363,9 +372,7 @@ case "$1" in
     echo "$list" | sed -n 's/^?\(.*\)/kt pkg: \1 не установлен/p; s/^!\([^ ]*\) /kt pkg: \1 нужен для /p' >&2
     gone=$(echo "$list" | sed -n 's/^-//p')
     if [ -n "$gone" ] && [ -z "$y" ]; then
-      printf 'удалить %s? [y/N] ' "$(echo $gone)"
-      read -r a || echo
-      case "$a" in y|Y|yes|д|Д|да) ;; *) exit 1 ;; esac
+      kt_ask "удалить $(echo $gone)?" || exit 1
     fi
     for p in $gone; do
       others=$(ls $DB | grep -vx "$p" | sed "s|^|$DB/|")
@@ -385,12 +392,12 @@ case "$1" in
     shift
     [ $# -gt 0 ] || kt_usage "files <name>..."
     for p in "$@"; do
-      [ -f "$DB/$p" ] || { echo "kt pkg: $p не установлен" >&2; exit 1; }
+      [ -f "$DB/$p" ] || kt_die "$p не установлен"
     done
     for p in "$@"; do
       sed -n '/\/$/!s|^|/|p' "$DB/$p"
     done ;;
-  -*) kt_usage "[search|add|rm|files] [name...]" ;;
+  -*) kt_usage "[<name>... | search | add | rm | files]" ;;
   *)
     index
     want "$@"

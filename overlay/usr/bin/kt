@@ -2,21 +2,21 @@
 KT=/usr/lib/kt
 
 # модуль со строкой KT_CONSOLE=1 - про вид консолей страницы (тема, шрифт); в X (DISPLAY) они под
-# экраном, и список такие модули не показывает. По имени они работают как всегда
+# экраном, и список такие модули не показывает. По имени они работают как всегда.
+# В списке - имя и описание, аргументы - в kt help <модуль>
 list() {
-  w=$(stty size 2>/dev/null | cut -d" " -f2)
-  awk -F'"' -v w="${w:-80}" -v x11="${DISPLAY:+1}" 'FNR == 1 { con = 0 }
+  awk -F'"' -v x11="${DISPLAY:+1}" '
+  FNR == 1 { con = 0 }
   /^KT_CONSOLE=1/ { con = 1 }
   /^kt_meta "/ {
     n = FILENAME; sub(".*/", "", n)
-    if (con && x11) nextfile
-    if (w >= 60) printf "* \033[1m%-7s\033[0m %-22s \033[90m%s\033[0m\n", n, $2, $4
-    else printf "* \033[1m%-7s\033[0m %s \033[90m%s\033[0m\n", n, $2, $4
+    if (!(con && x11)) printf "* \033[1m%-7s\033[0m %s\n", n, $4
     nextfile
   }' "$KT"/*
   for m in $(grep -L '^kt_meta "' "$KT"/* 2>/dev/null); do
-    [ -x "$m" ] && printf '* \033[1m%-7s\033[0m %s\n' "${m##*/}" "$("$m" --about 2>/dev/null)"
+    [ -x "$m" ] && printf '* \033[1m%s\033[0m %s\n' "${m##*/}" "$("$m" --about 2>/dev/null)"
   done
+  printf '\n\033[90mkt help <модуль> - подробно\033[0m\n'
 }
 
 version() {
@@ -26,7 +26,10 @@ version() {
 
 case "$1" in
   ""|help|-h|--help)
-    if [ -n "$2" ] && [ -x "$KT/$2" ]; then exec "$KT/$2" --help; fi
+    if [ -n "$2" ]; then
+      [ -x "$KT/$2" ] || { echo "kt: нет модуля $2 (kt - список)" >&2; exit 1; }
+      exec "$KT/$2" --help
+    fi
     printf '\033[1m'
     version
     printf '\033[0m\n'
@@ -35,6 +38,6 @@ case "$1" in
   *)
     m=$1
     shift
-    [ -x "$KT/$m" ] || { echo "kt: нет модуля $m" >&2; exit 1; }
+    [ -x "$KT/$m" ] || { echo "kt: нет модуля $m (kt - список)" >&2; exit 1; }
     exec "$KT/$m" "$@" ;;
 esac
