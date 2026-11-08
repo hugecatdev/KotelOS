@@ -4,6 +4,8 @@
  * СЕКУНД меняет его размер каждые 0.5 с (перекладка и перерисовка всего окна) и печатает тики
  * процессора каждого PID за запуск и за перерисовку, а также всей машины (user/system/idle).
  *   xresize ИМЯ СЕКУНД PID...   (ИМЯ - часть WM_CLASS без учёта регистра)
+ * XRESIZE_STEP=мс - шаг смены размера (по умолчанию 500); с шагом больше времени перерисовки тики
+ * программы - её работа, а не всё время
  */
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -143,6 +145,8 @@ int main(int argc, char **argv)
    cpu(cb);
    report("запуск", np, pid, a, b, ca, cb);
 
+   const char *step_env = getenv("XRESIZE_STEP");
+   int step_ms = step_env ? atoi(step_env) : 500;
    int n = 0;
    for (double t0 = now(); now() - t0 < secs; n++) {
       if (n & 1)
@@ -150,7 +154,7 @@ int main(int argc, char **argv)
       else
          XMoveResizeWindow(d, w, 0, 0, 700, 500);
       XSync(d, False);
-      usleep(500000);
+      usleep(step_ms * 1000);
    }
    for (int i = 0; i < np; i++)
       c[i] = ticks(pid[i]);

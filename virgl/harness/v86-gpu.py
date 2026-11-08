@@ -2,7 +2,8 @@
 """virtio-gpu в машине: видит ли ядро устройство, X на нём, снимки страницы (CDP, холст WebGL
 через toDataURL не снять) - build/virgl/gpu-ИМЯ.png, сообщения virglrenderer со страницы.
   python3 virgl/harness/v86-gpu.py БАНДЛ ['sh: команда' | 'js: выражение' | 'shot: имя' | 'sleep: с' | 'reload: ' ...]
-'prof: секунд' - профиль процессора вкладки (CDP Profiler): доли модулей JIT (код гостя), v86.wasm,
+'cpu: метка' - процессорное время своего Chrome (все процессы и потоки, в т.ч. фоновая компиляция
+wasm) с прошлого cpu:. 'prof: секунд' - профиль процессора вкладки (CDP Profiler): доли модулей JIT (код гостя), v86.wasm,
 virgl.wasm, JS, сборки мусора, (program) - нативное, в т.ч. WebGL. 'mem: метка' - RssAnon процессов своего Chrome по типам (renderer - страница и v86, gpu-process -
 WebGL), МБ. Без шагов: сведения о DRM, startx, снимок."""
 import base64
@@ -19,7 +20,7 @@ from run import Suite  # noqa: E402
 from bundle import Chrome  # noqa: E402
 
 HOOK = """(() => { window.__virglLog = []; for (const k of ["log", "warn", "error"]) { const f = console[k];
-  console[k] = (...a) => { const t = a.map(String).join(" "); if (/virgl|virtio|gpu/i.test(t)) window.__virglLog.push(k + ": " + t); f.apply(console, a); }; } })()"""
+  console[k] = (...a) => { const t = a.map(String).join(" "); if (/virgl|virtio|gpu|panic|assert/i.test(t)) window.__virglLog.push(k + ": " + t); f.apply(console, a); }; } })()"""
 DEFAULT = [
     "sh: dmesg | grep -iE 'virtio|drm|fb0|gpu' | tail -15; ls /dev/dri; cat /sys/class/drm/card0/device/uevent 2>/dev/null | head -3",
     "js: send('startx\\r')",
@@ -38,20 +39,24 @@ def chrome_mem(profile):
             cmd = open("/proc/%s/cmdline" % pid, "rb").read().decode(errors="replace").replace("\0", " ").split()
             ppid = int(open("/proc/%s/stat" % pid).read().rsplit(")", 1)[1].split()[1])
             rss = next((int(l.split()[1]) for l in open("/proc/%s/status" % pid) if l.startswith("RssAnon:")), 0)
+            st = open("/proc/%s/stat" % pid).read().rsplit(")", 1)[1].split()
+            ticks = int(st[11]) + int(st[12])  # utime + stime всех потоков (и фоновой компиляции wasm)
         except (OSError, ValueError, IndexError):
             continue
-        procs[int(pid)] = (ppid, cmd, rss)
-    mine = {p for p, (_, cmd, _) in procs.items() if any(profile in a for a in cmd)}
+        procs[int(pid)] = (ppid, cmd, rss, ticks)
+    mine = {p for p, (_, cmd, _, _) in procs.items() if any(profile in a for a in cmd)}
     grew = True
     while grew:
-        more = {p for p, (pp, _, _) in procs.items() if pp in mine and p not in mine}
+        more = {p for p, (pp, _, _, _) in procs.items() if pp in mine and p not in mine}
         mine |= more
         grew = bool(more)
-    out = {}
+    out, cpu = {}, 0
     for p in mine:
-        _, cmd, rss = procs[p]
+        _, cmd, rss, ticks = procs[p]
         kind = next((a[7:] for a in cmd if a.startswith("--type=")), "browser")
         out[kind] = out.get(kind, 0) + rss / 1024
+        cpu += ticks
+    out["cpu_s"] = cpu / os.sysconf("SC_CLK_TCK")
     return out
 
 
@@ -107,6 +112,7 @@ s.c.call("Page.enable")
 s.c.call("Page.addScriptToEvaluateOnNewDocument", source=HOOK)
 s.c.call("Page.navigate", url=page)
 print("машина готова за %.1f с" % s.wait_ready(), flush=True)
+last_cpu = [chrome_mem(tmp)["cpu_s"]]
 try:
     for step in steps:
         kind, _, what = step.partition(": ")
@@ -137,8 +143,14 @@ try:
             time.sleep(float(what))
         elif kind == "prof":
             prof(float(what))
+        elif kind == "cpu":
+            # процессорное время своего Chrome (все процессы и потоки) с прошлого cpu:
+            c = chrome_mem(tmp)["cpu_s"]
+            print("процессор %s: %.1f с" % (what, c - last_cpu[0]), flush=True)
+            last_cpu[0] = c
         elif kind == "mem":
             m = chrome_mem(tmp)
+            m.pop("cpu_s", None)
             print("память %s: %s" % (what, ", ".join("%s %.0f" % kv for kv in sorted(m.items()))), flush=True)
         elif kind == "shot":
             png = s.c.call("Page.captureScreenshot", format="png")["data"]
