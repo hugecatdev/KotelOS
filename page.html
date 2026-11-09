@@ -76,6 +76,23 @@
      раскладывается как обычно, но невидим и фокус не берёт */
   html.embed, html.embed body { background: transparent; }
   html.embed #app { visibility: hidden; }
+  html.embed #keys { display: none; }
+  /* #if vga */
+  /* окна X без корня (kt-xwm, см. xwConnect): у каждого свой холст с куском экрана X и рамка страницы, как
+     у окон tk; сам экран не виден */
+  html.xwm #screen { visibility: hidden !important; }
+  .xw-layer { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 14; }
+  .xw { position: absolute; display: flex; flex-direction: column; background: var(--bg); outline: none; }
+  .xw-n { border: 1px solid #444; }
+  .xw-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 26px; box-sizing: border-box; padding: 0 0 0 10px; border-bottom: 1px solid #222; color: #888; font: 13px/1 var(--mono); cursor: move; user-select: none; -webkit-user-select: none; touch-action: none; }
+  .xw.on > .xw-bar { color: var(--hi); }
+  .xw-bar span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .xw-x { background: none; border: 0; color: #888; font: 16px/1 var(--mono); padding: 5px 10px; cursor: pointer; }
+  .xw-x:hover { color: var(--hi); }
+  .xw canvas { display: block; touch-action: none; }
+  .xw canvas.px { image-rendering: pixelated; }
+  .xw-grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 52%, #777 52%, #777 60%, transparent 60%, transparent 74%, #777 74%, #777 82%, transparent 82%) no-repeat right bottom / 12px 12px; }
+  /* #endif */
   /* #endif */
 </style>
 </head>
@@ -1486,6 +1503,10 @@
         clipX = text;
         if (await copyText(text)) clipB = text;
       },
+      /* #if embed */
+      // kt-xwm готов (окна X без корня, см. xwConnect): подключиться к нему
+      xwm: () => xwConnect(),
+      /* #endif */
       /* #endif */
     };
 
@@ -1605,13 +1626,15 @@
     // (#ask). Пока открыто меню, прямоугольник - весь экран: щелчок мимо меню закрывает его, как в Tk, а
     // не уходит сайту. Шлётся после перемен в слое окон (одна пачка kt-tk.js - одна отправка) и только новое
     if (EMBED) {
-      let sent = "", layer = null;
+      let sent = "";
+      const seen = new WeakSet();
       const send = () => {
         const rects = [];
-        for (const el of document.querySelectorAll(".tk-layer > *, .overlay.open")) {
+        for (const el of document.querySelectorAll(".tk-layer > *, .xw-layer > *, .overlay.open")) {
           const b = el.getBoundingClientRect();
           if (b.width < 1 || b.height < 1 || getComputedStyle(el).visibility === "hidden") continue;
-          if (el.classList.contains("tk-dd")) {
+          // меню tk или X (у меню X указатель - щелчок мимо должен дойти до программы)
+          if (el.classList.contains("tk-dd") || el.classList.contains("xw-p")) {
             rects.splice(0, rects.length, [0, 0, innerWidth, innerHeight]);
             break;
           }
@@ -1624,12 +1647,13 @@
         window.parent.postMessage({ kt: "rects", rects }, "*");
       };
       const watch = new MutationObserver(send);
-      // слой окон заводит kt-tk.js при первом окне (и заново, если его убрали)
+      // слои окон: tk заводит kt-tk.js при первом окне (и заново, если его убрали), X - страница
       const find = () => {
-        const l = document.querySelector(".tk-layer");
-        if (!l || l === layer) return;
-        layer = l;
-        watch.observe(l, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
+        for (const l of document.querySelectorAll(".tk-layer, .xw-layer")) {
+          if (seen.has(l)) continue;
+          seen.add(l);
+          watch.observe(l, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class", "hidden"] });
+        }
         send();
       };
       new MutationObserver(find).observe(document.body, { childList: true });
@@ -1947,7 +1971,8 @@
     // экрана, на телефоне - точка CSS, как обычный текст телефона). В видеопамять должны влезть два
     // кадра (так требует драйвер bochs), иначе точка крупнее; больше двух точек экрана на точку X - в
     // целое число раз, чтобы пиксели были ровные
-    function screenSize() {
+    // [W, H, s, d]: место под экран в точках CSS, точек устройства на точку X и на точку CSS
+    function screenFit() {
       // на телефоне - высота без экранной клавиатуры: startx, набранный с ней, иначе взял бы половину
       const W = $("#app").clientWidth, H = (mobile ? fullH : $("#app").clientHeight) - $("#keys").offsetHeight;
       const d = window.devicePixelRatio || 1, v = cfg.get("screen.scale");
@@ -1958,6 +1983,10 @@
       let s = (v === "auto" ? (mobile ? phone || 1 : 1 / d) : +v) * d;
       while (!fits(s)) s += 0.25;
       if (s > 2) s = phone && fits(Math.floor(s + 0.01)) ? Math.floor(s + 0.01) : Math.ceil(s - 0.01);
+      return [W, H, s, d];
+    }
+    function screenSize() {
+      const [W, H, s, d] = screenFit();
       return `${Math.floor(W * d / s / 8) * 8}x${Math.floor(H * d / s)}`;
     }
     // перемена размера - событием screen-size (его слушает startx и меняет режим X); на телефоне высоту
@@ -2097,6 +2126,241 @@
       e.preventDefault();
       clipText = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
     });
+    /* #if embed */
+
+    // окна X без корня: в машине kt-xwm (пакет kt-xwm, его запускает ~/.xinitrc) - оконный менеджер без
+    // рамок. Готовый, он зовёт страницу командой xwm, она подключается к его порту 7704 и держит соединение
+    // (протокол - в src/kt-xwm.c). Каждое окно X - свой холст в слое окон поверх сайта или терминала: кусок
+    // экрана X там, где окно сейчас в X; рамка, заголовок, перенос и уголок - страницы. Место окна в X - его
+    // место на странице (корень X - от левого верхнего угла, xw.k точек CSS на точку X), порядок - как в X,
+    // поэтому перекрытия верны без Composite. Кадр - с холста экрана (он скрыт): v86 пишет туда изменения
+    // через putImageData, обёртка над ним переносит изменившийся кусок в окна, которые он задел
+    const XWM_PORT = 7704, XW_BAR = 27; // заголовок с верхней рамкой, точки CSS
+    const xw = { c: null, trying: false, wins: new Map(), focus: "0", k: 1, src: null, lx: 0, ly: 0 };
+    const xwLayer = document.body.appendChild(document.createElement("div"));
+    xwLayer.className = "xw-layer";
+    xwLayer.ondragstart = (e) => e.preventDefault();
+    const xwSend = (line) => xw.c && xw.c.write(enc.encode(line + "\n"));
+    const xwScale = () => { const f = screenFit(); return f[2] / f[3]; };
+    function xwConnect() {
+      const net = emulator && emulator.network_adapter;
+      if (!net || xw.c || xw.trying) return;
+      const d = new TextDecoder();
+      let c, buf = "";
+      try { c = net.connect(XWM_PORT); } catch { return; }
+      xw.trying = true;
+      c.on("connect", () => {
+        xw.trying = false;
+        xw.c = c;
+        xwHook();
+        xw.k = xwScale();
+        document.documentElement.classList.add("xwm");
+        xwSend("hello " + Math.ceil(XW_BAR / xw.k));
+      });
+      c.on("data", (b) => {
+        buf += d.decode(b, { stream: true });
+        for (let i; (i = buf.indexOf("\n")) >= 0; buf = buf.slice(i + 1)) xwLine(buf.slice(0, i));
+      });
+      c.on("shutdown", () => c.close());
+      c.on("close", () => {
+        xw.trying = false;
+        if (xw.c !== c) return;
+        xw.c = null;
+        for (const o of xw.wins.values()) o.el.remove();
+        xw.wins.clear();
+        document.documentElement.classList.remove("xwm");
+      });
+    }
+    // изменившийся кусок экрана X - в окна, которые он задел (и всё окно - после переноса или нового размера)
+    function xwCopy(o, x, y, w, h) {
+      const s = xw.src, x0 = Math.max(x, o.x, 0), y0 = Math.max(y, o.y, 0);
+      const x1 = Math.min(x + w, o.x + o.w, s.width), y1 = Math.min(y + h, o.y + o.h, s.height);
+      if (x1 > x0 && y1 > y0) o.ctx.drawImage(s, x0, y0, x1 - x0, y1 - y0, x0 - o.x, y0 - o.y, x1 - x0, y1 - y0);
+    }
+    function xwHook() {
+      const s = $("#screen canvas");
+      if (xw.src === s) return;
+      xw.src = s;
+      const ctx = s.getContext("2d"), put = ctx.putImageData;
+      ctx.putImageData = function (img, dx, dy, sx, sy, sw, sh) {
+        put.apply(this, arguments);
+        const r = arguments.length > 3 ? [dx + sx, dy + sy, sw, sh] : [dx, dy, img.width, img.height];
+        for (const o of xw.wins.values()) xwCopy(o, ...r);
+      };
+    }
+    function xwMouse(x, y) {
+      if (!emulator || !xw.src) return;
+      emulator.bus.send("mouse-absolute", [x, y, xw.src.width, xw.src.height]);
+      emulator.bus.send("mouse-delta", [Math.round(x - xw.lx) || 1, Math.round(xw.ly - y)]);
+      [xw.lx, xw.ly] = [x, y];
+    }
+    const xwButtons = (e) => emulator && emulator.bus.send("mouse-click", [!!(e.buttons & 1), !!(e.buttons & 4), !!(e.buttons & 2)]);
+    // окно наверх сразу (захват указателя переживёт ответ kt-xwm: порядок в DOM уже тот), фокус - от X
+    function xwRaise(o) {
+      if (o.kind !== "n" && o.kind !== "u") return;
+      if (xwLayer.lastElementChild !== o.el) xwLayer.append(o.el);
+      if (xw.focus !== o.id) xwSend("raise " + o.id);
+    }
+    // место окна на странице: рамка и заголовок - вокруг холста, холст - там, где окно в X
+    function xwPlace(o, px, py) {
+      [o.px, o.py] = [px, py];
+      o.el.style.left = px - (o.kind === "n" ? 1 : 0) + "px";
+      o.el.style.top = py - (o.kind === "n" ? XW_BAR : 0) + "px";
+    }
+    function xwGeo(o, x, y, w, h) {
+      const k = xw.k, d = window.devicePixelRatio || 1;
+      if (o.w !== w || o.h !== h || o.ck !== k) {
+        o.cv.width = Math.max(1, w);
+        o.cv.height = Math.max(1, h);
+        o.cv.style.width = w * k + "px";
+        o.cv.style.height = h * k + "px";
+        o.ck = k;
+        // без размытия - как экран: при целом числе точек на пиксель и от двух
+        o.cv.classList.toggle("px", k * d >= 2 || Math.abs(k * d - Math.round(k * d)) < 0.02);
+      }
+      Object.assign(o, { x, y, w, h });
+      // после переноса мышью страница ждёт, пока X дойдёт до места, куда отпустили
+      if (o.want && o.want[0] === x && o.want[1] === y) o.want = null;
+      if (!o.drag && !o.want) xwPlace(o, x * k, y * k);
+      xwCopy(o, x, y, w, h);
+    }
+    // перенос за заголовок и размер за уголок: окно на странице едет сразу, X - не чаще 20 раз в секунду
+    function xwDrag(e, o, handle, size) {
+      if (e.button) return;
+      e.preventDefault();
+      xwRaise(o);
+      o.el.focus({ preventScroll: true });
+      handle.setPointerCapture(e.pointerId);
+      const k = xw.k, sx = e.clientX, sy = e.clientY, px = o.px, py = o.py, w0 = o.w, h0 = o.h;
+      let last = 0, timer = 0, cmd = "", at = null;
+      const flush = () => {
+        clearTimeout(timer);
+        timer = 0;
+        last = performance.now();
+        if (cmd) xwSend(cmd);
+        cmd = "";
+      };
+      const go = (ev, end) => {
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (size) {
+          cmd = `size ${o.id} ${Math.max(1, Math.round(w0 + dx / k))} ${Math.max(1, Math.round(h0 + dy / k))}`;
+        } else {
+          o.drag = true;
+          xwPlace(o, px + dx, Math.max(XW_BAR, py + dy));
+          at = [Math.round(o.px / k), Math.round(o.py / k)];
+          cmd = `move ${o.id} ${at[0]} ${at[1]}`;
+        }
+        if (end || performance.now() - last > 50) flush();
+        else if (!timer) timer = setTimeout(flush, 50);
+      };
+      handle.onpointermove = (ev) => go(ev);
+      handle.onpointerup = handle.onpointercancel = (ev) => {
+        go(ev, true);
+        handle.onpointermove = handle.onpointerup = handle.onpointercancel = null;
+        if (!at) return;
+        o.drag = false;
+        o.want = at;
+        setTimeout(() => { if (o.want === at) { o.want = null; xwPlace(o, o.x * xw.k, o.y * xw.k); } }, 1500);
+      };
+    }
+    function xwMake(o) {
+      const el = (o.el = document.createElement("div")), cv = (o.cv = document.createElement("canvas"));
+      el.className = "xw xw-" + o.kind;
+      el.tabIndex = -1;
+      if (o.kind === "n") {
+        const bar = document.createElement("div"), x = document.createElement("button"), grip = document.createElement("div");
+        bar.className = "xw-bar";
+        o.bt = bar.appendChild(document.createElement("span"));
+        x.className = "xw-x";
+        x.textContent = "×";
+        x.onpointerdown = (e) => e.stopPropagation();
+        x.onclick = () => xwSend("close " + o.id);
+        bar.append(x);
+        bar.onpointerdown = (e) => xwDrag(e, o, bar, false);
+        grip.className = "xw-grip";
+        grip.onpointerdown = (e) => xwDrag(e, o, grip, true);
+        el.append(bar, cv, grip);
+      } else {
+        el.append(cv);
+      }
+      o.ctx = cv.getContext("2d", { alpha: false });
+      const at = (e) => {
+        const r = cv.getBoundingClientRect();
+        return [o.x + (e.clientX - r.left) / xw.k, o.y + (e.clientY - r.top) / xw.k];
+      };
+      cv.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        xwRaise(o);
+        el.focus({ preventScroll: true }); // клавиатура - в iframe (и не в терминал): клавиши ловит v86
+        cv.setPointerCapture(e.pointerId);
+        xwMouse(...at(e));
+        xwButtons(e);
+      });
+      cv.addEventListener("pointermove", (e) => xwMouse(...at(e)));
+      cv.addEventListener("pointerup", (e) => { xwMouse(...at(e)); xwButtons(e); });
+      cv.addEventListener("pointercancel", xwButtons);
+      cv.addEventListener("contextmenu", (e) => e.preventDefault());
+      cv.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
+      }, { passive: false });
+      xwLayer.append(el);
+    }
+    function xwLine(line) {
+      const a = line.split(" "), o = xw.wins.get(a[1]);
+      switch (a[0]) {
+        case "win": {
+          const n = o || { id: a[1] };
+          if (n.el && n.kind !== a[6]) n.el.remove();
+          if (!n.el || n.kind !== a[6]) {
+            n.kind = a[6];
+            n.w = n.h = -1;
+            xwMake(n);
+          }
+          n.owner = a[7];
+          n.title = a.slice(8).join(" ");
+          if (n.bt) n.bt.textContent = n.title;
+          xw.wins.set(n.id, n);
+          xwGeo(n, +a[2], +a[3], +a[4], +a[5]);
+          break;
+        }
+        case "geo":
+          if (o) xwGeo(o, +a[2], +a[3], +a[4], +a[5]);
+          break;
+        case "title":
+          if (o && o.bt) o.bt.textContent = o.title = a.slice(2).join(" ");
+          break;
+        case "gone":
+          if (o) { o.el.remove(); xw.wins.delete(a[1]); }
+          break;
+        case "stack": {
+          // порядок как в X, а то, что уже на месте, не трогать: перенос в DOM снял бы захват указателя
+          const els = a.slice(1).map((id) => xw.wins.get(id)).filter(Boolean).map((w) => w.el);
+          els.forEach((el, i) => { if (xwLayer.children[i] !== el) xwLayer.insertBefore(el, xwLayer.children[i] || null); });
+          break;
+        }
+        case "focus":
+          xw.focus = a[1];
+          for (const w of xw.wins.values()) w.el.classList.toggle("on", w.id === a[1]);
+          break;
+      }
+    }
+    // пока на экране меню X (у него указатель), страница ловит весь экран (см. clip-path для embed.js):
+    // щелчок мимо окон уходит в X, и программа закрывает меню, как и должна
+    for (const t of ["pointerdown", "pointerup"]) {
+      document.addEventListener(t, (e) => {
+        if (!xw.c || !xwLayer.querySelector(".xw-p") || e.target.closest(".xw, .tk-layer > *, .overlay")) return;
+        xwMouse(e.clientX / xw.k, e.clientY / xw.k);
+        xwButtons(e);
+      }, true);
+    }
+    // масштаб поменялся (окно браузера, плотность точек): всё заново по новым точкам
+    window.addEventListener("resize", () => {
+      if (!xw.c || Math.abs(xwScale() - xw.k) < 1e-6) return;
+      xw.k = xwScale();
+      xwSend("hello " + Math.ceil(XW_BAR / xw.k));
+    });
+    /* #endif */
     /* #endif */
 
     let moreBtn = null;
@@ -2506,6 +2770,11 @@
           ctl("REDRAW");
           emit("restore");
           /* #if vga */ if (screenOn) screenResized(true); /* #endif */
+          /* #if embed */
+          /* #if vga */
+          if (screenOn) xwConnect(); // kt-xwm, если он есть, ждёт страницу на своём порту (прежнего соединения нет)
+          /* #endif */
+          /* #endif */
           if (saved) status(saved.replyId, true, `восстановлено сохранение от ${when(saved.created)}`);
         };
       });

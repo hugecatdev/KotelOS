@@ -46,7 +46,7 @@ print(n)
 """
 
 
-# встраивание (bundle.py --embed, embed.js): окно tkinter поверх сайта; сайт - кнопка во весь экран, она
+# встраивание (bundle.py --embed, embed.js): окна tkinter и X поверх сайта; сайт - кнопка во весь экран, она
 # считает все клики мимо окон
 EMBED_APP = """import tkinter as tk
 root = tk.Tk()
@@ -64,14 +64,25 @@ root.config(menu=bar)
 root.mainloop()
 """
 EMBED_SITE = """<!doctype html><meta charset="utf-8"><body style="margin:0">
-<button id="site" style="position:fixed;inset:0;width:100%;height:100%">сайт</button>
+<button id="site" style="position:fixed;inset:0;width:100%%;height:100%%">сайт</button>
 <script src="embed.js"></script>
 <script>
 window.hits = 0;
 site.onclick = () => hits++;
 window.rects = null;
-window.vm = KotelOS.embed("e.html", { cmd: "micropython -X heapsize=8M /root/app.py" }).on("rects", (r) => { rects = r; });
+window.vm = KotelOS.embed("e.html", { cmd: %s }).on("rects", (r) => { rects = r; });
 </script>
+"""
+# X: оконный менеджер страницы и три окна; xterm читает строку и пишет её в файл - так видно, что клавиши
+# дошли до программы X
+EMBED_XINITRC = """#!/bin/sh
+kt-xwm &
+xwm=$!
+sleep 1
+xeyes -geometry 160x120+40+60 &
+xcalc -geometry +420+60 &
+xterm -T xterm -geometry 40x6+40+300 -e sh -c 'read x; echo "$x" > /tmp/got; exec sleep 9999' &
+wait $xwm
 """
 
 class Chrome(bundle.Chrome):
@@ -408,14 +419,18 @@ def main():
     worker = ["--worker"] if WORKER else []
     with open(os.path.join(tmp, "app.py"), "w") as f:
         f.write(EMBED_APP)
+    with open(os.path.join(tmp, "xinitrc"), "w") as f:
+        f.write(EMBED_XINITRC)
     with open(os.path.join(www, "embed.html"), "w") as f:
-        f.write(EMBED_SITE)
+        f.write(EMBED_SITE % json.dumps("micropython -X heapsize=8M /root/app.py"))
+    with open(os.path.join(www, "embedx.html"), "w") as f:
+        f.write(EMBED_SITE % json.dumps("startx"))
     shutil.copy("embed.js", www)
     for args in (["-o", www + "/t.html", "-n", "test"] + worker + PKGS,
                  ["-o", www + "/snap.html", "-n", "snap", "fun", "--snap", "--version", "t1"] + worker,
                  ["-o", www + "/vga.html", "-n", "vga", "--vga", "doom", "xorg", "xclip"] + worker,
-                 ["-o", www + "/e.html", "-n", "embed", "--embed", "--file", tmp + "/app.py:/root/app.py",
-                  "micropython", "python-tkinter"] + worker):
+                 ["-o", www + "/e.html", "-n", "embed", "--embed", "--vga", "--file", tmp + "/app.py:/root/app.py",
+                  "--file", tmp + "/xinitrc:/root/.xinitrc", "micropython", "python-tkinter", "xorg", "kt-xwm", "xeyes", "xcalc"] + worker):
         r = subprocess.run([sys.executable, "bundle.py"] + args, capture_output=True, text=True)
         if r.returncode:
             sys.exit(r.stdout + r.stderr)
@@ -1443,48 +1458,61 @@ def main():
         assert got == [(29, 1), (47, 1), (47, 0), (29, 0), (45, 1), (45, 0)], got
         return "из X в браузер за %.1f с" % copied
 
-    def embed():
-        with open(os.path.join(www, "t.html"), encoding="utf-8") as f:
-            assert 'kt: "rects"' not in f.read(), "код встраивания в бандле без --embed"
+    # встраивание: сайт - в своём Chromium, iframe машины того же origin (F - его window)
+    F = "vm.frame.contentWindow"
+
+    def eopen(page):
         if s.c:
             s.c.close()
         s.c = Chrome(tempfile.mkdtemp(dir=s.tmp))
-        s.c.open(base + "embed.html")
-        F = "vm.frame.contentWindow"
+        s.c.open(base + page)
 
-        def wait(expr, timeout, what):
-            t = time.time()
-            while time.time() - t < timeout:
-                try:
-                    v = s.ev(expr)
-                    if v:
-                        return v
-                except RuntimeError:
-                    pass
-                time.sleep(0.2)
-            raise AssertionError("%s: нет за %d с" % (what, timeout))
+    def wait(expr, timeout, what):
+        t = time.time()
+        while time.time() - t < timeout:
+            try:
+                v = s.ev(expr)
+                if v:
+                    return v
+            except RuntimeError:
+                pass
+            time.sleep(0.2)
+        raise AssertionError("%s: нет за %d с" % (what, timeout))
 
-        def click(x, y):
-            for t in ("mousePressed", "mouseReleased"):
-                s.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, button="left", buttons=1 if t == "mousePressed" else 0, clickCount=1)
-            time.sleep(0.3)
+    def mouse(t, x, y, down=False):
+        s.c.call("Input.dispatchMouseEvent", type=t, x=x, y=y, button="left" if down or t != "mouseMoved" else "none",
+                 buttons=1 if down else 0, clickCount=1)
 
-        def center(sel):
-            return s.ev("(() => { const b = %s.document.querySelector(%s).getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()"
-                        % (F, json.dumps(sel)))
+    def click(x, y):
+        mouse("mousePressed", x, y, True)
+        mouse("mouseReleased", x, y)
+        time.sleep(0.3)
 
-        def clip():
-            return s.ev("vm.frame.style.clipPath").replace(" ", "").lower()
+    def center(expr):
+        """середина элемента в iframe: селектор или выражение с элементом"""
+        el = "%s.document.querySelector(%s)" % (F, json.dumps(expr)) if not expr.startswith("(") else expr
+        return s.ev("(() => { const b = %s.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()" % el)
 
+    def clip():
+        return s.ev("vm.frame.style.clipPath").replace(" ", "").lower()
+
+    def outside(rects):
+        vw, vh = s.ev("[innerWidth, innerHeight]")
+        out = (vw - 10, vh - 10)
+        assert not any(x <= out[0] <= x + w and y <= out[1] <= y + h for x, y, w, h in rects), (out, rects)
+        return vw, vh, out
+
+    def embed():
+        with open(os.path.join(www, "t.html"), encoding="utf-8") as f:
+            assert 'kt: "rects"' not in f.read(), "код встраивания в бандле без --embed"
+        eopen("embed.html")
         t0 = time.time()
         r = wait("rects && rects.length && rects", 120, "окно программы")[0]
         took = time.time() - t0
         assert len(wait("rects", 1, "")) == 1, s.ev("rects")
         assert clip() == 'path("m%d%dh%dv%dh%dz")' % (r[0], r[1], r[2], r[3], -r[2]), (clip(), r)
         assert s.ev("getComputedStyle(%s.document.querySelector('#app')).visibility" % F) == "hidden", "терминал виден"
-        vw, vh = s.ev("[innerWidth, innerHeight]")
-        out = (vw - 10, vh - 10)
-        assert not (r[0] <= out[0] <= r[0] + r[2] and r[1] <= out[1] <= r[1] + r[3]), (out, r)
+        vw, vh, out = outside([r])
         click(*out)
         assert s.ev("hits") == 1, "клик мимо окна не дошёл до сайта"
         # ввод в Entry и кнопка окна: сайту не достаются, в шелл не уходят
@@ -1512,6 +1540,60 @@ def main():
         assert ms < 500, "машина без окон отвечает %d мс" % ms
         return "окно через %.1f с, exec без окон %d мс" % (took, ms)
 
+    def embed_x():
+        eopen("embedx.html")
+        t0 = time.time()
+        rects = wait("rects && rects.length === 3 && rects", 120, "три окна X")
+        took = time.time() - t0
+        assert clip() == 'path("%s")' % "".join("m%d%dh%dv%dh%dz" % (x, y, w, h, -w) for x, y, w, h in rects), (clip(), rects)
+        win = lambda title: "[...%s.eval('xw').wins.values()].find((o) => o.title === %s)" % (F, json.dumps(title))  # noqa: E731
+        titles = s.ev("[...%s.eval('xw').wins.values()].map((o) => o.title).sort().join()" % F)
+        assert titles == "Calculator,xeyes,xterm", titles
+        vw, vh, out = outside(rects)
+        click(*out)
+        assert s.ev("hits") == 1, "клик мимо окон X не дошёл до сайта"
+        # xterm: щелчок - наверх и фокус X, клавиши - программе (read пишет строку в файл), не сайту
+        click(*center("(%s.cv)" % win("xterm")))
+        wait("%s.eval('xw').focus === %s.id" % (F, win("xterm")), 5, "фокус X у xterm")
+        assert s.ev("%s.eval('xw').wins.size === 3 && %s.el === %s.eval('xwLayer').lastElementChild" % (F, win("xterm"), F)), "xterm не наверху"
+        for k in ("h", "i", "Enter"):
+            code = "Key" + k.upper() if len(k) == 1 else k
+            for t in ("keyDown", "keyUp"):
+                s.c.call("Input.dispatchKeyEvent", type=t, key=k, code=code, windowsVirtualKeyCode=13 if k == "Enter" else ord(k.upper()),
+                         **({"text": "\r" if k == "Enter" else k} if t == "keyDown" else {}))
+            time.sleep(0.1)
+        wait("vm.exec('cat /tmp/got').then((r) => r.out.trim() === 'hi')", 10, "строка от клавиатуры в xterm")
+        assert s.ev("hits") == 1, "клик в окно X дошёл до сайта"
+        # перенос xeyes за заголовок: окно на странице едет сразу, X - следом, туда же
+        x0 = s.ev("%s.x" % win("xeyes"))
+        bx, by = center("(%s.el.querySelector('.xw-bar span'))" % win("xeyes"))
+        mouse("mouseMoved", bx, by)
+        mouse("mousePressed", bx, by, True)
+        for i in range(1, 11):
+            mouse("mouseMoved", bx + 30 * i, by + 20 * i, True)
+            time.sleep(0.03)
+        mouse("mouseReleased", bx + 300, by + 200)
+        k = s.ev("%s.eval('xw').k" % F)
+        wait("Math.abs(%s.x - %d) <= 1" % (win("xeyes"), x0 + round(300 / k)), 5, "xeyes в X на новом месте")
+        # меню xterm (Ctrl + кнопка): окно X без рамки, пока оно на экране, iframe ловит весь экран
+        cx, cy = center("(%s.cv)" % win("xterm"))
+        s.c.call("Input.dispatchKeyEvent", type="rawKeyDown", key="Control", code="ControlLeft", windowsVirtualKeyCode=17, modifiers=2)
+        time.sleep(0.2)
+        mouse("mouseMoved", cx, cy)
+        mouse("mousePressed", cx, cy, True)
+        try:
+            wait("rects.length === 1 && rects[0][2] === innerWidth", 10, "меню xterm ловит весь экран")
+        finally:
+            mouse("mouseMoved", vw - 5, vh - 5, True)  # отпустить мимо меню - ничего не выбрать
+            mouse("mouseReleased", vw - 5, vh - 5)
+            s.c.call("Input.dispatchKeyEvent", type="keyUp", key="Control", code="ControlLeft", windowsVirtualKeyCode=17)
+        wait("rects.length === 3", 5, "меню закрылось")
+        assert s.ev("hits") == 1, "отпускание мимо меню дошло до сайта"
+        # закрыть Calculator крестиком страницы: WM_DELETE_WINDOW, программа выходит
+        click(*center("(%s.el.querySelector('.xw-x'))" % win("Calculator")))
+        wait("rects.length === 2", 10, "Calculator закрылся")
+        return "окна через %.1f с" % took
+
     def snap_bundle():
         t = s.open(base + "snap.html")
         tz = s.ok("date +%z").strip()
@@ -1538,7 +1620,7 @@ def main():
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),
         ("один агент после kill", one_agent), ("повтор сегмента TCP", tcp_resend), ("снимки и коды выхода", snap_rules), ("kt reset", reset),
-        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("встраивание", embed), ("бандл со снимком", snap_bundle),
+        ("Ctrl+Alt+End при мёртвом агенте", secret_reset), ("CTRL ALT END кнопками", secret_reset_keys), ("экран и doom", screen_doom), ("X на экране", screen_x), ("буфер обмена X", screen_clip), ("встраивание", embed), ("встраивание X", embed_x), ("бандл со снимком", snap_bundle),
         ("память бандла со снимком", bundle_memory),
     ]
     try:

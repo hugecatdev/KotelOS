@@ -1,0 +1,10 @@
+#!/bin/sh
+# Сессия X для демо встраивания (examples/embed, бандл с --embed и --vga): оконный менеджер страницы, потом
+# программы - их ставит он. Окна закрыли - X остаётся ждать: сессия живёт, пока жив kt-xwm
+kt-xwm &
+xwm=$!
+sleep 1
+xeyes -geometry 160x120+40+60 &
+xcalc &
+xterm -geometry 60x16 &
+wait $xwm

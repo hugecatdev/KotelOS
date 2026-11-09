@@ -81,6 +81,7 @@ scripts/build-doom.sh
 python3 alpine.py libdrm --keep-existing --max-age 168 --skip libpciaccess --drop 'usr/lib/libdrm_*'
 scripts/build-xorg.sh
 scripts/build-xclipd.sh
+scripts/build-xwm.sh
 scripts/build-dwm.sh
 scripts/build-mesa.sh
 # Демо OpenGL: glxinfo и glxgears (mesa-utils), mesa-demos (gloss, teapot, fire, terrain... ~290 программ) -
