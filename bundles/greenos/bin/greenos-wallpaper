@@ -19,5 +19,18 @@ fi
 if command -v idesk > /dev/null; then
   pkill -x idesk
   mkdir -p "$HOME/.local/share/Trash/files"
+  # раскладка значков - только когда экран повернули: стоя - сеткой по три сверху (кубик ниже), иначе -
+  # столбцом слева; перетащенные мышью значки при простой смене размера остаются на местах
+  o=wide
+  [ "$w" -ge "$h" ] || o=tall
+  if [ "$(cat /tmp/.greenos-desk 2>/dev/null)" != $o ]; then
+    i=0
+    for f in "$HOME"/.idesktop/*.lnk; do
+      if [ $o = tall ]; then x=$((32 + i % 3 * 110)) y=$((14 + i / 3 * 96)); else x=40 y=$((20 + i * 92)); fi
+      sed -i "s/^  X: .*/  X: $x/; s/^  Y: .*/  Y: $y/" "$f"
+      i=$((i + 1))
+    done
+    echo $o > /tmp/.greenos-desk
+  fi
   cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
 fi

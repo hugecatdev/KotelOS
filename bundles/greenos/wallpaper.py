@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Обои GreenOS из картинки с кубиком (wallpaper-src.jpg) -> fs/usr/share/backgrounds/:
 greenos.jpg - для широкого экрана: снизу продолжен пол, чтобы кубик стоял выше панели задач;
-greenos-tall.jpg - для телефона стоя: кубик на ~80% ширины чуть выше середины, фон продолжен вверх и
+greenos-tall.jpg - для телефона стоя: кубик на ~80% ширины ниже середины (сверху - значки), фон продолжен вверх и
 вниз (повтор крайних строк и размытие - фон на картинке плавный). Где кубик в greenos.jpg, пишется в
 greenos-wallpaper (CUBE_X): на экране уже картинки кадр - вокруг кубика. Нужен Pillow:
 python3 bundles/greenos/wallpaper.py"""
@@ -62,7 +62,7 @@ def main():
     cx, cy = (x0 + x1) / 2 * s, (y0 + y1) / 2 * s
     left = round(min(max(cx - W / 2, 0), im.width - W))
     im = im.crop((left, 0, left + W, im.height))
-    top = max(0, round(H * 0.42 - cy))
+    top = max(0, round(H * 0.58 - cy))  # выше - место под значки рабочего стола
     tall = extend(im, top, max(0, H - top - im.height))
     tall.save(os.path.join(OUT, "greenos-tall.jpg"), quality=88, optimize=True)
     print("greenos-tall.jpg %dx%d" % tall.size)
