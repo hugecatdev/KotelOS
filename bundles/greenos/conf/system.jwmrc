@@ -24,14 +24,15 @@
     <Tray x="0" y="-1" height="36" autohide="off">
         <TrayButton icon="greenos.png" popup="Меню">root:3</TrayButton>
         <Spacer width="4"/>
-        <TrayButton icon="/usr/share/pixmaps/xterm-color_48x48.xpm" popup="xterm">exec:greenos-run terminal</TrayButton>
+        <TrayButton icon="/usr/share/pixmaps/xterm-color_48x48.xpm" popup="xterm">exec:xterm</TrayButton>
         <TrayButton icon="/usr/share/pixmaps/xfe.png" popup="xfe">exec:xfe</TrayButton>
         <Spacer width="6"/>
         <TaskList maxwidth="220"/>
         <Pager labeled="true"/>
         <Dock/>
-        <!-- сохранить машину в браузере (kt save): с этого места откроется страница в следующий раз -->
-        <TrayButton icon="save.png" popup="Сохранить сеанс">exec:greenos-run save</TrayButton>
+        <!-- сохранить машину в браузере (kt save): с этого места откроется страница в следующий раз; ответ
+             kt («сохранено, N МБ» или ошибка) - в окошке, оно само закроется через 4 с (JWM зовёт sh -c) -->
+        <TrayButton icon="save.png" popup="Сохранить сеанс">exec:xmessage -title Сохранение -center -timeout 4 -buttons OK:0 -default OK "$(kt save 2>&1)"</TrayButton>
         <Clock format="%H:%M" popup="%A, %d %B %Y"><Button mask="1">exec:xclock</Button></Clock>
         <TrayButton icon="desktop.png" popup="Показать рабочий стол">showdesktop</TrayButton>
     </Tray>
@@ -156,7 +157,7 @@
     <Key mask="CA" key="Right">rdesktop</Key>
     <Key mask="CA" key="Left">ldesktop</Key>
     <Key mask="CA" key="d">showdesktop</Key>
-    <Key mask="CA" key="t">exec:greenos-run terminal</Key>
+    <Key mask="CA" key="t">exec:xterm</Key>
     <Key mask="CA" key="Escape">exec:xkill</Key>
 
     <Mouse context="root" button="3">root:3</Mouse>

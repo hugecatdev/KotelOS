@@ -1,0 +1,16 @@
+--- a/src/XDesktopContainer.cpp
++++ b/src/XDesktopContainer.cpp
+@@ -421,7 +421,13 @@
+ 			
+             case MotionNotify:
+                 if (icon->isDragging() && !isLocked())
++                {
++                     // только последнее движение: каждое двигает окно и перерисовывает значок и подпись,
++                     // в медленной машине они копятся в очереди, и значок отстаёт от указателя
++                     while (XCheckTypedWindowEvent(display, event.xmotion.window, MotionNotify, &event))
++                         ;
+ 		     icon->dragMotionNotify(event);
++                }
+                 break;
+ 
+             case ButtonRelease:

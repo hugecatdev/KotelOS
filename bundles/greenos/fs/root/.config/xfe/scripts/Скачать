@@ -1,2 +1,3 @@
 #!/bin/sh
-exec greenos-run dl "$@"
+r=$(kt dl "$@" 2>&1) && r=${r:-"Готово: в загрузках браузера"}
+exec xmessage -title Скачивание -center -timeout 4 -buttons OK:0 -default OK "$r"

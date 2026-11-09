@@ -38,7 +38,6 @@
 --file bundles/greenos/xinitrc:/root/.xinitrc
 --file bundles/greenos/fs:/
 --file bundles/greenos/root:/
---file bundles/greenos/bin/greenos-run:/usr/bin/greenos-run
 --file bundles/greenos/bin/greenos-menu:/usr/bin/greenos-menu
 --file bundles/greenos/bin/greenos-wallpaper:/usr/bin/greenos-wallpaper
 --file bundles/greenos/bin/greenos-start:/usr/bin/greenos-start

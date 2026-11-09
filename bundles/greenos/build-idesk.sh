@@ -1,7 +1,8 @@
 #!/bin/sh
 # idesk 0.7.5 для GreenOS - значки на рабочем столе (картинка imlib2 - она уже есть у feh, подпись Xft,
 # тень); пакета в Alpine нет. Тулчейн musl на sysroot от build.sh (сначала он) + заголовки imlib2.
-# idesk-gcc.patch - правки под современный C++. Результат -> bundles/greenos/root/usr/bin/idesk
+# idesk-gcc.patch - правки под современный C++, idesk-motion.patch - перетаскивание без отставания (из
+# очереди - только последнее движение мыши). Результат -> bundles/greenos/root/usr/bin/idesk
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -22,7 +23,7 @@ S=$B/idesk-$V
 rm -rf $S
 mkdir -p $B/bin $OUT/usr/bin
 tar -xjf $CACHE/$f -C $B
-[ ! -f bundles/greenos/idesk-gcc.patch ] || patch -d $S -p1 -s < bundles/greenos/idesk-gcc.patch
+for p in bundles/greenos/idesk-*.patch; do patch -d $S -p1 -s < "$p"; done
 
 python3 - "$SR" <<'EOF'
 import sys

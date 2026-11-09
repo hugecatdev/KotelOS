@@ -20,7 +20,7 @@ $(item adie /usr/share/greenos/icons/fox/adie.png)
 <Separator/>
 $(menu office Офис "$(item abiword /usr/share/icons/hicolor/48x48/apps/abiword.png; item gnumeric /usr/share/icons/hicolor/48x48/apps/gnumeric.png)")
 $(menu utilities Стандартные "$(item calculator /usr/share/greenos/icons/fox/calculator.png; item xclock clock; item xfa /usr/share/pixmaps/xfa.png)")
-$(menu graphics Графика "$(item azpainter /usr/share/pixmaps/azpainter.png; item xfi /usr/share/pixmaps/xfi.png; item feh /usr/share/feh/images/feh.png 'greenos-run images'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
+$(menu graphics Графика "$(item azpainter /usr/share/pixmaps/azpainter.png; item xfi /usr/share/pixmaps/xfi.png; item feh /usr/share/feh/images/feh.png 'feh --scale-down -g 900x600 -. /usr/share/backgrounds'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
 $(menu development Разработка "$(item micropython python 'xterm -T micropython -e micropython')")
 $(menu games Развлечения "$(item lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png; item xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'; item oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'; item xeyes eyes)")
 $(menu system Система "$(item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
