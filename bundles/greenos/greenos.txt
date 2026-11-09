@@ -4,7 +4,7 @@
 #   ./release.py bundles/greenos/greenos.txt   -> site/greenos/index.html (~24 МБ)
 # «Отечественная ОС»: рабочий стол в духе KDE на JWM, тема «Трава» (белая панель, зелёные заголовки и
 # выделение, плоско, без скруглений), обои - кубик. Программы оконные и лёгкие, под своими именами:
-# xterm, xcalc, xclock, xeyes, feh, xkill, micropython, lbreakout2, своё окно «О системе» (greenos-about);
+# xterm, xclock, xeyes, feh, xkill, micropython, lbreakout2, своё окно «О системе» (greenos-about);
 # FOX (Xfe, xfa, xfi, Adie, Calculator, ShutterBug, ControlPanel - build-fox.sh), значки на рабочем столе
 # (idesk - build-idesk.sh); с GitHub - xroach и oneko (build-extras.sh), системный монитор xosview
 # (build-xosview.sh); рисовалка
@@ -14,8 +14,23 @@
 # os-release (VERSION_ID - прежний, его показывает kt); kt-xclipd (общий с браузером буфер) остаётся.
 # Не пакеты: JWM и greenos-about (bundles/greenos/root - собирает build.sh, в git не идёт), тема,
 # значки, обои (fs), скрипты (bin) - данные этого бандла. X не в снимке (--cmd startx): обои и панель -
-# под настоящий экран; --prep fc-cache - кэш fontconfig (триггер перепакованного fontconfig не срабатывает)
---snap --vga 8 --mem 256 --worker --title GreenOS
+# под настоящий экран; --prep fc-cache - кэш fontconfig (триггер перепакованного fontconfig не срабатывает).
+# Кнопка «Сохранить сеанс» на панели - kt save; в Xfe правая кнопка - «Сценарии» - «Скачать» - kt dl
+# (fs/root/.config/xfe/scripts); ответ обоих - в окошке xmessage. --no-3d: программ OpenGL здесь нет.
+# --drop - чего из пакетов в образе нет: библиотеки, которые не грузит ни одна программа
+# (scripts/deadlibs.py bundles/greenos/greenos.txt), демо imlib2 (rgb.txt нужен загрузчику XPM), звуки
+# lbreakout2 (звуковой карты в машине нет)
+--snap --vga 8 --no-3d --mem 256 --worker --title GreenOS
+--drop "/usr/lib/libbrotlienc.so*"
+--drop "/usr/lib/libxcb-composite.so*" --drop "/usr/lib/libxcb-dbe.so*" --drop "/usr/lib/libxcb-dpms.so*"
+--drop "/usr/lib/libxcb-dri2.so*" --drop "/usr/lib/libxcb-dri3.so*" --drop "/usr/lib/libxcb-glx.so*"
+--drop "/usr/lib/libxcb-randr.so*" --drop "/usr/lib/libxcb-record.so*" --drop "/usr/lib/libxcb-render.so*"
+--drop "/usr/lib/libxcb-res.so*" --drop "/usr/lib/libxcb-screensaver.so*" --drop "/usr/lib/libxcb-shape.so*"
+--drop "/usr/lib/libxcb-sync.so*" --drop "/usr/lib/libxcb-xf86dri.so*" --drop "/usr/lib/libxcb-xinerama.so*"
+--drop "/usr/lib/libxcb-xinput.so*" --drop "/usr/lib/libxcb-xkb.so*" --drop "/usr/lib/libxcb-xtest.so*"
+--drop "/usr/lib/libxcb-xv.so*" --drop "/usr/lib/libxcb-xvmc.so*"
+--drop "/usr/bin/imlib2_*" --drop /usr/share/imlib2/data
+--drop /usr/share/lbreakout2/sounds
 --prep fc-cache
 --prep "rm /etc/profile.d/hints.sh"
 --prep "sed -i 's/^NAME=.*/NAME=GreenOS/;s/^ID=.*/ID=greenos/;s/^PRETTY_NAME=.*/PRETTY_NAME=\"GreenOS 1.0\"/' /usr/lib/os-release"
@@ -27,7 +42,7 @@
 --file bundles/greenos/bin/greenos-menu:/usr/bin/greenos-menu
 --file bundles/greenos/bin/greenos-wallpaper:/usr/bin/greenos-wallpaper
 --file bundles/greenos/bin/greenos-start:/usr/bin/greenos-start
-nano htop pack notify micropython xorg feh xcalc xclock xeyes xkill font-hack zip lbreakout2
+nano htop pack notify micropython xorg feh xclock xeyes xkill xmessage font-hack zip lbreakout2
 libxft libxrender libxpm libxinerama libpng
 # библиотеки программ FOX (build-fox.sh)
 libstdc++ libjpeg-turbo libxrandr zlib

@@ -21,7 +21,7 @@ TRAY_ICON = 28  # Tray height=36 в /etc/system.jwmrc: кнопка 34 (без �
 
 # имя у нас <- путь в breeze-icons (usr/share/icons/breeze/...)
 BREEZE = {
-    "calc": "apps/48/accessories-calculator.svg",
+    "save": "actions/32/document-save.svg",
     "clock": "preferences/32/preferences-system-time.svg",
     "monitor": "apps/48/utilities-system-monitor.svg",
     "eyes": "actions/24/view-visible.svg",

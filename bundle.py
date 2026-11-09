@@ -1,5 +1,6 @@
 import argparse
 import base64
+import glob
 import gzip
 import hashlib
 import json
@@ -84,7 +85,32 @@ def shmin(data):
     return b"\n".join(out) + b"\n"
 
 
-def packages_cpio(names, world, extra=()):
+def drop_files(root, patterns):
+    """--drop: файлы пакетов, которых не будет в образе; из списков kt pkg они тоже вычеркнуты"""
+    gone = set()
+    for pat in patterns:
+        hits = glob.glob(os.path.join(root, pat.lstrip("/")))
+        if not hits:
+            sys.exit("--drop %s: в образе такого нет" % pat)
+        for p in hits:
+            if os.path.isdir(p) and not os.path.islink(p):
+                for dp, dn, fn in os.walk(p):
+                    gone.update(os.path.relpath(os.path.join(dp, x), root) for x in dn + fn)
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+            gone.add(os.path.relpath(p, root))
+    db = os.path.join(root, "var/lib/kt/pkg")
+    for n in os.listdir(db):
+        with open(os.path.join(db, n)) as f:
+            lines = f.read().splitlines()
+        keep = [x for x in lines if x.removeprefix("./").rstrip("/") not in gone]
+        if len(keep) != len(lines):
+            with open(os.path.join(db, n), "w") as f:
+                f.write("".join(x + "\n" for x in keep))
+
+
+def packages_cpio(names, world, extra=(), drop=()):
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "root")
         db = os.path.join(root, "var/lib/kt/pkg")
@@ -93,7 +119,8 @@ def packages_cpio(names, world, extra=()):
             src, _, dest = spec.partition(":")
             dest = dest or "/root/" + os.path.basename(src)
             if os.path.isdir(src):  # папка - её содержимое в ПУТЬ с правами (данные бандла, мимо kt pkg)
-                shutil.copytree(src, os.path.join(root, dest.lstrip("/")), dirs_exist_ok=True)
+                # ссылки - ссылками: иначе libFOX.so -> libFOX.so.0.0.59 ложился бы в память второй копией
+                shutil.copytree(src, os.path.join(root, dest.lstrip("/")), symlinks=True, dirs_exist_ok=True)
                 continue
             if dest.endswith("/"):
                 dest += os.path.basename(src)
@@ -116,6 +143,7 @@ def packages_cpio(names, world, extra=()):
             subprocess.run(["tar", "-xJpf", archive, "-C", root], check=True)
             with open(os.path.join(db, n), "w") as f:
                 subprocess.run(["tar", "-tJf", archive], stdout=f, check=True)
+        drop_files(root, drop)
         # XML без комментариев и отступов, как в пакетах репозитория (build.sh): здесь - пакеты прямо из
         # Alpine и данные бандла (--file), кроме /root
         subprocess.run([sys.executable, "-I", "scripts/xmlmin.py", root], check=True)
@@ -391,6 +419,9 @@ def options(argv=None):
                          "открытый сам по себе бандл - обычный")
     ap.add_argument("--file", action="append", default=[], metavar="ФАЙЛ[:ПУТЬ]",
                     help="положить файл в образ (по умолчанию в /root/); папку - её содержимое в ПУТЬ")
+    ap.add_argument("--drop", action="append", default=[], metavar="ПУТЬ",
+                    help="файл или папка пакета, которых не будет в образе (можно шаблон с *, можно несколько): "
+                         "мёртвые библиотеки, демо; из списков kt pkg они вычеркнуты")
     ap.add_argument("--version", help="метка бандла: видна в kt info")
     ap.add_argument("--title", help="имя системы на странице вместо KotelOS: заголовок вкладки, строка загрузки")
     ap.add_argument("--kernel", metavar="ФАЙЛ", help="ядро (по умолчанию %s/bzImage): частное, для пробы" % IMG)
@@ -421,7 +452,7 @@ def main():
         sys.exit("%s есть и это не бандл, не перезаписываю" % a.out)
 
     names = closure(a.packages)
-    initrd = open(IMG + "/rootfs.cpio", "rb").read() + packages_cpio(names, a.packages, a.file)
+    initrd = open(IMG + "/rootfs.cpio", "rb").read() + packages_cpio(names, a.packages, a.file, a.drop)
     files = {
         "wasm": blob(open(v86_dir + "/v86.wasm", "rb").read()),
         "bios": blob(open(v86_dir + "/seabios.bin", "rb").read()),

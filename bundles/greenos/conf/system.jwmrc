@@ -15,9 +15,9 @@
         <Option>noresize</Option>
     </Group>
     <Group>
-        <Name>xcalc</Name>
         <Name>calculator</Name>
         <Name>xeyes</Name>
+        <Name>xmessage</Name>
         <Option>nomax</Option>
     </Group>
 
@@ -30,6 +30,8 @@
         <TaskList maxwidth="220"/>
         <Pager labeled="true"/>
         <Dock/>
+        <!-- сохранить машину в браузере (kt save): с этого места откроется страница в следующий раз -->
+        <TrayButton icon="save.png" popup="Сохранить сеанс">exec:greenos-run save</TrayButton>
         <Clock format="%H:%M" popup="%A, %d %B %Y"><Button mask="1">exec:xclock</Button></Clock>
         <TrayButton icon="desktop.png" popup="Показать рабочий стол">showdesktop</TrayButton>
     </Tray>

@@ -1,9 +1,19 @@
 #!/bin/sh
-# программы GreenOS, которым нужны ключи или выбор (панель, клавиши, меню): terminal, screenshot, images
+# программы GreenOS, которым нужны ключи или выбор (панель, клавиши, меню): terminal, screenshot, images,
+# save, dl
+# Ответ kt - в окошке xmessage: оно само закроется через 4 с
+say() { exec xmessage -title "$1" -center -timeout 4 -buttons OK:0 -default OK "$2"; }
+case $1 in
+  # Xfe, правая кнопка - «Сценарии» - «Скачать» (~/.config/xfe/scripts): выделенное - в загрузки браузера,
+  # папка - архивом .tar.gz. Пути - от текущей папки Xfe, поэтому до cd
+  dl) shift; r=$(kt dl "$@" 2>&1) && r=${r:-"Готово: в загрузках браузера"}; say Скачивание "$r" ;;
+esac
 cd "$HOME" || exit 1
 case $1 in
   terminal) exec xterm ;;
   screenshot) exec shutterbug ;;
   images) exec feh --scale-down -g 900x600 -. "${2:-/usr/share/backgrounds}" ;;
-  *) echo "greenos-run terminal|screenshot|images" >&2; exit 1 ;;
+  # кнопка «Сохранить сеанс» на панели: kt save, его ответ - «сохранено, N МБ» или ошибка
+  save) say Сохранение "$(kt save 2>&1)" ;;
+  *) echo "greenos-run terminal|screenshot|images|save|dl" >&2; exit 1 ;;
 esac
