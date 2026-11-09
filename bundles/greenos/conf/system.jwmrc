@@ -134,7 +134,8 @@
     <MoveMode mask="A">opaque</MoveMode>
     <ResizeMode>opaque</ResizeMode>
 
-    <!-- клавиши - как в KDE: Alt+Tab, Alt+F4, Ctrl+Alt+T, Ctrl+Alt+стрелки - столы, Print - снимок экрана -->
+    <!-- клавиши - как в KDE: Alt+Tab, Alt+F4, Ctrl+Alt+T, Ctrl+Alt+стрелки - столы. Print не занят: при
+         прокрутке колесом в машину иногда долетала лишняя клавиша Print (ищем причину) -->
     <Key key="Up">up</Key>
     <Key key="Down">down</Key>
     <Key key="Right">right</Key>
@@ -155,7 +156,6 @@
     <Key mask="CA" key="d">showdesktop</Key>
     <Key mask="CA" key="t">exec:greenos-run terminal</Key>
     <Key mask="CA" key="Escape">exec:xkill</Key>
-    <Key key="Print">exec:greenos-run screenshot</Key>
 
     <Mouse context="root" button="3">root:3</Mouse>
     <Mouse context="root" button="4">ldesktop</Mouse>

@@ -31,6 +31,7 @@ BREEZE = {
     "games": "categories/32/applications-games.svg",
     "system": "categories/32/applications-system.svg",
     "office": "categories/32/applications-office.svg",
+    "graphics": "categories/32/applications-graphics.svg",
     "development": "categories/32/applications-development.svg",
     "python": "mimetypes/64/text-x-python.svg",
     "folder": "places/48/folder-green.svg",
