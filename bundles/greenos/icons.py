@@ -23,7 +23,6 @@ TRAY_ICON = 28  # Tray height=36 в /etc/system.jwmrc: кнопка 34 (без �
 BREEZE = {
     "calc": "apps/48/accessories-calculator.svg",
     "clock": "preferences/32/preferences-system-time.svg",
-    "screenshot": "applets/64/applets-screenshooter.svg",
     "monitor": "apps/48/utilities-system-monitor.svg",
     "eyes": "actions/24/view-visible.svg",
     "kill": "actions/32/window-close.svg",
@@ -32,6 +31,8 @@ BREEZE = {
     "games": "categories/32/applications-games.svg",
     "system": "categories/32/applications-system.svg",
     "office": "categories/32/applications-office.svg",
+    "development": "categories/32/applications-development.svg",
+    "python": "mimetypes/64/text-x-python.svg",
     "folder": "places/48/folder-green.svg",
     "about": "actions/32/help-about.svg",
     "restart": "actions/32/view-refresh.svg",

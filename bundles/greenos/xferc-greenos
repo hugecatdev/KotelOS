@@ -1,0 +1,32 @@
+[SETTINGS]
+iconpath = /usr/share/xfe/icons/kde-theme
+font = Cantarell,100,normal,regular
+textfont = Hack,100,normal,regular
+basecolor = #eef2ea
+bordercolor = #8fa684
+backcolor = #ffffff
+forecolor = #24301f
+hilitecolor = #ffffff
+shadowcolor = #b9c7b0
+selforecolor = #ffffff
+selbackcolor = #3dbb2b
+tipforecolor = #24301f
+tipbackcolor = #f6f9f3
+selmenutextcolor = #ffffff
+selmenubackcolor = #3dbb2b
+listforecolor = #24301f
+listbackcolor = #ffffff
+highlightcolor = #e6f8df
+pbarcolor = #3dbb2b
+attentioncolor = #e05a4f
+scrollbarcolor = #d6e2cf
+
+[PROGS]
+txtviewer = adie
+txteditor = adie
+imgviewer = feh
+imgeditor = feh
+xterm = xterm
+
+[OPTIONS]
+root_warn = 0

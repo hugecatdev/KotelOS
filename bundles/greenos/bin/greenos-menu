@@ -15,11 +15,12 @@ cat <<EOF
 <JWM>
 <RootMenu onroot="3" label="GreenOS" labeled="true" height="28">
 $(item xterm /usr/share/pixmaps/xterm-color_48x48.xpm)
-$(item PathFinder /usr/share/greenos/icons/fox/pathfinder.png 'PathFinder ~')
+$(item xfe /usr/share/pixmaps/xfe.png)
 $(item adie /usr/share/greenos/icons/fox/adie.png)
 <Separator/>
 $(menu office Офис "$(item abiword /usr/share/icons/hicolor/48x48/apps/abiword.png; item gnumeric /usr/share/icons/hicolor/48x48/apps/gnumeric.png)")
-$(menu utilities Стандартные "$(item calculator /usr/share/greenos/icons/fox/calculator.png; item xcalc calc; item xclock clock; item feh /usr/share/feh/images/feh.png 'greenos-run images'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png; item scrot screenshot 'greenos-run screenshot')")
+$(menu utilities Стандартные "$(item calculator /usr/share/greenos/icons/fox/calculator.png; item xcalc calc; item xclock clock; item feh /usr/share/feh/images/feh.png 'greenos-run images'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
+$(menu development Разработка "$(item micropython python 'xterm -T micropython -e micropython')")
 $(menu games Развлечения "$(item xeyes eyes)")
 $(menu system Система "$(item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
 <Separator/>

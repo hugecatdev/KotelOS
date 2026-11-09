@@ -1,0 +1,15 @@
+--- a/src/Properties.cpp
++++ b/src/Properties.cpp
+@@ -958,10 +958,12 @@
+         input->setEditable(false);
+         permstab->hide();
+         fassoctab->hide();
++#ifdef STARTUP_NOTIFICATION
+         if (sngroup != NULL)
+         {
+             sngroup->hide();
+         }
++#endif
+     }
+ }
+ 

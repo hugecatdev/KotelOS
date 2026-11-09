@@ -1,4 +1,6 @@
 #!/bin/sh
 # сессия GreenOS (startx): JWM - панель, меню «Пуск», обои (/etc/system.jwmrc, своё - ~/.jwmrc).
+# Переводы программ (Xfe) - русские; кодировка и всё остальное - прежние (LANG=C.UTF-8).
 # Выход - меню, «Выйти»
+export LC_MESSAGES=ru_RU.UTF-8
 exec jwm

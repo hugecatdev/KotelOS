@@ -25,6 +25,7 @@
         <TrayButton icon="greenos.png" popup="Меню">root:3</TrayButton>
         <Spacer width="4"/>
         <TrayButton icon="/usr/share/pixmaps/xterm-color_48x48.xpm" popup="xterm">exec:greenos-run terminal</TrayButton>
+        <TrayButton icon="/usr/share/pixmaps/xfe.png" popup="xfe">exec:xfe</TrayButton>
         <Spacer width="6"/>
         <TaskList maxwidth="220"/>
         <Pager labeled="true"/>
