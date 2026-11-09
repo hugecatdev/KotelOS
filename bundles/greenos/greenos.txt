@@ -6,7 +6,7 @@
 # выделение, плоско, без скруглений), обои - кубик. Программы оконные и лёгкие, под своими именами:
 # xterm, xcalc, xclock, xeyes, feh, xkill, micropython, lbreakout2, своё окно «О системе» (greenos-about);
 # FOX (Xfe, xfa, xfi, Adie, Calculator, ShutterBug, ControlPanel - build-fox.sh), значки на рабочем столе
-# (idesk - build-idesk.sh); с GitHub - herbe (уведомления), xroach и oneko (build-extras.sh); рисовалка
+# (idesk - build-idesk.sh); с GitHub - xroach и oneko (build-extras.sh); рисовалка
 # AzPainter (официальный GitLab автора - build-azpainter.sh):
 # меню берёт то, что установлено. KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
 # подсказки kt при входе (пустой hints.sh), вместо startx - greenos-start с заставкой и

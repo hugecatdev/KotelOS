@@ -1,6 +1,5 @@
 #!/bin/sh
 # Мелочи для GreenOS с GitHub (по коммитам, суммы - ниже), тулчейн musl на sysroot от build.sh:
-# - herbe (dudik/herbe, MIT) - всплывающие уведомления на Xlib+Xft, цвета - herbe-config.h;
 # - xroach (interkosmos/xroach) - тараканы, что прячутся под окнами;
 # - oneko (IreneKnapp/oneko) - кошка бегает за курсором.
 # Результат -> bundles/greenos/root/usr/bin
@@ -23,7 +22,6 @@ get() {  # get имя репозиторий коммит сумма
   tar -xzf $CACHE/$f -C $B
 }
 mkdir -p $B $OUT/usr/bin
-get herbe dudik/herbe dec89e4d669a38a3f6dd8a6f2e2bae39f26369d3 761fa9ccddfcd86e86e90cfee1d1b5d82af91eaa8f59b0e532d324a41334179e
 get xroach interkosmos/xroach 3ef9309005936050a45e43f93e821eece2ac6eb7 47cb1efe7aeddbf97929aa6c243e21169dfcaf8910ae2eb27cd5e66e61ffefce
 get oneko IreneKnapp/oneko fe5a09264a765d4613c9dcc2703b03e06f77875b 4643fe1340eb6afeef93307bab27a6b4eab562a45b24bb9b37236186e1c57647
 
@@ -31,9 +29,6 @@ CC="$TC/bin/i686-linux-musl-gcc -march=pentium4 -mtune=generic -Os -w"
 INC="-I$SR/usr/include -I$SR/usr/include/freetype2"
 LINK="-s -L$SR/usr/lib -Wl,-rpath-link,$SR/usr/lib:$SR/lib -Wl,--as-needed"
 
-H=$B/herbe-dec89e4d669a38a3f6dd8a6f2e2bae39f26369d3
-cp bundles/greenos/herbe-config.h $H/config.h
-$CC $INC -o $OUT/usr/bin/herbe $H/herbe.c $LINK -lXft -lX11 -lpthread
 R=$B/xroach-3ef9309005936050a45e43f93e821eece2ac6eb7
 $CC $INC -I$R -o $OUT/usr/bin/xroach $R/xroach.c $LINK -lX11 -lm
 K=$B/oneko-fe5a09264a765d4613c9dcc2703b03e06f77875b
@@ -54,6 +49,6 @@ paint(roach, (110, 70, 30, 255)).save(f"{out}/xroach.png")
 paint(neko, (20, 20, 20, 255), paint(mask, (255, 255, 255, 255))).save(f"{out}/oneko.png")
 EOF
 
-for f in herbe xroach oneko; do
+for f in xroach oneko; do
   echo "$f $(du -h $OUT/usr/bin/$f | cut -f1): $($TC/bin/i686-linux-musl-readelf -d $OUT/usr/bin/$f | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done
