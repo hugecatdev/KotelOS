@@ -1,0 +1,21 @@
+Главный цикл: отрезок 4 мс вместо 1 мс
+
+main_loop возвращает управление циклу событий, когда гость проработал TIME_PER_FRAME. При 1 мс
+это тысяча возвратов в секунду: сообщение самому себе, очередь задач браузера, вход обратно в
+wasm - около десятой части времени потока. С 4 мс (tests/pair.py --x, поверх патча 15): время
+сессий X 0.93 / 0.93 / 0.90, в Web Worker 0.98 / 0.92 / 0.92; 8 мс - 0.91 / 0.84 / 0.88, в Worker
+почти как 4. Цена: события страницы ждут до 4 мс, когда v86 в основном потоке (кадр экрана -
+16.7 мс); в Web Worker страница этого не видит. Таймеры гостя не задеты: run_hardware_timers
+идёт внутри цикла после каждых LOOP_COUNTER инструкций.
+
+--- a/src/rust/cpu/cpu.rs
++++ b/src/rust/cpu/cpu.rs
+@@ -78,7 +78,7 @@
+ pub const INTERPRETER_ITERATION_LIMIT: u32 = 100_001;
+ 
+ // How often, in milliseconds, to yield to the browser for rendering and running events
+-pub const TIME_PER_FRAME: f64 = 1.0;
++pub const TIME_PER_FRAME: f64 = 4.0;
+ 
+ pub const FLAG_SUB: i32 = -0x8000_0000;
+ pub const FLAG_CARRY: i32 = 1;
