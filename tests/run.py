@@ -25,6 +25,8 @@ import bundle
 PKGS = ["fun", "micropython", "python3", "python-requests", "pip", "curl", "pack", "sync", "notify", "ai"]
 # KT_WORKER=1: бандлы с boot.worker on (v86 в Web Worker)
 WORKER = os.environ.get("KT_WORKER") == "1"
+# KT_KERNEL=ФАЙЛ: тестовые бандлы с этим ядром (bundle.py --kernel), а не images/bzImage - частное ядро из worktree
+KERNEL = os.environ.get("KT_KERNEL")
 AGENTS = r"""n=0
 for d in /proc/[0-9]*; do
   read -r pid comm st ppid pgrp sid rest < $d/stat 2>/dev/null || continue
@@ -416,7 +418,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="kt-tests-")
     www = os.path.join(tmp, "www")
     os.makedirs(www)
-    worker = ["--worker"] if WORKER else []
+    worker = (["--worker"] if WORKER else []) + (["--kernel", os.path.abspath(KERNEL)] if KERNEL else [])
     with open(os.path.join(tmp, "app.py"), "w") as f:
         f.write(EMBED_APP)
     with open(os.path.join(tmp, "xinitrc"), "w") as f:

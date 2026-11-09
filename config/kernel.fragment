@@ -68,7 +68,27 @@ CONFIG_SERIO_LIBPS2=y
 # CONFIG_WLAN is not set
 # CONFIG_WIRELESS is not set
 # CONFIG_USB_SUPPORT is not set
-# CONFIG_SOUND is not set
+# звук: Sound Blaster 16 из v86 (ISA: порт 0x220, IRQ 5, DMA 1 и 5 - драйвер находит их сам и задаёт
+# через микшер карты), только ALSA PCM: без OSS, секвенсора, MIDI и остальных карт. Программы - через
+# alsa-lib (пакет), страница выводит звук WebAudio, когда машина откроет карту
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_ISA=y
+# CONFIG_PNP is not set
+# CONFIG_NET_VENDOR_CIRRUS is not set
+CONFIG_SND_ISA=y
+CONFIG_SND_SB16=y
+# CONFIG_SND_SB16_CSP is not set
+# CONFIG_SND_OSSEMUL is not set
+# CONFIG_SND_SEQUENCER is not set
+# CONFIG_SND_SUPPORT_OLD_API is not set
+# CONFIG_SND_VERBOSE_PROCFS is not set
+# CONFIG_SND_DRIVERS is not set
+# CONFIG_SND_PCI is not set
+# CONFIG_SND_SPI is not set
+# CONFIG_SND_USB is not set
+# CONFIG_SND_X86 is not set
+# CONFIG_SND_SOC is not set
 # CONFIG_PCCARD is not set
 # CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_HWMON is not set

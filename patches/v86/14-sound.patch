@@ -1,0 +1,41 @@
+Звук (SB16 и его DMA): сохранения без него и dac-enable после восстановления
+
+- Раньше устройства sound у нас не было (patches/v86/06), и в сохранениях машин
+  нет state[49] (dma) и state[61] (sb16): set_state(undefined) ронял
+  восстановление. Такие устройства остаются как после сброса - ядро старой
+  машины их и не знает.
+- SB16.set_state слал dac-enable всегда, когда DMA не на паузе, даже если
+  передачи нет: страница (page.html) по нему будит WebAudio и держит его, пока
+  машина не закроет карту. Теперь dac-enable - только при идущей передаче.
+
+--- a/src/cpu.js
++++ b/src/cpu.js
+@@ -729,7 +729,7 @@
+     this.devices.virtio_9p && state[45] && this.devices.virtio_9p.set_state(state[45]);
+     state[46] && this.set_state_apic(state[46]);
+     this.devices.rtc && this.devices.rtc.set_state(state[47]);
+-    this.devices.dma && this.devices.dma.set_state(state[49]);
++    this.devices.dma && state[49] && this.devices.dma.set_state(state[49]);
+     this.devices.acpi && this.devices.acpi.set_state(state[50]);
+     // 51 (formerly hpet)
+     this.devices.vga && this.devices.vga.set_state(state[52]);
+@@ -767,7 +767,7 @@
+     this.devices.pit && this.devices.pit.set_state(state[58]);
+     this.devices.net && this.devices.net.set_state(state[59]);
+     this.set_state_pic(state[60]);
+-    this.devices.sb16 && this.devices.sb16.set_state(state[61]);
++    this.devices.sb16 && state[61] && this.devices.sb16.set_state(state[61]);
+
+     this.devices.uart1 && this.devices.uart1.set_state(state[79]);
+     this.devices.uart2 && this.devices.uart2.set_state(state[80]);
+--- a/src/sb16.js
++++ b/src/sb16.js
+@@ -414,7 +414,7 @@
+     this.dma_buffer_uint16 = new Uint16Array(this.dma_buffer);
+     this.dma_syncbuffer = new SyncBuffer(this.dma_buffer);
+
+-    if(this.dma_paused)
++    if(this.dma_paused || !this.dma_bytes_left)
+     {
+         this.bus.send("dac-disable");
+     }

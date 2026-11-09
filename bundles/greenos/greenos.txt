@@ -18,8 +18,11 @@
 # Кнопка «Сохранить сеанс» на панели - kt save; в Xfe правая кнопка - «Сценарии» - «Скачать» - kt dl
 # (fs/root/.config/xfe/scripts); ответ обоих - в окошке xmessage. --no-3d: программ OpenGL здесь нет.
 # --drop - чего из пакетов в образе нет: библиотеки, которые не грузит ни одна программа
-# (scripts/deadlibs.py bundles/greenos/greenos.txt), демо imlib2 (rgb.txt нужен загрузчику XPM), звуки
-# lbreakout2 (звуковой карты в машине нет)
+# (scripts/deadlibs.py bundles/greenos/greenos.txt), демо imlib2 (rgb.txt нужен загрузчику XPM).
+# Звук: SB16 машины, alsa-lib - её SDL берёт сам (сервер не нужен), страница играет после первого касания.
+# fs/etc/asound.conf - карта только на 22050 Гц: sdl12-compat открывает её не ниже 44100 и пересчитывает
+# звук игры 22050 -> 44100 плавающей точкой - в v86 это 44% процессора на LBreakout2 вместо 21%;
+# fs/root/.lgames/lbreakout2.conf - буфер звука игры 1024 вместо 512 (реже просыпается, 17%; без звука 5%)
 --snap --vga 8 --no-3d --mem 256 --worker --title GreenOS
 --drop "/usr/lib/libbrotlienc.so*"
 --drop "/usr/lib/libxcb-composite.so*" --drop "/usr/lib/libxcb-dbe.so*" --drop "/usr/lib/libxcb-dpms.so*"
@@ -29,8 +32,7 @@
 --drop "/usr/lib/libxcb-sync.so*" --drop "/usr/lib/libxcb-xf86dri.so*" --drop "/usr/lib/libxcb-xinerama.so*"
 --drop "/usr/lib/libxcb-xinput.so*" --drop "/usr/lib/libxcb-xkb.so*" --drop "/usr/lib/libxcb-xtest.so*"
 --drop "/usr/lib/libxcb-xv.so*" --drop "/usr/lib/libxcb-xvmc.so*"
---drop "/usr/bin/imlib2_*" --drop /usr/share/imlib2/data
---drop /usr/share/lbreakout2/sounds
+--drop "/usr/bin/imlib2_*" --drop /usr/share/imlib2/data --drop "/usr/lib/libatopology.so*"
 --prep fc-cache
 --prep "rm /etc/profile.d/hints.sh"
 --prep "sed -i 's/^NAME=.*/NAME=GreenOS/;s/^ID=.*/ID=greenos/;s/^PRETTY_NAME=.*/PRETTY_NAME=\"GreenOS 1.0\"/' /usr/lib/os-release"
@@ -41,7 +43,7 @@
 --file bundles/greenos/bin/greenos-menu:/usr/bin/greenos-menu
 --file bundles/greenos/bin/greenos-wallpaper:/usr/bin/greenos-wallpaper
 --file bundles/greenos/bin/greenos-start:/usr/bin/greenos-start
-nano htop pack notify micropython xorg feh xclock xeyes xkill xmessage font-hack zip lbreakout2
+nano htop pack notify micropython xorg feh xclock xeyes xkill xmessage font-hack zip lbreakout2 alsa-lib
 libxft libxrender libxpm libxinerama libpng
 # библиотеки программ FOX (build-fox.sh)
 libstdc++ libjpeg-turbo libxrandr zlib

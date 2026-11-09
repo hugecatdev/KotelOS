@@ -2583,7 +2583,6 @@
         autostart: true,
         disable_mouse: true,
         disable_keyboard: true,
-        disable_speaker: true,
         net_device: { type: "ne2k", relay_url: "fetch" },
         preserve_mac_from_state_image: true,
         // диск /disk (virtio-9p): дерево файлов - в машине и её сохранении, содержимое - в каталоге
@@ -2716,6 +2715,28 @@
         });
       }
       emulator.keyboard_set_enabled(false);
+      // звук: Sound Blaster 16 машины играет через WebAudio страницы (SpeakerAdapter v86). Браузер даёт
+      // звук только после касания или клавиши, а работающий AudioContext - это поток звука и батарея: он
+      // идёт, только пока машина держит карту открытой (dac-enable .. dac-disable). SB16 берёт данные по
+      // запросам страницы, так что до первого касания звук в машине стоит
+      const audio = emulator.speaker_adapter && emulator.speaker_adapter.audio_context;
+      if (audio) {
+        let playing = false, idle = 0;
+        // v86 будит звук при каждом пуске машины, а resume() без жеста не отклоняется, а ждёт первого
+        // касания - и звук шёл бы без открытой карты: будит только эта обёртка и только при открытой,
+        // а запуск по resume(), позванному ещё в конструкторе v86, тут же гасится
+        const resume = audio.resume.bind(audio);
+        audio.resume = () => (playing ? resume() : Promise.resolve());
+        const apply = () => (playing ? resume() : audio.suspend()).catch(() => {});
+        audio.addEventListener("statechange", () => { if (!playing && audio.state === "running") apply(); });
+        emulator.add_listener("dac-enable", () => { playing = true; clearTimeout(idle); apply(); });
+        // программа может закрыть карту между звуками и тут же открыть снова: спать - если тихо 5 с
+        emulator.add_listener("dac-disable", () => { playing = false; clearTimeout(idle); idle = setTimeout(apply, 5000); });
+        for (const ev of ["pointerdown", "keydown", "touchend"]) {
+          addEventListener(ev, () => { if (playing && audio.state !== "running") apply(); }, { capture: true, passive: true });
+        }
+        apply();
+      }
       /* #if virtio_gpu */
       emulator.add_listener("virtio-gpu-screen-size", (size) => {
         gpuSize = size;
