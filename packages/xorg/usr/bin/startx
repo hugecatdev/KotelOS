@@ -22,8 +22,9 @@ mkdir -p /tmp/.X11-unix /var/lib/xkb /var/log
 rm -f /tmp/.X11-unix/X0  # от прошлого сервера: по нему ждём готовности нового
 
 # клавиатура - устройство с клавишей A (бит 30 младшего слова), мышь - с абсолютными
-# координатами (мышь VMware)
-kbd= ptr=
+# координатами (мышь VMware); колесо у неё - на втором, относительном устройстве (там же движение,
+# пока мышь захвачена страницей) - без него прокрутка до X не доходит
+kbd= ptr= rel=
 for e in /sys/class/input/event*; do
   [ -e "$e" ] || continue
   keys=$(cat "$e/device/capabilities/key")
@@ -31,6 +32,8 @@ for e in /sys/class/input/event*; do
     ptr=${ptr:-/dev/input/${e##*/}}
   elif [ $((0x${keys##* } >> 30 & 1)) = 1 ]; then
     kbd=${kbd:-/dev/input/${e##*/}}
+  elif [ "$(cat "$e/device/capabilities/rel")" != 0 ]; then
+    rel=${rel:-/dev/input/${e##*/}}
   fi
 done
 
@@ -95,11 +98,13 @@ Section "InputDevice"
   Driver "evdev"
   Option "Device" "$ptr"
 EndSection
+$([ -z "$rel" ] || printf 'Section "InputDevice"\n  Identifier "wheel"\n  Driver "evdev"\n  Option "Device" "%s"\nEndSection\n' "$rel")
 Section "ServerLayout"
   Identifier "layout"
   Screen "screen"
   InputDevice "keyboard" "CoreKeyboard"
   InputDevice "mouse" "CorePointer"
+$([ -z "$rel" ] || echo '  InputDevice "wheel" "SendCoreEvents"')
 EndSection
 EOF
 
