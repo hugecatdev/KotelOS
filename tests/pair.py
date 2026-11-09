@@ -2,9 +2,10 @@
 нагрев и частота у них общие, поэтому отношение времён держится и там, где прогоны по очереди
 (tests/bench.py) расходятся на 10-15%. Нагрузки и бандлы - как в bench.py.
 
-python3 tests/pair.py ПАПКА ДРУГАЯ_ПАПКА... [-n 4] [-k имя] [--x]
+python3 tests/pair.py ПАПКА ДРУГАЯ_ПАПКА... [-n 4] [-k имя] [--x] [--worker]
 
-Варианты задаются как в bench.py (ПАПКА#5=100000 - с настройкой JIT). Число вариантов - не больше
+Варианты задаются как в bench.py (ПАПКА#5=100000 - с настройкой JIT); ПАПКА%СКРИПТ - со своим
+запускателем Chromium (скрипт, который зовёт chromium с ключами V8 и "$@"). Число вариантов - не больше
 числа свободных ядер / 3: у каждого свой основной поток и фоновая компиляция. В конце - медианы
 отношений к первому варианту по кругам (меньше 1 - быстрее)."""
 import argparse
@@ -27,6 +28,7 @@ def main():
     ap.add_argument("-k", action="append", help="только эти нагрузки")
     ap.add_argument("--mem", type=int, default=256)
     ap.add_argument("--x", action="store_true", help="нагрузка - сессии X")
+    ap.add_argument("--worker", action="store_true", help="v86 в Web Worker: смотреть время и процессор вкладки")
     a = ap.parse_args()
     load = bench.XLOAD if a.x else bench.LOAD
     names = ["boot"] + [n for n, _ in load]
@@ -34,18 +36,28 @@ def main():
         names = ["boot"] + [n for n in names if n in a.k]
     tmp = tempfile.mkdtemp(prefix="kt-pair-")
     try:
-        pages, cfgs = [], []
+        pages, cfgs, chromes = [], [], []
         for i, v in enumerate(a.v86):
+            # ПАПКА%СКРИПТ - вариант со своим запускателем Chromium (ключи V8)
+            v, _, chrome = v.partition("%")
+            chromes.append(chrome or None)
             v, _, cfg = v.partition("#")
             cfgs.append([tuple(map(int, kv.split("="))) for kv in cfg.split(",") if kv])
             pages.append(os.path.join(tmp, "b%d.html" % i))
-            bench.build(os.path.abspath(v), pages[-1], a.mem, a.x)
+            bench.build(os.path.abspath(v), pages[-1], a.mem, a.x, a.worker)
         rounds = []
         for k in range(a.n):
             res = [None] * len(pages)
+            # каждая нагрузка начинается у всех разом: иначе быстрый вариант уходит вперёд и
+            # делит ядра уже с другой нагрузкой соседей
+            barrier = threading.Barrier(len(pages), timeout=900)
 
             def one(i):
-                res[i] = bench.run_once(pages[i], names, tmp, load, cfgs[i])
+                try:
+                    res[i] = bench.run_once(pages[i], names, tmp, load, cfgs[i], chromes[i], barrier.wait)
+                except BaseException:
+                    barrier.abort()
+                    raise
             threads = [threading.Thread(target=one, args=(i,)) for i in range(len(pages))]
             for t in threads:
                 t.start()

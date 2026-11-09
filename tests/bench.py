@@ -20,6 +20,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,8 +55,10 @@ NET = [
 ]
 
 
-def build(v86, out, mem, x=False):
+def build(v86, out, mem, x=False, worker=False):
     args = [sys.executable, os.path.join(ROOT, "bundle.py"), "--v86", v86, "-o", out, "-n", "bench", "--mem", str(mem)]
+    if worker:
+        args.append("--worker")
     if x:
         args += ["--vga", "8", "--no-3d", "--file", os.path.join(ROOT, "tests/bench/xinitrc") + ":/root/.xinitrc"] + XPKGS
     else:
@@ -97,9 +100,23 @@ def since(c0, pids):
     return c1[0] - c0[0], c1[1] - c0[1]
 
 
-def run_once(page, names, tmp, load=LOAD, cfg=()):
+CHROME_LOCK = threading.Lock()
+
+
+def run_once(page, names, tmp, load=LOAD, cfg=(), chrome=None, sync=None):
     prof = tempfile.mkdtemp(dir=tmp)
-    c = bundle.Chrome(prof)
+    with CHROME_LOCK:
+        # chrome - свой запускатель Chromium у варианта (скрипт с ключами V8): bundle.Chrome берёт его из CHROME
+        old = os.environ.get("CHROME")
+        if chrome:
+            os.environ["CHROME"] = chrome
+        try:
+            c = bundle.Chrome(prof)
+        finally:
+            if chrome:
+                os.environ.pop("CHROME")
+                if old:
+                    os.environ["CHROME"] = old
     res = {}
     try:
         t0 = time.time()
@@ -116,6 +133,8 @@ def run_once(page, names, tmp, load=LOAD, cfg=()):
         for name, cmd in load:
             if name not in names:
                 continue
+            if sync:
+                sync()  # парный замер: нагрузка начинается у всех вариантов разом
             c0 = cpu(pids)
             r = c.eval("(async () => { const t = performance.now(); const r = await exec(%s); "
                        "return [performance.now() - t, r.code, r.err]; })()" % json.dumps(cmd))
@@ -153,6 +172,7 @@ def main():
     ap.add_argument("--mem", type=int, default=256, help="память машины, МБ")
     ap.add_argument("--json", help="сырые замеры сюда")
     ap.add_argument("--x", action="store_true", help="нагрузка - сессии X (Xorg, twm, xterm...), бандл с экраном")
+    ap.add_argument("--worker", action="store_true", help="v86 в Web Worker (boot.worker): смотреть время, основной поток тут - только страница")
     a = ap.parse_args()
     load = XLOAD if a.x else LOAD
     names = ["boot"] + [n for n, _ in (load if a.x else load + NET)]
@@ -167,7 +187,7 @@ def main():
             v, _, cfg = v.partition("#")
             cfgs.append([tuple(map(int, kv.split("="))) for kv in cfg.split(",") if kv])
             page = os.path.join(tmp, "b%d.html" % i)
-            build(os.path.abspath(v), page, a.mem, a.x)
+            build(os.path.abspath(v), page, a.mem, a.x, a.worker)
             pages.append(page)
         runs = [[] for _ in a.v86]
         for k in range(a.n):

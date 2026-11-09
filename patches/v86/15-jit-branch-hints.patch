@@ -1,0 +1,529 @@
+JIT: подсказки ветвлений для V8 и проверка TLB одним сравнением
+
+Каждое обращение к памяти в коде JIT - быстрый путь (запись TLB действительна, доступ не
+пересекает границу страницы) и вызов медленного пути. V8 не знал, что вызов холодный: в
+машинном коде TurboFan он лежал прямо на пути, быстрый путь через него перепрыгивал, а значения,
+живущие через вызов, сохранялись в стек до развилки - на каждом обращении. По счётчикам
+процессора на инструкцию гостя выходило 19 машинных инструкций и 8.8 обращений к памяти хоста.
+
+Модуль теперь несёт секцию metadata.code.branch_hint (подсказки ветвлений wasm; движок, который
+их не знает, секцию пропускает): быстрый путь памяти - «вероятно», выход по отказу, предел цикла
+по счётчику инструкций, деление на ноль, ловушки FPU/SSE, сдвиг на ноль, отказы *_without_fault,
+медленная запись после чтения-записи - «маловероятно». TurboFan выносит такие ветки из основного
+кода и сохраняет регистры уже там. Заодно проверка быстрого пути - одно сравнение:
+(entry & MASK | (addr + bytes - 1 ^ addr) & 0x1000) == TLB_VALID вместо двух сравнений через
+sete/movzx.
+
+Замеры (tests/pair.py --x, сессия X целиком, варианты одновременно и синхронно; две копии базы
+расходятся на 0.98-1.01): время сессий 0.80 / 0.71 / 0.66 от базы (третья, прогретая, - в 1.5
+раза быстрее), процессор вкладки 0.91 / 0.77 / 0.75, загрузка ядра 0.96 по основному потоку.
+Микротест в госте: чтение 0.71 -> 0.52 нс, запись 0.70 -> 0.47, push/pop 1.10 -> 0.79. Только
+подсказки без свёртки проверки: 0.82 / 0.73 против 0.80 / 0.69. Счётчики процессора на прогретой
+сессии: машинных инструкций 38.0 -> 31.7 млрд, промахов предсказателя 102 -> 49 млн, промахов
+L1I 121 -> 74 млн.
+
+--- a/src/rust/wasmgen/wasm_opcodes.rs
++++ b/src/rust/wasmgen/wasm_opcodes.rs
+@@ -9,6 +9,7 @@
+ c!(WASM_VERSION, 0x1);
+ 
+ // Section codes
++c!(SC_CUSTOM, 0);
+ c!(SC_TYPE, 1);
+ c!(SC_IMPORT, 2);
+ c!(SC_FUNCTION, 3);
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -73,6 +73,11 @@
+     output: Vec<u8>,
+     instruction_body: Vec<u8>,
+ 
++    // branch hints (offset of the instruction in instruction_body, is the branch likely taken),
++    // written as the custom section metadata.code.branch_hint: the optimising compiler of the
++    // engine moves unlikely paths out of line and spills registers there, not on the fast path
++    branch_hints: Vec<(u32, bool)>,
++
+     idx_import_table_size: usize, // for rewriting once finished
+     idx_import_count: usize,      // for rewriting once finished
+     idx_import_entries: usize,    // for searching the imports
+@@ -119,6 +124,7 @@
+         let mut b = WasmBuilder {
+             output: Vec::with_capacity(256),
+             instruction_body: Vec::with_capacity(256),
++            branch_hints: Vec::new(),
+ 
+             idx_import_table_size: 0,
+             idx_import_count: 0,
+@@ -163,6 +169,7 @@
+         self.set_import_table_size(2);
+         self.set_import_count(0);
+         self.instruction_body.clear();
++        self.branch_hints.clear();
+         self.free_locals_i32.clear();
+         self.free_locals_i64.clear();
+         self.local_count = 0;
+@@ -180,6 +187,29 @@
+         self.write_function_section();
+         self.write_export_section();
+ 
++        if !self.branch_hints.is_empty() {
++            // custom section: name, vec(function index, vec(offset from the start of the body
++            // (the locals), size of the hint, hint))
++            let mut section = Vec::with_capacity(self.branch_hints.len() * 4 + 40);
++            let name = "metadata.code.branch_hint";
++            section.push(name.len().safe_to_u8());
++            section.extend(name.as_bytes());
++            section.push(1); // one function
++            // the function follows the imports; the last import is the memory
++            write_leb_u32(&mut section, self.import_count as u32 - 1);
++            write_leb_u32(&mut section, self.branch_hints.len() as u32);
++            // locals are written below as: number of groups, then (count, type) for each group
++            let locals_size = 1 + 2 * self.local_groups().len() as u32;
++            for &(offset, likely) in &self.branch_hints {
++                write_leb_u32(&mut section, locals_size + offset);
++                section.push(1);
++                section.push(likely as u8);
++            }
++            self.output.push(op::SC_CUSTOM);
++            write_leb_u32(&mut self.output, section.len() as u32);
++            self.output.append(&mut section);
++        }
++
+         // write code section preamble
+         self.output.push(op::SC_CODE);
+ 
+@@ -203,6 +233,32 @@
+             "All locals should have been freed"
+         );
+ 
++        let groups = self.local_groups();
++        dbg_assert!(groups.len() < 128);
++        self.output.push(groups.len().safe_to_u8());
++        for (local_type, count) in groups {
++            dbg_assert!(count < 128);
++            self.output.push(count);
++            self.output.push(local_type);
++        }
++
++        self.output.append(&mut self.instruction_body);
++
++        self.output.push(op::OP_END);
++
++        // write the actual sizes to the pointer locations stored above. We subtract 4 from the actual
++        // value because the ptr itself points to four bytes
++        let fn_body_size = (self.output.len() - idx_fn_body_size - 4) as u32;
++        write_fixed_leb32_at_idx(&mut self.output, idx_fn_body_size, fn_body_size);
++
++        let code_section_size = (self.output.len() - idx_code_section_size - 4) as u32;
++        write_fixed_leb32_at_idx(&mut self.output, idx_code_section_size, code_section_size);
++
++        self.output.len()
++    }
++
++    /// Locals of the function as groups of (type, count), in the order of their indices
++    fn local_groups(&self) -> Vec<(u8, u8)> {
+         let free_locals_i32 = &self.free_locals_i32;
+         let free_locals_i64 = &self.free_locals_i64;
+ 
+@@ -216,38 +272,19 @@
+                 op::TYPE_I32
+             }
+         });
+-        let mut groups = vec![];
++        let mut groups: Vec<(u8, u8)> = vec![];
+         for local_type in locals {
+             if let Some(last) = groups.last_mut() {
+                 let (last_type, last_count) = *last;
+-                if last_type == local_type {
++                // a group is written with a one byte count
++                if last_type == local_type && last_count < 127 {
+                     *last = (local_type, last_count + 1);
+                     continue;
+                 }
+             }
+             groups.push((local_type, 1));
+         }
+-        dbg_assert!(groups.len() < 128);
+-        self.output.push(groups.len().safe_to_u8());
+-        for (local_type, count) in groups {
+-            dbg_assert!(count < 128);
+-            self.output.push(count);
+-            self.output.push(local_type);
+-        }
+-
+-        self.output.append(&mut self.instruction_body);
+-
+-        self.output.push(op::OP_END);
+-
+-        // write the actual sizes to the pointer locations stored above. We subtract 4 from the actual
+-        // value because the ptr itself points to four bytes
+-        let fn_body_size = (self.output.len() - idx_fn_body_size - 4) as u32;
+-        write_fixed_leb32_at_idx(&mut self.output, idx_fn_body_size, fn_body_size);
+-
+-        let code_section_size = (self.output.len() - idx_code_section_size - 4) as u32;
+-        write_fixed_leb32_at_idx(&mut self.output, idx_code_section_size, code_section_size);
+-
+-        self.output.len()
++        groups
+     }
+ 
+     pub fn write_type_section(&mut self) {
+@@ -923,6 +960,18 @@
+         self.instruction_body.push(op::OP_BRIF);
+         self.write_label(label);
+     }
++    /// br_if with a hint for the engine: is the branch likely taken
++    pub fn br_if_hint(&mut self, label: Label, likely: bool) {
++        self.branch_hints
++            .push((self.instruction_body.len() as u32, likely));
++        self.br_if(label);
++    }
++    /// if with a hint for the engine: is the body likely entered
++    pub fn if_void_hint(&mut self, likely: bool) {
++        self.branch_hints
++            .push((self.instruction_body.len() as u32, likely));
++        self.if_void();
++    }
+ 
+     fn write_label(&mut self, label: Label) {
+         let depth = *self.label_to_depth.get(&label).unwrap();
+--- a/src/rust/codegen.rs
++++ b/src/rust/codegen.rs
+@@ -113,7 +113,7 @@
+         ctx.builder.block_end();
+     }
+     else {
+-        ctx.builder.br_if(ctx.exit_label);
++        ctx.builder.br_if_hint(ctx.exit_label, false);
+     }
+ }
+ 
+@@ -408,7 +408,7 @@
+         ctx.builder.block_end();
+     }
+     else {
+-        ctx.builder.br_if(ctx.exit_with_fault_label);
++        ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+     }
+ }
+ 
+@@ -428,7 +428,7 @@
+         ctx.builder.block_end();
+     }
+     else {
+-        ctx.builder.br_if(ctx.exit_with_fault_label);
++        ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+     }
+ }
+ 
+@@ -676,20 +676,23 @@
+     );
+     ctx.builder.and_i32();
+ 
+-    ctx.builder.const_i32(TLB_VALID as i32);
+-    ctx.builder.eq_i32();
+-
+     if bits != BitSize::BYTE {
++        // bit 12 of (addr + bytes - 1) ^ addr: the access crosses the page boundary. One
++        // comparison instead of two combined
+         ctx.builder.get_local(&address_local);
+-        ctx.builder.const_i32(0xFFF);
+-        ctx.builder.and_i32();
+-        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+-        ctx.builder.le_i32();
+-
++        ctx.builder.const_i32(bits.bytes() as i32 - 1);
++        ctx.builder.add_i32();
++        ctx.builder.get_local(&address_local);
++        ctx.builder.xor_i32();
++        ctx.builder.const_i32(0x1000);
+         ctx.builder.and_i32();
++        ctx.builder.or_i32();
+     }
+ 
+-    ctx.builder.br_if(cont);
++    ctx.builder.const_i32(TLB_VALID as i32);
++    ctx.builder.eq_i32();
++
++    ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+         ctx.builder.get_local(&address_local);
+@@ -731,7 +734,7 @@
+         ctx.builder.and_i32();
+     }
+ 
+-    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+ 
+     ctx.builder.block_end();
+ 
+@@ -816,7 +819,7 @@
+     ctx.builder.const_i32(TLB_VALID as i32);
+     ctx.builder.eq_i32();
+ 
+-    ctx.builder.br_if(cont);
++    ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+         ctx.builder.get_local(&address_local);
+@@ -841,7 +844,7 @@
+         ctx.builder.and_i32();
+     }
+ 
+-    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+ 
+     ctx.builder.block_end();
+ 
+@@ -889,20 +892,23 @@
+     );
+     ctx.builder.and_i32();
+ 
+-    ctx.builder.const_i32(TLB_VALID as i32);
+-    ctx.builder.eq_i32();
+-
+     if bits != BitSize::BYTE {
++        // bit 12 of (addr + bytes - 1) ^ addr: the access crosses the page boundary. One
++        // comparison instead of two combined
+         ctx.builder.get_local(&address_local);
+-        ctx.builder.const_i32(0xFFF);
+-        ctx.builder.and_i32();
+-        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+-        ctx.builder.le_i32();
+-
++        ctx.builder.const_i32(bits.bytes() as i32 - 1);
++        ctx.builder.add_i32();
++        ctx.builder.get_local(&address_local);
++        ctx.builder.xor_i32();
++        ctx.builder.const_i32(0x1000);
+         ctx.builder.and_i32();
++        ctx.builder.or_i32();
+     }
+ 
+-    ctx.builder.br_if(cont);
++    ctx.builder.const_i32(TLB_VALID as i32);
++    ctx.builder.eq_i32();
++
++    ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+         ctx.builder.get_local(&address_local);
+@@ -959,7 +965,7 @@
+         ctx.builder.and_i32();
+     }
+ 
+-    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+ 
+     ctx.builder.block_end();
+ 
+@@ -1043,21 +1049,25 @@
+     );
+     ctx.builder.and_i32();
+ 
+-    ctx.builder.const_i32(TLB_VALID as i32);
+-    ctx.builder.eq_i32();
+-
+     if bits != BitSize::BYTE {
++        // bit 12 of (addr + bytes - 1) ^ addr: the access crosses the page boundary. One
++        // comparison instead of two combined
+         ctx.builder.get_local(&address_local);
+-        ctx.builder.const_i32(0xFFF);
+-        ctx.builder.and_i32();
+-        ctx.builder.const_i32(0x1000 - bits.bytes() as i32);
+-        ctx.builder.le_i32();
++        ctx.builder.const_i32(bits.bytes() as i32 - 1);
++        ctx.builder.add_i32();
++        ctx.builder.get_local(&address_local);
++        ctx.builder.xor_i32();
++        ctx.builder.const_i32(0x1000);
+         ctx.builder.and_i32();
++        ctx.builder.or_i32();
+     }
+ 
++    ctx.builder.const_i32(TLB_VALID as i32);
++    ctx.builder.eq_i32();
++
+     let can_use_fast_path_local = ctx.builder.tee_new_local();
+ 
+-    ctx.builder.br_if(cont);
++    ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+         ctx.builder.get_local(&address_local);
+@@ -1104,7 +1114,7 @@
+         ctx.builder.and_i32();
+     }
+ 
+-    ctx.builder.br_if(ctx.exit_with_fault_label);
++    ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
+ 
+     ctx.builder.block_end();
+ 
+@@ -1150,7 +1160,7 @@
+     ctx.builder.get_local(&can_use_fast_path_local);
+ 
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     {
+         ctx.builder.get_local(&address_local);
+ 
+@@ -1459,7 +1469,7 @@
+     ctx.builder.const_i32((regs::CR0_EM | regs::CR0_TS) as i32);
+     ctx.builder.and_i32();
+ 
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     {
+         gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+         gen_fn1_const(
+@@ -1481,7 +1491,7 @@
+     ctx.builder.const_i32((regs::CR0_EM | regs::CR0_TS) as i32);
+     ctx.builder.and_i32();
+ 
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     {
+         gen_debug_track_jit_exit(ctx.builder, ctx.start_of_current_instruction);
+         gen_fn1_const(
+--- a/src/rust/jit_instructions.rs
++++ b/src/rust/jit_instructions.rs
+@@ -1615,7 +1615,7 @@
+             builder.and_i32();
+             let count = builder.tee_new_local();
+             builder.eqz_i32();
+-            builder.br_if(exit);
++            builder.br_if_hint(exit, false);
+             ShiftCount::Local(count)
+         },
+         LocalOrImmediate::Immediate(i) => {
+@@ -1688,7 +1688,7 @@
+             builder.and_i32();
+             let count = builder.tee_new_local();
+             builder.eqz_i32();
+-            builder.br_if(exit);
++            builder.br_if_hint(exit, false);
+             ShiftCount::Local(count)
+         },
+         LocalOrImmediate::Immediate(i) => {
+@@ -1754,7 +1754,7 @@
+             builder.and_i32();
+             let count = builder.tee_new_local();
+             builder.eqz_i32();
+-            builder.br_if(exit);
++            builder.br_if_hint(exit, false);
+             ShiftCount::Local(count)
+         },
+         LocalOrImmediate::Immediate(i) => {
+@@ -1962,7 +1962,7 @@
+         {
+             ctx.builder.get_local(source);
+             ctx.builder.eqz_i32();
+-            ctx.builder.br_if(exception);
++            ctx.builder.br_if_hint(exception, false);
+ 
+             codegen::gen_get_reg32(ctx, regs::EDX);
+             ctx.builder.extend_unsigned_i32_to_i64();
+@@ -1979,7 +1979,7 @@
+             let result = ctx.builder.tee_new_local_i64();
+             ctx.builder.const_i64(0xFFFF_FFFF);
+             ctx.builder.gtu_i64();
+-            ctx.builder.br_if(exception);
++            ctx.builder.br_if_hint(exception, false);
+ 
+             ctx.builder.get_local_i64(&dest_operand);
+             ctx.builder.get_local(source);
+@@ -4173,7 +4173,7 @@
+     ctx.builder.call_fn1_ret("div16_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4183,7 +4183,7 @@
+     ctx.builder.call_fn1_ret("div16_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4203,7 +4203,7 @@
+     ctx.builder.call_fn1_ret("idiv16_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4214,7 +4214,7 @@
+     ctx.builder.call_fn1_ret("idiv16_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4224,7 +4224,7 @@
+     ctx.builder.call_fn1_ret("idiv32_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4234,7 +4234,7 @@
+     ctx.builder.call_fn1_ret("idiv32_without_fault");
+     codegen::gen_move_registers_from_memory_to_locals(ctx);
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_de(ctx);
+     ctx.builder.block_end();
+ }
+@@ -4251,7 +4251,7 @@
+ pub fn instr_FA_jit(ctx: &mut JitContext) {
+     ctx.builder.call_fn0_ret("instr_FA_without_fault");
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_gp(ctx, 0);
+     ctx.builder.block_end();
+ }
+@@ -4259,7 +4259,7 @@
+ pub fn instr_FB_jit(ctx: &mut JitContext) {
+     ctx.builder.call_fn0_ret("instr_FB_without_fault");
+     ctx.builder.eqz_i32();
+-    ctx.builder.if_void();
++    ctx.builder.if_void_hint(false);
+     codegen::gen_trigger_gp(ctx, 0);
+     ctx.builder.block_end();
+     // handle_irqs is specially handled in jit to be called one instruction after this one
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -1246,7 +1246,7 @@
+             builder.block_end();
+         }
+         else {
+-            builder.br_if(exit_label);
++            builder.br_if_hint(exit_label, false);
+         }
+     }
+     let brtable_default = builder.block_void();
+@@ -1919,7 +1919,7 @@
+                             ctx.builder.block_end();
+                         }
+                         else {
+-                            ctx.builder.br_if(exit_label);
++                            ctx.builder.br_if_hint(exit_label, false);
+                         }
+                     }
+                 }
