@@ -1,12 +1,13 @@
 # GreenOS - своя сборка, не для сайта (scripts/pages.sh берёт только bundles/*.txt):
 #   bundles/greenos/build.sh && bundles/greenos/build-fox.sh && bundles/greenos/build-idesk.sh &&
-#   bundles/greenos/build-extras.sh && bundles/greenos/build-azpainter.sh &&
+#   bundles/greenos/build-extras.sh && bundles/greenos/build-azpainter.sh && bundles/greenos/build-xosview.sh &&
 #   ./release.py bundles/greenos/greenos.txt   -> site/greenos/index.html (~24 МБ)
 # «Отечественная ОС»: рабочий стол в духе KDE на JWM, тема «Трава» (белая панель, зелёные заголовки и
 # выделение, плоско, без скруглений), обои - кубик. Программы оконные и лёгкие, под своими именами:
 # xterm, xcalc, xclock, xeyes, feh, xkill, micropython, lbreakout2, своё окно «О системе» (greenos-about);
 # FOX (Xfe, xfa, xfi, Adie, Calculator, ShutterBug, ControlPanel - build-fox.sh), значки на рабочем столе
-# (idesk - build-idesk.sh); с GitHub - xroach и oneko (build-extras.sh); рисовалка
+# (idesk - build-idesk.sh); с GitHub - xroach и oneko (build-extras.sh), системный монитор xosview
+# (build-xosview.sh); рисовалка
 # AzPainter (официальный GitLab автора - build-azpainter.sh):
 # меню берёт то, что установлено. KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
 # подсказки kt при входе (пустой hints.sh), вместо startx - greenos-start с заставкой и

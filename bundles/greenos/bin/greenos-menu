@@ -23,7 +23,7 @@ $(menu utilities Стандартные "$(item calculator /usr/share/greenos/ic
 $(menu graphics Графика "$(item azpainter /usr/share/pixmaps/azpainter.png; item xfi /usr/share/pixmaps/xfi.png; item feh /usr/share/feh/images/feh.png 'greenos-run images'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
 $(menu development Разработка "$(item micropython python 'xterm -T micropython -e micropython')")
 $(menu games Развлечения "$(item lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png; item xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'; item oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'; item xeyes eyes)")
-$(menu system Система "$(item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
+$(menu system Система "$(item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
 <Separator/>
 <Program icon="about.png" label="О системе">greenos-about</Program>
 <Restart icon="restart.png" label="Перезапустить JWM"/>

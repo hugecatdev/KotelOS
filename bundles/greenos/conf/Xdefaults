@@ -80,3 +80,47 @@ XEyes*background: #eef2ea
 XEyes*outline: #2b8a1d
 XEyes*center: #ffffff
 XEyes*foreground: #24301f
+
+! системный монитор xosview: светлый, полосы - в цветах темы; подкачки, диска, батареи, датчиков в машине
+! нет - их полос тоже
+xosview*font: -misc-fixed-bold-r-semicondensed--13-120-75-75-c-60-iso8859-1
+xosview*geometry: 320x200
+xosview*background: #ffffff
+xosview*foreground: #24301f
+xosview*meterLabelColor: #24301f
+xosview*usedLabelColor: #24301f
+xosview*loadProcColor: #3dbb2b
+xosview*loadIdleColor: #c8ebb8
+xosview*loadWarnColor: #e8a33a
+xosview*loadCritColor: #e05a4f
+xosview*cpuUserColor: #3dbb2b
+xosview*cpuSystemColor: #e8a33a
+xosview*cpuNiceColor: #e8c25a
+xosview*cpuWaitColor: #e05a4f
+xosview*cpuInterruptColor: #4fa3d8
+xosview*cpuSInterruptColor: #4fa3d8
+xosview*cpuFreeColor: #c8ebb8
+xosview*memUsedColor: #3dbb2b
+xosview*memBufferColor: #4fa3d8
+xosview*memCacheColor: #e8c25a
+xosview*memSharedColor: #9be888
+xosview*memSlabColor: #b67ad6
+xosview*memKernelColor: #e8a33a
+xosview*memFreeColor: #c8ebb8
+xosview*netInColor: #3dbb2b
+xosview*netOutColor: #4fa3d8
+xosview*netBackground: #c8ebb8
+xosview*swap: False
+xosview*page: False
+xosview*disk: False
+xosview*interrupts: False
+xosview*irqrate: False
+xosview*battery: False
+xosview*wireless: False
+xosview*RAID: False
+xosview*lmstemp: False
+xosview*acpitemp: False
+xosview*coretemp: False
+xosview*NFSDStats: False
+xosview*NFSStats: False
+xosview*gfx: False
