@@ -1,0 +1,757 @@
+JIT: модуль страницы - набор функций wasm по функциям гостя (эксперимент, в сборку не входит)
+
+Страница x86 компилируется в модуль из одной функции wasm (в среднем 44 КБ), и V8 считает её
+горячей целиком: Liftoff почти бесплатен (11 МБ wasm за ~0.6 с процессора), а TurboFan в
+фоновых потоках тратит на холодной сессии X 12-19 с. Здесь блоки страницы делятся на функции
+гостя (jit_split_functions: блоки, связанные переходами, вместе; место возврата - с вызывающим;
+call в другую группу режется), каждая группа - своя функция wasm со своим разбором входов,
+экспортируется диспетчер: по состоянию зовёт нужную функцию, пока та не выйдет из модуля
+(JIT_NEXT_STATE - куда дальше в этом же модуле, -1 - выход; предел по счётчику инструкций тот
+же, что у циклов). Модуль из одной группы собирается как раньше. set_jit_config(6, 0) - выключить.
+
+Замеры (tests/pair.py --x: сессия X целиком, варианты одновременно; две копии одной сборки
+расходятся на 1-3%): в оптимизатор V8 вместо 13.1 МБ wasm идёт 5.0 МБ, функция - 2-3 КБ вместо
+44; процессор вкладки: загрузка ядра 0.76, холодная сессия 0.79, третья 0.87. Но основной поток:
+первая сессия 1.07, вторая 1.15, третья 0.98 - V8 позже признаёт мелкие функции горячими, и код
+дольше идёт на Liftoff. На общих 4 ядрах то же: время 1.10 / 1.18 / 0.98, процессор 0.82 / 1.04 /
+0.84. То есть это экономия процессора (нагрев, батарея) ценой более долгого разогрева, а не
+скорость - поэтому не взято. Вызов функции в своей странице через диспетчер: 10 -> 24 нс
+(в сессии X таких 5.5 млн из 41 млн вызовов).
+
+Проверки: tests/jitfn.c (вывод совпадает с хостом), tests/jitpf.c, debug-сборка v86.
+
+Применять поверх patches/v86 (после 12): patch -p1 в дереве .cache/v86-REV.
+
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -73,6 +73,10 @@
+     output: Vec<u8>,
+     instruction_body: Vec<u8>,
+ 
++    // finished function bodies (with their size and locals), see finish_function
++    function_bodies: Vec<u8>,
++    function_count: u16,
++
+     idx_import_table_size: usize, // for rewriting once finished
+     idx_import_count: usize,      // for rewriting once finished
+     idx_import_entries: usize,    // for searching the imports
+@@ -119,6 +123,8 @@
+         let mut b = WasmBuilder {
+             output: Vec::with_capacity(256),
+             instruction_body: Vec::with_capacity(256),
++            function_bodies: Vec::with_capacity(256),
++            function_count: 0,
+ 
+             idx_import_table_size: 0,
+             idx_import_count: 0,
+@@ -163,6 +169,8 @@
+         self.set_import_table_size(2);
+         self.set_import_count(0);
+         self.instruction_body.clear();
++        self.function_bodies.clear();
++        self.function_count = 0;
+         self.free_locals_i32.clear();
+         self.free_locals_i64.clear();
+         self.local_count = 0;
+@@ -172,37 +180,18 @@
+         self.next_label = Label::ZERO;
+     }
+ 
+-    pub fn finish(&mut self) -> usize {
++    /// Finish the body of the current function and start the next one. All functions have the
++    /// same type (FN1, the argument is the initial state); the last one is exported
++    pub fn finish_function(&mut self) {
+         dbg_assert!(self.label_to_depth.is_empty());
+         dbg_assert!(self.label_stack.is_empty());
+-
+-        self.write_memory_import();
+-        self.write_function_section();
+-        self.write_export_section();
+-
+-        // write code section preamble
+-        self.output.push(op::SC_CODE);
+-
+-        let idx_code_section_size = self.output.len(); // we will write to this location later
+-        self.output.push(0);
+-        self.output.push(0); // write temp val for now using 4 bytes
+-        self.output.push(0);
+-        self.output.push(0);
+-
+-        self.output.push(1); // number of function bodies: just 1
+-
+-        // same as above but for body size of the function
+-        let idx_fn_body_size = self.output.len();
+-        self.output.push(0);
+-        self.output.push(0);
+-        self.output.push(0);
+-        self.output.push(0);
+-
+         dbg_assert!(
+             self.local_count as usize == self.free_locals_i32.len() + self.free_locals_i64.len(),
+             "All locals should have been freed"
+         );
+ 
++        let mut body = Vec::with_capacity(self.instruction_body.len() + 16);
++
+         let free_locals_i32 = &self.free_locals_i32;
+         let free_locals_i64 = &self.free_locals_i64;
+ 
+@@ -228,22 +217,48 @@
+             groups.push((local_type, 1));
+         }
+         dbg_assert!(groups.len() < 128);
+-        self.output.push(groups.len().safe_to_u8());
++        body.push(groups.len().safe_to_u8());
+         for (local_type, count) in groups {
+             dbg_assert!(count < 128);
+-            self.output.push(count);
+-            self.output.push(local_type);
++            body.push(count);
++            body.push(local_type);
+         }
+ 
+-        self.output.append(&mut self.instruction_body);
++        body.append(&mut self.instruction_body);
++        body.push(op::OP_END);
+ 
+-        self.output.push(op::OP_END);
++        write_leb_u32(&mut self.function_bodies, body.len() as u32);
++        self.function_bodies.append(&mut body);
++        self.function_count += 1;
+ 
+-        // write the actual sizes to the pointer locations stored above. We subtract 4 from the actual
+-        // value because the ptr itself points to four bytes
+-        let fn_body_size = (self.output.len() - idx_fn_body_size - 4) as u32;
+-        write_fixed_leb32_at_idx(&mut self.output, idx_fn_body_size, fn_body_size);
++        self.free_locals_i32.clear();
++        self.free_locals_i64.clear();
++        self.local_count = 0;
++    }
++
++    pub fn finish(&mut self) -> usize {
++        if !self.instruction_body.is_empty() || self.function_count == 0 {
++            self.finish_function();
++        }
++
++        self.write_memory_import();
++        self.write_function_section();
++        self.write_export_section();
++
++        // write code section preamble
++        self.output.push(op::SC_CODE);
+ 
++        let idx_code_section_size = self.output.len(); // we will write to this location later
++        self.output.push(0);
++        self.output.push(0); // write temp val for now using 4 bytes
++        self.output.push(0);
++        self.output.push(0);
++
++        write_leb_u32(&mut self.output, self.function_count as u32);
++        self.output.append(&mut self.function_bodies);
++
++        // write the actual size to the pointer location stored above. We subtract 4 from the actual
++        // value because the ptr itself points to four bytes
+         let code_section_size = (self.output.len() - idx_code_section_size - 4) as u32;
+         write_fixed_leb32_at_idx(&mut self.output, idx_code_section_size, code_section_size);
+ 
+@@ -514,9 +529,13 @@
+ 
+     pub fn write_function_section(&mut self) {
+         self.output.push(op::SC_FUNCTION);
+-        self.output.push(2); // length of this section
+-        self.output.push(1); // count of signature indices
+-        self.output.push(FunctionType::FN1.to_u8());
++        let mut section = Vec::with_capacity(self.function_count as usize + 2);
++        write_leb_u32(&mut section, self.function_count as u32); // count of signature indices
++        for _ in 0..self.function_count {
++            section.push(FunctionType::FN1.to_u8());
++        }
++        write_leb_u32(&mut self.output, section.len() as u32); // length of this section
++        self.output.append(&mut section);
+     }
+ 
+     pub fn write_export_section(&mut self) {
+@@ -531,10 +550,15 @@
+         // index of the exported function
+         // function space starts with imports. index of last import is import count - 1
+         // the last import however is a memory, so we subtract one from that
++        // the exported function is the last one of this module
+         let next_op_idx = self.output.len();
+         self.output.push(0);
+         self.output.push(0); // add 2 bytes for writing 16 byte val
+-        write_fixed_leb16_at_idx(&mut self.output, next_op_idx, self.import_count - 1);
++        write_fixed_leb16_at_idx(
++            &mut self.output,
++            next_op_idx,
++            self.import_count - 1 + self.function_count - 1,
++        );
+     }
+ 
+     fn get_fn_idx(&mut self, fn_name: &str, type_index: FunctionType) -> u16 {
+@@ -939,6 +963,17 @@
+         write_leb_u32(&mut self.instruction_body, i as u32);
+     }
+ 
++    /// Call a finished function of this module (in the order of finish_function). No imports
++    /// may be added after this: the functions of the module follow the imports in the index space
++    pub fn call_local_fn(&mut self, index: u16) {
++        dbg_assert!(index < self.function_count);
++        self.instruction_body.push(op::OP_CALL);
++        write_leb_u32(
++            &mut self.instruction_body,
++            self.import_count as u32 + index as u32,
++        );
++    }
++
+     pub fn call_fn0(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0) }
+     pub fn call_fn0_ret(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0_RET) }
+     pub fn call_fn0_ret_i64(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0_RET_I64) }
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -84,6 +84,15 @@
+ // less branches will generate if-else, more will generate brtable
+ pub const BRTABLE_CUTOFF: usize = 10;
+ 
++// One wasm function per function of the guest (see jit_split_functions) instead of one function
++// for the whole page: the engine tiers up functions separately, so its optimising compiler only
++// sees the hot ones, and those are small
++pub static mut JIT_SPLIT_FUNCTIONS: bool = true;
++
++// Written by a function of a split module before it returns: the state (entry point) of the same
++// module to continue with, or -1 to leave the module
++pub static mut JIT_NEXT_STATE: i32 = -1;
++
+ // needs to be synced to const.js
+ pub const WASM_TABLE_SIZE: u32 = 900;
+ 
+@@ -265,6 +274,8 @@
+     pub ty: BasicBlockType,
+     pub has_sti: bool,
+     pub number_of_instructions: u32,
++    // execution comes back to the instruction after this block (call and the like)
++    pub returns_to_next: bool,
+ }
+ 
+ #[derive(Copy, Clone, PartialEq)]
+@@ -565,6 +576,7 @@
+             is_entry_block: false,
+             has_sti: false,
+             number_of_instructions: 0,
++            returns_to_next: false,
+         };
+         loop {
+             let addr_before_instruction = current_address;
+@@ -690,6 +702,7 @@
+                         // Execution will eventually come back to the next instruction (CALL)
+                         marked_as_entry.insert(current_virt_addr);
+                         to_visit_stack.push(current_virt_addr);
++                        current_block.returns_to_next = true;
+                     }
+ 
+                     current_block.ty = BasicBlockType::Normal {
+@@ -718,6 +731,7 @@
+                         // entry point
+                         marked_as_entry.insert(current_virt_addr);
+                         to_visit_stack.push(current_virt_addr);
++                        current_block.returns_to_next = true;
+                     }
+ 
+                     if analysis.absolute_jump {
+@@ -962,29 +976,36 @@
+         );
+     }
+ 
+-    let graph = control_flow::make_graph(&basic_blocks);
+-    let mut structure = control_flow::loopify(&graph);
++    let (functions, cuts) = jit_split_functions(basic_blocks);
++    let mut structures = Vec::with_capacity(functions.len());
+ 
+-    if print {
+-        dbg_log!("before blockify:");
+-        for group in &structure {
+-            dbg_log!("=> Group");
+-            group.print(0);
++    for blocks in &functions {
++        let graph = control_flow::make_graph(blocks);
++        let mut structure = control_flow::loopify(&graph);
++
++        if print {
++            dbg_log!("before blockify:");
++            for group in &structure {
++                dbg_log!("=> Group");
++                group.print(0);
++            }
+         }
+-    }
+ 
+-    control_flow::blockify(&mut structure, &graph);
++        control_flow::blockify(&mut structure, &graph);
+ 
+-    if cfg!(debug_assertions) {
+-        control_flow::assert_invariants(&structure);
+-    }
++        if cfg!(debug_assertions) {
++            control_flow::assert_invariants(&structure);
++        }
+ 
+-    if print {
+-        dbg_log!("after blockify:");
+-        for group in &structure {
+-            dbg_log!("=> Group");
+-            group.print(0);
++        if print {
++            dbg_log!("after blockify:");
++            for group in &structure {
++                dbg_log!("=> Group");
++                group.print(0);
++            }
+         }
++
++        structures.push(structure);
+     }
+ 
+     if ctx.wasm_table_index_free_list.is_empty() {
+@@ -1018,12 +1039,15 @@
+     dbg_assert!(!pages.is_empty());
+     dbg_assert!(pages.len() <= unsafe { MAX_PAGES } as usize);
+ 
+-    let basic_block_by_addr: HashMap<u32, BasicBlock> =
+-        basic_blocks.into_iter().map(|b| (b.addr, b)).collect();
++    let basic_block_by_addr: Vec<HashMap<u32, BasicBlock>> = functions
++        .into_iter()
++        .map(|blocks| blocks.into_iter().map(|b| (b.addr, b)).collect())
++        .collect();
+ 
+     let entries = jit_generate_module(
+-        structure,
++        structures,
+         &basic_block_by_addr,
++        &cuts,
+         cpu,
+         &mut ctx.wasm_builder,
+         wasm_table_index,
+@@ -1212,16 +1236,283 @@
+     }
+ }
+ 
++/// Split the basic blocks of a module into functions of the guest: blocks connected by jumps
++/// stay together, calls into another group are cut (the target becomes an entry point of its
++/// group, the calling block leaves its function with the target as the next state). Returns the
++/// groups (ordered by address) and the cut calls (address of the block -> target)
++fn jit_split_functions(mut blocks: Vec<BasicBlock>) -> (Vec<Vec<BasicBlock>>, HashMap<u32, u32>) {
++    let mut cuts = HashMap::default();
++    if !unsafe { JIT_SPLIT_FUNCTIONS } || blocks.len() < 2 {
++        return (vec![blocks], cuts);
++    }
++
++    let index: HashMap<u32, usize> = blocks.iter().enumerate().map(|(i, b)| (b.addr, i)).collect();
++    let mut parent: Vec<usize> = (0..blocks.len()).collect();
++    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
++        while parent[x] != x {
++            parent[x] = parent[parent[x]];
++            x = parent[x];
++        }
++        x
++    }
++    let union = |parent: &mut Vec<usize>, a: usize, b: Option<&usize>| {
++        if let Some(&b) = b {
++            let (a, b) = (find(parent, a), find(parent, b));
++            // the lower address is the root: the order of the groups is stable
++            if a < b {
++                parent[b] = a
++            }
++            else {
++                parent[a] = b
++            }
++        }
++    };
++
++    for (i, b) in blocks.iter().enumerate() {
++        if b.returns_to_next {
++            // the code after a call belongs to the calling function
++            union(&mut parent, i, index.get(&b.end_addr));
++        }
++        match b.ty {
++            BasicBlockType::ConditionalJump {
++                next_block_addr,
++                next_block_branch_taken_addr,
++                ..
++            } => {
++                if let Some(a) = next_block_addr {
++                    union(&mut parent, i, index.get(&a));
++                }
++                if let Some(a) = next_block_branch_taken_addr {
++                    union(&mut parent, i, index.get(&a));
++                }
++            },
++            BasicBlockType::Normal {
++                next_block_addr: Some(a),
++                ..
++            } => {
++                if !b.returns_to_next {
++                    union(&mut parent, i, index.get(&a));
++                }
++            },
++            BasicBlockType::Normal {
++                next_block_addr: None,
++                ..
++            }
++            | BasicBlockType::AbsoluteEip
++            | BasicBlockType::Exit => {},
++        }
++    }
++
++    for i in 0..blocks.len() {
++        let target = match blocks[i].ty {
++            BasicBlockType::Normal {
++                next_block_addr: Some(a),
++                ..
++            } if blocks[i].returns_to_next => a,
++            _ => continue,
++        };
++        let t = match index.get(&target) {
++            Some(&t) => t,
++            None => continue,
++        };
++        if find(&mut parent, i) == find(&mut parent, t) {
++            continue;
++        }
++        if let BasicBlockType::Normal {
++            next_block_addr, ..
++        } = &mut blocks[i].ty
++        {
++            *next_block_addr = None;
++        }
++        blocks[t].is_entry_block = true;
++        cuts.insert(blocks[i].addr, target);
++    }
++
++    let mut group_of_root: HashMap<usize, usize> = HashMap::default();
++    let mut groups: Vec<Vec<BasicBlock>> = Vec::new();
++    for (i, b) in blocks.into_iter().enumerate() {
++        let root = find(&mut parent, i);
++        let next = groups.len();
++        let g = *group_of_root.entry(root).or_insert(next);
++        if g == next {
++            groups.push(Vec::new());
++        }
++        groups[g].push(b);
++    }
++    (groups, cuts)
++}
++
++fn structure_entry_blocks(structure: &Vec<WasmStructure>) -> Vec<u32> {
++    let mut nodes = structure;
++    loop {
++        match &nodes[0] {
++            WasmStructure::Dispatcher(e) => return e.clone(),
++            WasmStructure::Loop { .. } => {
++                dbg_assert!(false);
++            },
++            WasmStructure::BasicBlock(_) => {
++                dbg_assert!(false);
++            },
++            // Note: We could use these blocks as entry points, which will yield
++            // more entries for free, but it requires adding those to the dispatcher
++            // It's to be investigated if this yields a performance improvement
++            // See also the comment at the bottom of this function when creating entry
++            // points
++            WasmStructure::Block(children) => {
++                nodes = children;
++                continue;
++            },
++        }
++        return Vec::new();
++    }
++}
++
++// Where a function of a split module is in the module
++struct ModulePart<'a> {
++    // false: the module is a single function
++    split: bool,
++    // states of the module that belong to this function: base .. base + count
++    base: u16,
++    count: u16,
++    // state of every entry point of the module
++    state_for_addr: &'a HashMap<u32, u16>,
++    // cut calls: address of the block -> target
++    cuts: &'a HashMap<u32, u32>,
++}
++
+ fn jit_generate_module(
++    structures: Vec<Vec<WasmStructure>>,
++    basic_blocks: &Vec<HashMap<u32, BasicBlock>>,
++    cuts: &HashMap<u32, u32>,
++    cpu: CpuContext,
++    builder: &mut WasmBuilder,
++    wasm_table_index: WasmTableIndex,
++    state_flags: CachedStateFlags,
++) -> Vec<(u32, u16)> {
++    builder.reset();
++
++    let split = structures.len() > 1;
++    let mut state_for_addr: HashMap<u32, u16> = HashMap::default();
++    let mut bases = Vec::with_capacity(structures.len());
++    let mut part_of_state: Vec<u16> = Vec::new();
++    for (k, structure) in structures.iter().enumerate() {
++        bases.push(part_of_state.len() as u16);
++        for addr in structure_entry_blocks(structure) {
++            dbg_assert!(part_of_state.len() < 0xFFFF);
++            state_for_addr.insert(addr, part_of_state.len() as u16);
++            part_of_state.push(k as u16);
++        }
++    }
++
++    let mut entries = Vec::with_capacity(part_of_state.len());
++    for (k, structure) in structures.into_iter().enumerate() {
++        let count = part_of_state.len() as u16
++            - bases[k]
++            - bases.get(k + 1).map_or(0, |next| part_of_state.len() as u16 - next);
++        let part = ModulePart {
++            split,
++            base: bases[k],
++            count,
++            state_for_addr: &state_for_addr,
++            cuts,
++        };
++        entries.extend(jit_generate_function(
++            structure,
++            &basic_blocks[k],
++            cpu.clone(),
++            builder,
++            wasm_table_index,
++            state_flags,
++            &part,
++        ));
++        if split {
++            builder.finish_function();
++        }
++    }
++
++    if split {
++        // The exported function: calls the function the state belongs to until one of them
++        // leaves the module. They store the registers on return, so does this function not need
++        // them; eip is valid whenever they return
++        let state = builder.arg_local_initial_state.unsafe_clone();
++        let next_state = &raw mut JIT_NEXT_STATE as u32;
++
++        builder.load_fixed_i32(global_pointers::instruction_counter as u32);
++        let initial_instruction_counter = builder.set_new_local();
++
++        let exit_label = builder.block_void();
++        let loop_label = builder.loop_void();
++
++        builder.const_i32(next_state as i32);
++        builder.const_i32(-1);
++        builder.store_aligned_i32(0);
++
++        let done_label = builder.block_void();
++        let default_label = builder.block_void();
++        let labels: Vec<Label> = bases.iter().map(|_| builder.block_void()).collect();
++        let cases: Vec<Label> = part_of_state.iter().map(|&k| labels[k as usize]).collect();
++        builder.get_local(&state);
++        builder.brtable(default_label, &mut cases.iter());
++        for k in (0..bases.len()).rev() {
++            builder.block_end();
++            builder.get_local(&state);
++            if bases[k] != 0 {
++                builder.const_i32(bases[k] as i32);
++                builder.sub_i32();
++            }
++            builder.call_local_fn(k as u16);
++            builder.br(done_label);
++        }
++        builder.block_end(); // default case for the brtable
++        builder.unreachable();
++        builder.block_end(); // done
++
++        builder.load_fixed_i32(next_state);
++        builder.tee_local(&state);
++        builder.const_i32(0);
++        builder.lt_i32();
++        builder.br_if(exit_label);
++
++        if unsafe { JIT_USE_LOOP_SAFETY } {
++            // same limit as for loops in a function
++            builder.load_fixed_i32(global_pointers::instruction_counter as u32);
++            builder.get_local(&initial_instruction_counter);
++            builder.sub_i32();
++            builder.const_i32(cpu::LOOP_COUNTER);
++            builder.ltu_i32();
++            builder.br_if(loop_label);
++        }
++        else {
++            builder.br(loop_label);
++        }
++
++        builder.block_end(); // loop
++        builder.block_end(); // exit
++        builder.free_local(initial_instruction_counter);
++    }
++
++    builder.finish();
++
++    for blocks in basic_blocks {
++        for b in blocks.values() {
++            if b.is_entry_block {
++                dbg_assert!(entries.iter().find(|(addr, _)| *addr == b.addr).is_some());
++            }
++        }
++    }
++
++    return entries;
++}
++
++fn jit_generate_function(
+     structure: Vec<WasmStructure>,
+     basic_blocks: &HashMap<u32, BasicBlock>,
+     mut cpu: CpuContext,
+     builder: &mut WasmBuilder,
+     wasm_table_index: WasmTableIndex,
+     state_flags: CachedStateFlags,
++    part: &ModulePart,
+ ) -> Vec<(u32, u16)> {
+-    builder.reset();
+-
+     let mut register_locals = (0..8)
+         .map(|i| {
+             builder.load_fixed_i32(global_pointers::get_reg32_offset(i));
+@@ -1264,33 +1555,8 @@
+         wasm_table_index,
+     };
+ 
+-    let entry_blocks = {
+-        let mut nodes = &structure;
+-        let result;
+-        loop {
+-            match &nodes[0] {
+-                WasmStructure::Dispatcher(e) => {
+-                    result = e.clone();
+-                    break;
+-                },
+-                WasmStructure::Loop { .. } => {
+-                    dbg_assert!(false);
+-                },
+-                WasmStructure::BasicBlock(_) => {
+-                    dbg_assert!(false);
+-                },
+-                // Note: We could use these blocks as entry points, which will yield
+-                // more entries for free, but it requires adding those to the dispatcher
+-                // It's to be investigated if this yields a performance improvement
+-                // See also the comment at the bottom of this function when creating entry
+-                // points
+-                WasmStructure::Block(children) => {
+-                    nodes = children;
+-                },
+-            }
+-        }
+-        result
+-    };
++    let entry_blocks = structure_entry_blocks(&structure);
++    dbg_assert!(entry_blocks.len() == part.count as usize || !part.split);
+ 
+     let mut index_for_addr = HashMap::default();
+     for (i, &addr) in entry_blocks.iter().enumerate() {
+@@ -1403,11 +1669,34 @@
+                         ctx.builder.const_i32(wasm_table_index.to_u16() as i32);
+                         ctx.builder.const_i32(state_flags.to_u32() as i32);
+                         ctx.builder.call_fn3_ret("jit_find_cache_entry_in_page");
+-                        ctx.builder.tee_local(target_block);
+-                        ctx.builder.const_i32(0);
+-                        ctx.builder.ge_i32();
+-                        // TODO: Could make this unconditional by including exit_label in the main br_table
+-                        ctx.builder.br_if(main_loop_label);
++                        if part.split {
++                            // the states of this function are base .. base + count; other
++                            // states (and -1) are for the exported function
++                            if part.base != 0 {
++                                ctx.builder.const_i32(part.base as i32);
++                                ctx.builder.sub_i32();
++                            }
++                            ctx.builder.tee_local(target_block);
++                            ctx.builder.const_i32(part.count as i32);
++                            ctx.builder.ltu_i32();
++                            ctx.builder.br_if(main_loop_label);
++
++                            ctx.builder
++                                .const_i32(&raw mut JIT_NEXT_STATE as i32);
++                            ctx.builder.get_local(target_block);
++                            if part.base != 0 {
++                                ctx.builder.const_i32(part.base as i32);
++                                ctx.builder.add_i32();
++                            }
++                            ctx.builder.store_aligned_i32(0);
++                        }
++                        else {
++                            ctx.builder.tee_local(target_block);
++                            ctx.builder.const_i32(0);
++                            ctx.builder.ge_i32();
++                            // TODO: Could make this unconditional by including exit_label in the main br_table
++                            ctx.builder.br_if(main_loop_label);
++                        }
+ 
+                         codegen::gen_debug_track_jit_exit(ctx.builder, block.last_instruction_addr);
+                         ctx.builder.br(ctx.exit_label);
+@@ -1432,6 +1721,19 @@
+                             codegen::gen_jmp_rel16(ctx.builder, jump_offset as u16);
+                         }
+ 
++                        if let Some(state) = part
++                            .cuts
++                            .get(&block.addr)
++                            .and_then(|target| part.state_for_addr.get(target))
++                        {
++                            // call of another function of this module
++                            dbg_assert!(part.split);
++                            ctx.builder
++                                .const_i32(&raw mut JIT_NEXT_STATE as i32);
++                            ctx.builder.const_i32(*state as i32);
++                            ctx.builder.store_aligned_i32(0);
++                        }
++
+                         codegen::gen_debug_track_jit_exit(ctx.builder, block.last_instruction_addr);
+                         codegen::gen_profiler_stat_increment(ctx.builder, stat::DIRECT_EXIT);
+                         ctx.builder.br(ctx.exit_label);
+@@ -2040,8 +2342,6 @@
+     ctx.builder
+         .free_local(ctx.instruction_counter.unsafe_clone());
+ 
+-    ctx.builder.finish();
+-
+     let entries = Vec::from_iter(entry_blocks.iter().map(|addr| {
+         let block = basic_blocks.get(&addr).unwrap();
+         let index = *index_for_addr.get(&addr).unwrap();
+@@ -2052,15 +2352,10 @@
+         // Note: We also insert blocks that weren't originally marked as entries here
+         //       This doesn't have any downside, besides making the hash table slightly larger
+ 
+-        (block.addr, index)
++        dbg_assert!(part.state_for_addr.get(addr) == Some(&(index + part.base)));
++        (block.addr, index + part.base)
+     }));
+ 
+-    for b in basic_blocks.values() {
+-        if b.is_entry_block {
+-            dbg_assert!(entries.iter().find(|(addr, _)| *addr == b.addr).is_some());
+-        }
+-    }
+-
+     return entries;
+ }
+ 
+@@ -2515,6 +2810,7 @@
+         1 => MAX_PAGES = value,
+         2 => JIT_USE_LOOP_SAFETY = value != 0,
+         3 => MAX_EXTRA_BASIC_BLOCKS = value,
++        6 => JIT_SPLIT_FUNCTIONS = value != 0,
+         5 => JIT_THRESHOLD = value,
+         _ => dbg_assert!(false),
+     }
+@@ -2527,6 +2823,7 @@
+         1 => MAX_PAGES as u32,
+         2 => JIT_USE_LOOP_SAFETY as u32,
+         3 => MAX_EXTRA_BASIC_BLOCKS as u32,
++        6 => JIT_SPLIT_FUNCTIONS as u32,
+         5 => JIT_THRESHOLD,
+         _ => 0,
+     }

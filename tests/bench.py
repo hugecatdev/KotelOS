@@ -1,6 +1,6 @@
 """Скорость v86: одни и те же нагрузки в госте с разными сборками libv86.js/v86.wasm.
 
-python3 tests/bench.py vendor/v86 ДРУГАЯ_ПАПКА... [-n 3] [-k имя]
+python3 tests/bench.py vendor/v86 ДРУГАЯ_ПАПКА... [-n 3] [-k имя] [--x]
 
 Для каждой папки собирается бандл (bundle.py --v86, загрузка с ядра), потом
 круги: в каждом круге каждый вариант по разу, в свежем headless Chromium, и
@@ -41,6 +41,10 @@ LOAD = [
     ("py-loop", "python3.12 -c 'print(sum(i * i % 7 for i in range(600000)))'"),
     ("py-float", "python3.12 -c 'import math\nprint(sum(math.sin(i) * math.sqrt(i) for i in range(400000)))'"),
 ]
+# --x: сессия X целиком (tests/bench/xinitrc): сервер, twm, xeyes, xcalc, xterm с прокруткой. Три раза
+# подряд в одной машине: первый - холодный (страницы кода ещё не скомпилированы), дальше - прогретые
+XPKGS = ["xorg", "xeyes", "xcalc"]
+XLOAD = [("x-1", "startx 800x600"), ("x-2", "startx 800x600"), ("x-3", "startx 800x600")]
 NET = [
     ("net-in", "(async () => { const d = new Uint8Array(4 << 20).fill(97); const t = performance.now(); "
                "await writeFile('/tmp/net.bin', d); return performance.now() - t; })()"),
@@ -50,8 +54,12 @@ NET = [
 ]
 
 
-def build(v86, out, mem):
-    args = [sys.executable, os.path.join(ROOT, "bundle.py"), "--v86", v86, "-o", out, "-n", "bench", "--mem", str(mem)] + PKGS
+def build(v86, out, mem, x=False):
+    args = [sys.executable, os.path.join(ROOT, "bundle.py"), "--v86", v86, "-o", out, "-n", "bench", "--mem", str(mem)]
+    if x:
+        args += ["--vga", "8", "--no-3d", "--file", os.path.join(ROOT, "tests/bench/xinitrc") + ":/root/.xinitrc"] + XPKGS
+    else:
+        args += PKGS
     r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
     if r.returncode:
         sys.exit("bundle.py %s:\n%s%s" % (v86, r.stdout, r.stderr))
@@ -89,7 +97,7 @@ def since(c0, pids):
     return c1[0] - c0[0], c1[1] - c0[1]
 
 
-def run_once(page, names, tmp):
+def run_once(page, names, tmp, load=LOAD, cfg=()):
     prof = tempfile.mkdtemp(dir=tmp)
     c = bundle.Chrome(prof)
     res = {}
@@ -103,7 +111,9 @@ def run_once(page, names, tmp):
         pids = renderers(prof)
         res["boot"] = (time.time() - t0, *cpu(pids))
         c.eval(bundle.SETTLE % (1000, 60000))
-        for name, cmd in LOAD:
+        for k, v in cfg:
+            c.eval("emulator.v86.cpu.wm.exports.set_jit_config(%d, %d)" % (k, v))
+        for name, cmd in load:
             if name not in names:
                 continue
             c0 = cpu(pids)
@@ -137,34 +147,40 @@ def table(title, names, labels, med):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("v86", nargs="+", help="папки с libv86.js, v86.wasm и BIOS")
+    ap.add_argument("v86", nargs="+", help="папки с libv86.js, v86.wasm и BIOS; ПАПКА#5=100000 - с настройкой JIT (set_jit_config)")
     ap.add_argument("-n", type=int, default=3, help="кругов (по умолчанию 3)")
     ap.add_argument("-k", action="append", help="только эти нагрузки (можно несколько)")
     ap.add_argument("--mem", type=int, default=256, help="память машины, МБ")
     ap.add_argument("--json", help="сырые замеры сюда")
+    ap.add_argument("--x", action="store_true", help="нагрузка - сессии X (Xorg, twm, xterm...), бандл с экраном")
     a = ap.parse_args()
-    names = ["boot"] + [n for n, _ in LOAD + NET]
+    load = XLOAD if a.x else LOAD
+    names = ["boot"] + [n for n, _ in (load if a.x else load + NET)]
     if a.k:
         names = ["boot"] + [n for n in names if n in a.k]
     tmp = tempfile.mkdtemp(prefix="kt-bench-")
     try:
         pages = []
+        cfgs = []
         for i, v in enumerate(a.v86):
+            # ПАПКА#5=100000,6=0 - после загрузки set_jit_config(номер, значение): порог JIT и т.п.
+            v, _, cfg = v.partition("#")
+            cfgs.append([tuple(map(int, kv.split("="))) for kv in cfg.split(",") if kv])
             page = os.path.join(tmp, "b%d.html" % i)
-            build(os.path.abspath(v), page, a.mem)
+            build(os.path.abspath(v), page, a.mem, a.x)
             pages.append(page)
         runs = [[] for _ in a.v86]
         for k in range(a.n):
             print("круг %d/%d, load %s" % (k + 1, a.n, open("/proc/loadavg").read().split()[0]), flush=True)
             # порядок сдвигается каждый круг: место в круге делится поровну
             for i in [(j + k) % len(pages) for j in range(len(pages))]:
-                r = run_once(pages[i], names, tmp)
+                r = run_once(pages[i], names, tmp, load, cfgs[i])
                 runs[i].append(r)
                 print("  %-28s %s" % (a.v86[i][-28:], " ".join("%s=%.2f/%.2f/%.2f" % (n, *r[n]) for n in names if n in r)), flush=True)
         if a.json:
             with open(a.json, "w") as f:
                 json.dump({"v86": a.v86, "runs": runs}, f, indent=1)
-        labels = [os.path.basename(os.path.normpath(v)) for v in a.v86]
+        labels = [os.path.basename(os.path.normpath(v.partition("#")[0])) + v.partition("#")[2][-9:] for v in a.v86]
         for col, title in ((2, "основной поток (эмуляция), медианы, с"), (1, "весь процессор вкладки (с компиляцией V8), медианы, с"),
                            (0, "время, медианы, с")):
             table(title, names, labels, [{n: statistics.median(r[n][col] for r in rr) for n in names} for rr in runs])
