@@ -4,6 +4,6 @@ table Icon
   Icon: /usr/share/greenos/icons/about.png
   Width: 48
   Height: 48
-  X: 24
+  X: 40
   Y: 388
 end

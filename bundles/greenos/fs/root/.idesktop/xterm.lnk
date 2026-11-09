@@ -4,6 +4,6 @@ table Icon
   Icon: /usr/share/pixmaps/xterm-color_48x48.xpm
   Width: 48
   Height: 48
-  X: 24
+  X: 40
   Y: 204
 end
