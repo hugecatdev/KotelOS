@@ -1,0 +1,9 @@
+table Icon
+  Caption: Корзина
+  Command: xfe /root/.local/share/Trash/files
+  Icon: /usr/share/greenos/icons/trash.png
+  Width: 48
+  Height: 48
+  X: 24
+  Y: 112
+end

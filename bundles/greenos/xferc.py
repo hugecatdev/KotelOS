@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""xferc Xfe + xferc-greenos -> xferc GreenOS: наши ключи заменяют одноимённые в той же секции, новые
+"""xferc Xfe + xferc-greenos -> xferc GreenOS, без комментариев: наши ключи заменяют одноимённые в секции, новые
 добавляются в её начало, секции, которых нет у Xfe, - в конец. xferc.py XFERC НАШ КУДА"""
 import sys
 
@@ -29,9 +29,11 @@ def main():
             res.append(line)
             res += mine.get(sect, [])
             continue
-        if "=" in s and not s.startswith("#") and s.split("=")[0].strip() in keys.get(sect, ()):
+        if not s or s.startswith("#"):  # в машине всё в памяти - без комментариев
             continue
-        res.append(line)
+        if "=" in s and s.split("=")[0].strip() in keys.get(sect, ()):
+            continue
+        res.append(s)
     for sect, lines in mine.items():
         if sect not in seen:
             res += ["", sect] + lines

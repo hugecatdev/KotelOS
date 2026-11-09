@@ -21,7 +21,7 @@
 --file bundles/greenos/bin/greenos-menu:/usr/bin/greenos-menu
 --file bundles/greenos/bin/greenos-wallpaper:/usr/bin/greenos-wallpaper
 --file bundles/greenos/bin/greenos-start:/usr/bin/greenos-start
-nano htop pack notify micropython xorg feh xcalc xclock xeyes xkill font-hack
+nano htop pack notify micropython xorg feh xcalc xclock xeyes xkill font-hack zip lbreakout2
 libxft libxrender libxpm libxinerama libpng
 # библиотеки программ FOX (build-fox.sh)
 libstdc++ libjpeg-turbo libxrandr zlib

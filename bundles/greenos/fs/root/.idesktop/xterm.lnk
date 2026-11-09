@@ -1,0 +1,9 @@
+table Icon
+  Caption: xterm
+  Command: xterm
+  Icon: /usr/share/pixmaps/xterm-color_48x48.xpm
+  Width: 48
+  Height: 48
+  X: 24
+  Y: 204
+end

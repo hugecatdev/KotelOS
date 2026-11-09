@@ -4,7 +4,7 @@
 # OpenGL и тянет mesa-xlib (libGL 17 МБ) - здесь FOX 1.6 без OpenGL, тулчейном musl на sysroot от
 # build.sh (сначала он); libstdc++ - пакет Alpine. reswrap (картинки -> C) исполняется при сборке - он
 # для хоста. Родные значки программ (GIF из исходников) -> PNG для меню JWM.
-# Xfe - только сам xfe (текст открывает adie, картинки - feh: xferc-greenos), значки - его тема
+# Xfe - xfe, архиватор xfa и просмотр картинок xfi (текст открывает adie: xferc-greenos), значки - его тема
 # kde-theme, русский интерфейс - его перевод (gettext в musl; LC_MESSAGES ставит xinitrc).
 # Результат -> bundles/greenos/root (в git не идёт), как у build.sh.
 set -e
@@ -81,8 +81,8 @@ chmod +x $B/bin/fox-config $B/bin/pkexec
   gt_cv_func_gnugettext1_libc=yes gt_cv_func_gnugettext2_libc=yes \
   ac_cv_func_malloc_0_nonnull=yes ac_cv_func_realloc_0_nonnull=yes \
   CC="$CC" CXX="$CXX" CFLAGS=-Os CXXFLAGS="-Os -DNDEBUG" CPPFLAGS="$CPPFLAGS" LDFLAGS="$LDFLAGS")
-make -C $X/src -s -j"$(nproc)" xfe
-cp $X/src/xfe $OUT/usr/bin/xfe
+make -C $X/src -s -j"$(nproc)" xfe xfa xfi
+cp $X/src/xfe $X/src/xfa $X/src/xfi $OUT/usr/bin/
 rm -rf $OUT/usr/share/xfe
 mkdir -p $OUT/usr/share/xfe/icons $OUT/usr/share/pixmaps $OUT/usr/share/locale/ru/LC_MESSAGES
 cp -r $X/icons/kde-theme $OUT/usr/share/xfe/icons/
@@ -92,14 +92,14 @@ find $OUT/usr/share/xfe/icons -name 'Makefile*' -delete
 for i in $X/icons/default-theme/*.png; do
   [ -f $OUT/usr/share/xfe/icons/kde-theme/${i##*/} ] || cp $i $OUT/usr/share/xfe/icons/kde-theme/
 done
-cp $X/icons/apps/xfe.png $OUT/usr/share/pixmaps/xfe.png
+cp $X/icons/apps/xfe.png $X/icons/apps/xfa.png $X/icons/apps/xfi.png $OUT/usr/share/pixmaps/
 cp $X/po/ru.gmo $OUT/usr/share/locale/ru/LC_MESSAGES/xfe.mo
 python3 bundles/greenos/xferc.py $X/xferc bundles/greenos/xferc-greenos $OUT/usr/share/xfe/xferc
 
-i686-linux-musl-strip $OUT/usr/bin/xfe $OUT/usr/bin/adie $OUT/usr/bin/calculator $OUT/usr/bin/shutterbug \
+i686-linux-musl-strip $OUT/usr/bin/xfe $OUT/usr/bin/xfa $OUT/usr/bin/xfi $OUT/usr/bin/adie $OUT/usr/bin/calculator $OUT/usr/bin/shutterbug \
   $OUT/usr/bin/ControlPanel $OUT/usr/lib/libFOX-1.6.so.*.*
 cd $OUT
-for f in usr/bin/xfe usr/bin/adie usr/bin/calculator usr/bin/shutterbug usr/bin/ControlPanel usr/lib/libFOX-1.6.so.*.*; do
+for f in usr/bin/xfe usr/bin/xfa usr/bin/xfi usr/bin/adie usr/bin/calculator usr/bin/shutterbug usr/bin/ControlPanel usr/lib/libFOX-1.6.so.*.*; do
   echo "$f $(du -h $f | cut -f1): $(i686-linux-musl-readelf -d $f | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done
 echo "usr/share/xfe $(du -sh usr/share/xfe | cut -f1)"

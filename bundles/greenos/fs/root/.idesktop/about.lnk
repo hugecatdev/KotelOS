@@ -1,0 +1,9 @@
+table Icon
+  Caption: О системе
+  Command: greenos-about
+  Icon: /usr/share/greenos/icons/about.png
+  Width: 48
+  Height: 48
+  X: 24
+  Y: 388
+end

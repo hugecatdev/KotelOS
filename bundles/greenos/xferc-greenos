@@ -24,8 +24,9 @@ scrollbarcolor = #d6e2cf
 [PROGS]
 txtviewer = adie
 txteditor = adie
-imgviewer = feh
+imgviewer = xfi
 imgeditor = feh
+archiver = xfa
 xterm = xterm
 
 [OPTIONS]

@@ -59,6 +59,11 @@ cp $S/src/jwm $OUT/usr/bin/jwm
 $CC -Os -Wall -Wno-format-truncation $CPPFLAGS -o $OUT/usr/bin/greenos-about bundles/greenos/greenos-about.c \
   $LDFLAGS -lXft -lXrender -lX11 -lpng16
 
+# конфиги - без комментариев и отступов (в машине всё в памяти); исходники с пояснениями - conf/
+mkdir -p $OUT/etc $OUT/root
+python3 bundles/greenos/minify.py xml bundles/greenos/conf/system.jwmrc $OUT/etc/system.jwmrc
+python3 bundles/greenos/minify.py xres bundles/greenos/conf/Xdefaults $OUT/root/.Xdefaults
+
 for f in $OUT/usr/bin/jwm $OUT/usr/bin/greenos-about; do
   echo "${f#$PWD/} $(du -h $f | cut -f1): $($TC/bin/i686-linux-musl-readelf -d $f | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done

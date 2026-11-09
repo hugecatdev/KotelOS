@@ -1,15 +1,23 @@
 #!/bin/sh
 # обои GreenOS - кубик (feh, во весь экран; картинки делает bundles/greenos/wallpaper.py). Телефон
 # стоя - greenos-tall.jpg; иначе greenos.jpg (1920x1200, кубик около x 1476): экран шире картинки -
-# кадр прижат к низу (снизу запас пола - кубик выше панели), уже - кадр вокруг кубика
+# кадр прижат к низу (снизу запас пола - кубик выше панели), уже - кадр вокруг кубика.
+# Потом - значки рабочего стола (idesk) заново: подложку подписей он берёт с обоев на экране
 d=/usr/share/backgrounds
 size=$(xrandr 2>/dev/null | sed -n 's/.* current \([0-9]*\) x \([0-9]*\),.*/\1x\2/p')
 [ -n "$size" ] || size=$(kt screen size 2>/dev/null) || size=1280x720
 w=${size%x*} h=${size#*x}
-[ "$w" -ge "$h" ] || exec feh --no-fehbg --bg-fill "$d/greenos-tall.jpg"
-if [ $((w * 1200)) -lt $((h * 1920)) ]; then
+if [ "$w" -lt "$h" ]; then
+  feh --no-fehbg --bg-fill "$d/greenos-tall.jpg"
+elif [ $((w * 1200)) -lt $((h * 1920)) ]; then
   x=$((1476 - 1200 * w / h / 2))
   [ $x -ge 0 ] || x=0
-  exec feh --no-fehbg --bg-fill --geometry +$x "$d/greenos.jpg"
+  feh --no-fehbg --bg-fill --geometry +$x "$d/greenos.jpg"
+else
+  feh --no-fehbg --bg-fill --geometry +0-0 "$d/greenos.jpg"
 fi
-exec feh --no-fehbg --bg-fill --geometry +0-0 "$d/greenos.jpg"
+if command -v idesk > /dev/null; then
+  pkill -x idesk
+  mkdir -p "$HOME/.local/share/Trash/files"
+  cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
+fi

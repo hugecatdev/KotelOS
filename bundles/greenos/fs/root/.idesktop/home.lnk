@@ -1,0 +1,9 @@
+table Icon
+  Caption: Домашняя папка
+  Command: xfe /root
+  Icon: /usr/share/greenos/icons/home.png
+  Width: 48
+  Height: 48
+  X: 24
+  Y: 20
+end
