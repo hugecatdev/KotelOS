@@ -33,3 +33,4 @@ __pycache__/
 
 # локальное: настройки и worktree Claude Code
 /.claude/
+isolate-*-v8.log
