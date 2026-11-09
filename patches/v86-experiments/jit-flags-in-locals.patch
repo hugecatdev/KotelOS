@@ -1,0 +1,760 @@
+JIT: ленивые флаги в локальных переменных функции модуля (эксперимент, в сборку не входит)
+
+Каждая инструкция, ставящая флаги (в сессии X - 580 млн из 1967 млн, около половины никем не
+читаются), пишет в память last_op1, last_result и 64-битную пару last_op_size/flags_changed, а
+test/and/or/xor ещё читают и пишут flags. Здесь эти четыре значения - локальные переменные
+функции (WasmBuilder::set_mirrored_locals): загружаются на входе, в память уходят на выходах
+(вместе с регистрами) и вокруг вызовов функций эмулятора, кроме медленных путей памяти и
+jit_find_cache_entry_in_page; непрочитанное V8 выбрасывает сам.
+
+Правильность: tests/jitflags.c (вывод совпадает с хостом, включая отказ страницы между cmp и
+jcc), jitfn, jitpf. Микротест в госте: add 0.64 -> 0.06 нс, cmp 0.65 -> 0.03, inc 0.91 -> 0.38.
+Но tests/pair.py: сессии X 1.01 / 0.99 / 1.02 по времени, шелл, Lua, CPython, gzip - 0.96-1.04,
+среднее 1.00, процессор вкладки +3%. Выигрыш на инструкциях съедают четыре загрузки и четыре
+записи на каждом входе и выходе из модуля (вход - раз в 20 инструкций) и лишние живые значения
+для распределителя регистров V8. Поэтому не взято.
+
+Применять поверх patches/v86 01-16: patch -p1 в дереве .cache/v86-REV.
+
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -78,6 +78,11 @@
+     // engine moves unlikely paths out of line and spills registers there, not on the fast path
+     branch_hints: Vec<(u32, bool)>,
+ 
++    // Locals that hold state which the functions of the emulator keep in memory (index of the
++    // local, address, is it 64 bits): stored before a call of such a function and loaded after
++    // it, see call_fn. The lazy flags live this way (codegen::FLAG_LOCAL_*)
++    mirrored_locals: Vec<(u8, u32, bool)>,
++
+     idx_import_table_size: usize, // for rewriting once finished
+     idx_import_count: usize,      // for rewriting once finished
+     idx_import_entries: usize,    // for searching the imports
+@@ -125,6 +130,7 @@
+             output: Vec::with_capacity(256),
+             instruction_body: Vec::with_capacity(256),
+             branch_hints: Vec::new(),
++            mirrored_locals: Vec::new(),
+ 
+             idx_import_table_size: 0,
+             idx_import_count: 0,
+@@ -170,6 +176,7 @@
+         self.set_import_count(0);
+         self.instruction_body.clear();
+         self.branch_hints.clear();
++        self.mirrored_locals.clear();
+         self.free_locals_i32.clear();
+         self.free_locals_i64.clear();
+         self.local_count = 0;
+@@ -831,6 +838,7 @@
+     pub fn and_i32(&mut self) { self.instruction_body.push(op::OP_I32AND); }
+     pub fn or_i32(&mut self) { self.instruction_body.push(op::OP_I32OR); }
+     pub fn or_i64(&mut self) { self.instruction_body.push(op::OP_I64OR); }
++    pub fn and_i64(&mut self) { self.instruction_body.push(op::OP_I64AND); }
+     pub fn xor_i32(&mut self) { self.instruction_body.push(op::OP_I32XOR); }
+     pub fn mul_i32(&mut self) { self.instruction_body.push(op::OP_I32MUL); }
+     pub fn mul_i64(&mut self) { self.instruction_body.push(op::OP_I64MUL); }
+@@ -984,8 +992,58 @@
+ 
+     fn call_fn(&mut self, name: &str, function: FunctionType) {
+         let i = self.get_fn_idx(name, function);
++        // The slow paths of memory accesses and the lookup of an entry point neither read nor
++        // write the mirrored state (they cannot even raise an exception: eip is not exact in
++        // compiled code, the exception is raised on the way out). Everything else may
++        let sync = !self.mirrored_locals.is_empty()
++            && !(name.starts_with("safe_") && name.ends_with("_slow_jit")
++                || name == "jit_find_cache_entry_in_page");
++        if sync {
++            self.mirrored_to_memory();
++        }
+         self.instruction_body.push(op::OP_CALL);
+         write_leb_u32(&mut self.instruction_body, i as u32);
++        if sync {
++            self.mirrored_from_memory();
++        }
++    }
++
++    pub fn set_mirrored_locals(&mut self, locals: Vec<(u8, u32, bool)>) {
++        self.mirrored_locals = locals;
++    }
++    pub fn get_mirrored(&mut self, i: usize) {
++        self.instruction_body.push(op::OP_GETLOCAL);
++        self.instruction_body.push(self.mirrored_locals[i].0);
++    }
++    pub fn set_mirrored(&mut self, i: usize) {
++        self.instruction_body.push(op::OP_SETLOCAL);
++        self.instruction_body.push(self.mirrored_locals[i].0);
++    }
++    pub fn mirrored_to_memory(&mut self) {
++        for i in 0..self.mirrored_locals.len() {
++            let (_, addr, is_64) = self.mirrored_locals[i];
++            self.const_i32(addr as i32);
++            self.get_mirrored(i);
++            if is_64 {
++                self.store_aligned_i64(0);
++            }
++            else {
++                self.store_aligned_i32(0);
++            }
++        }
++    }
++    pub fn mirrored_from_memory(&mut self) {
++        for i in 0..self.mirrored_locals.len() {
++            let (_, addr, is_64) = self.mirrored_locals[i];
++            self.const_i32(addr as i32);
++            if is_64 {
++                self.load_aligned_i64(0);
++            }
++            else {
++                self.load_aligned_i32(0);
++            }
++            self.set_mirrored(i);
++        }
+     }
+ 
+     pub fn call_fn0(&mut self, name: &str) { self.call_fn(name, FunctionType::FN0) }
+--- a/src/rust/codegen.rs
++++ b/src/rust/codegen.rs
+@@ -335,11 +335,25 @@
+         .load_fixed_i32(global_pointers::get_seg_offset(regs::SS));
+ }
+ 
+-pub fn gen_get_flags(builder: &mut WasmBuilder) {
+-    builder.load_fixed_i32(global_pointers::flags as u32);
+-}
++// The lazy flags are locals of the function (WasmBuilder::set_mirrored_locals): what an
++// instruction leaves for the flags costs nothing unless somebody reads it, and the engine drops
++// what is overwritten unread. In memory they are exact whenever a function of the emulator may
++// look: around its calls and on the way out of the compiled function
++pub const FLAG_LOCAL_OP1: usize = 0;
++pub const FLAG_LOCAL_RESULT: usize = 1;
++// last_op_size in the low half, flags_changed in the high half (as in memory)
++pub const FLAG_LOCAL_OP_SIZE_AND_CHANGED: usize = 2;
++pub const FLAG_LOCAL_FLAGS: usize = 3;
++
++pub fn gen_flag_get(builder: &mut WasmBuilder, which: usize) { builder.get_mirrored(which) }
++pub fn gen_flag_set(builder: &mut WasmBuilder, which: usize) { builder.set_mirrored(which) }
++
++pub fn gen_get_flags(builder: &mut WasmBuilder) { builder.get_mirrored(FLAG_LOCAL_FLAGS) }
+ fn gen_get_flags_changed(builder: &mut WasmBuilder) {
+-    builder.load_fixed_i32(global_pointers::flags_changed as u32);
++    builder.get_mirrored(FLAG_LOCAL_OP_SIZE_AND_CHANGED);
++    builder.const_i64(32);
++    builder.shr_u_i64();
++    builder.wrap_i64_to_i32();
+ }
+ fn gen_get_last_result(builder: &mut WasmBuilder, previous_instruction: &Instruction) {
+     match previous_instruction {
+@@ -375,14 +389,15 @@
+                 builder.get_local(&l)
+             }
+             else {
+-                builder.load_fixed_i32(global_pointers::last_result as u32)
++                builder.get_mirrored(FLAG_LOCAL_RESULT)
+             }
+         },
+-        _ => builder.load_fixed_i32(global_pointers::last_result as u32),
++        _ => builder.get_mirrored(FLAG_LOCAL_RESULT),
+     }
+ }
+ fn gen_get_last_op_size(builder: &mut WasmBuilder) {
+-    builder.load_fixed_i32(global_pointers::last_op_size as u32);
++    builder.get_mirrored(FLAG_LOCAL_OP_SIZE_AND_CHANGED);
++    builder.wrap_i64_to_i32();
+ }
+ fn gen_get_last_op1(builder: &mut WasmBuilder, previous_instruction: &Instruction) {
+     match previous_instruction {
+@@ -391,7 +406,7 @@
+             source: _,
+             opsize: OPSIZE_32,
+         } => builder.get_local(&l),
+-        _ => builder.load_fixed_i32(global_pointers::last_op1 as u32),
++        _ => builder.get_mirrored(FLAG_LOCAL_OP1),
+     }
+ }
+ 
+@@ -1662,23 +1677,20 @@
+ }
+ 
+ pub fn gen_set_last_op1(builder: &mut WasmBuilder, source: &WasmLocal) {
+-    builder.const_i32(global_pointers::last_op1 as i32);
+     builder.get_local(&source);
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(FLAG_LOCAL_OP1);
+ }
+ 
+ pub fn gen_set_last_result(builder: &mut WasmBuilder, source: &WasmLocal) {
+-    builder.const_i32(global_pointers::last_result as i32);
+     builder.get_local(&source);
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(FLAG_LOCAL_RESULT);
+ }
+ 
+ pub fn gen_clear_flags_changed_bits(builder: &mut WasmBuilder, bits_to_clear: i32) {
+-    builder.const_i32(global_pointers::flags_changed as i32);
+-    gen_get_flags_changed(builder);
+-    builder.const_i32(!bits_to_clear);
+-    builder.and_i32();
+-    builder.store_aligned_i32(0);
++    builder.get_mirrored(FLAG_LOCAL_OP_SIZE_AND_CHANGED);
++    builder.const_i64(!((bits_to_clear as u32 as i64) << 32));
++    builder.and_i64();
++    builder.set_mirrored(FLAG_LOCAL_OP_SIZE_AND_CHANGED);
+ }
+ 
+ pub fn gen_set_last_op_size_and_flags_changed(
+@@ -1689,25 +1701,22 @@
+     dbg_assert!(last_op_size == OPSIZE_8 || last_op_size == OPSIZE_16 || last_op_size == OPSIZE_32);
+     dbg_assert!(global_pointers::last_op_size as i32 % 8 == 0);
+     dbg_assert!(global_pointers::last_op_size as i32 + 4 == global_pointers::flags_changed as i32);
+-    builder.const_i32(global_pointers::last_op_size as i32);
+     builder.const_i64(last_op_size as u32 as i64 | (flags_changed as u32 as i64) << 32);
+-    builder.store_aligned_i64(0);
++    builder.set_mirrored(FLAG_LOCAL_OP_SIZE_AND_CHANGED);
+ }
+ 
+ pub fn gen_set_flags_bits(builder: &mut WasmBuilder, bits_to_set: i32) {
+-    builder.const_i32(global_pointers::flags as i32);
+     gen_get_flags(builder);
+     builder.const_i32(bits_to_set);
+     builder.or_i32();
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(FLAG_LOCAL_FLAGS);
+ }
+ 
+ pub fn gen_clear_flags_bits(builder: &mut WasmBuilder, bits_to_clear: i32) {
+-    builder.const_i32(global_pointers::flags as i32);
+     gen_get_flags(builder);
+     builder.const_i32(!bits_to_clear);
+     builder.and_i32();
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(FLAG_LOCAL_FLAGS);
+ }
+ 
+ #[derive(PartialEq)]
+@@ -1779,12 +1788,14 @@
+                 gen_get_last_result(ctx.builder, &ctx.previous_instruction);
+             }
+             else if opsize == OPSIZE_16 {
+-                ctx.builder
+-                    .load_fixed_u16(global_pointers::last_result as u32);
++                ctx.builder.get_mirrored(FLAG_LOCAL_RESULT);
++                ctx.builder.const_i32(0xFFFF);
++                ctx.builder.and_i32();
+             }
+             else if opsize == OPSIZE_8 {
+-                ctx.builder
+-                    .load_fixed_u8(global_pointers::last_result as u32);
++                ctx.builder.get_mirrored(FLAG_LOCAL_RESULT);
++                ctx.builder.const_i32(0xFF);
++                ctx.builder.and_i32();
+             }
+             if negate == ConditionNegate::False {
+                 ctx.builder.eqz_i32();
+@@ -2690,6 +2701,9 @@
+         ctx.builder.get_local(&ctx.register_locals[i]);
+         ctx.builder.store_aligned_i32(0);
+     }
++    // and the lazy flags: this is the way out of the function (or a call that needs the cpu
++    // state in memory)
++    ctx.builder.mirrored_to_memory();
+ }
+ pub fn gen_move_registers_from_memory_to_locals(ctx: &mut JitContext) {
+     if cfg!(feature = "profiler") {
+@@ -2703,6 +2717,7 @@
+         ctx.builder.load_aligned_i32(0);
+         ctx.builder.set_local(&ctx.register_locals[i]);
+     }
++    ctx.builder.mirrored_from_memory();
+ }
+ 
+ pub fn gen_profiler_stat_increment(builder: &mut WasmBuilder, stat: profiler::stat) {
+--- a/src/rust/jit_instructions.rs
++++ b/src/rust/jit_instructions.rs
+@@ -967,24 +967,23 @@
+         is_inc: false,
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     ctx.builder.get_local(dest_operand);
+     ctx.builder.const_i32(0xFF);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(dest_operand);
+     source_operand.gen_get(ctx.builder);
+     ctx.builder.add_i32();
+     ctx.builder.const_i32(0xFF);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, OPSIZE_8, FLAGS_ALL);
+ 
+-    ctx.builder
+-        .load_fixed_u8(global_pointers::last_result as u32);
++    ctx.builder.get_mirrored(codegen::FLAG_LOCAL_RESULT);
++    ctx.builder.const_i32(0xFF);
++    ctx.builder.and_i32();
+ }
+ fn gen_add32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &LocalOrImmediate) {
+     ctx.current_instruction = Instruction::Add {
+@@ -1023,24 +1022,23 @@
+         is_dec: false,
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     ctx.builder.get_local(dest_operand);
+     ctx.builder.const_i32(0xFF);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(dest_operand);
+     source_operand.gen_get(ctx.builder);
+     ctx.builder.sub_i32();
+     ctx.builder.const_i32(0xFF);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, OPSIZE_8, FLAGS_ALL | FLAG_SUB);
+ 
+-    ctx.builder
+-        .load_fixed_u8(global_pointers::last_result as u32);
++    ctx.builder.get_mirrored(codegen::FLAG_LOCAL_RESULT);
++    ctx.builder.const_i32(0xFF);
++    ctx.builder.and_i32();
+ }
+ fn gen_sub32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &LocalOrImmediate) {
+     ctx.current_instruction = Instruction::Sub {
+@@ -1078,7 +1076,6 @@
+         opsize: size,
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     if source_operand.is_zero() {
+         ctx.builder.get_local(&dest_operand);
+     }
+@@ -1092,16 +1089,15 @@
+             .const_i32(if size == OPSIZE_8 { 0xFF } else { 0xFFFF });
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     ctx.builder.get_local(&dest_operand);
+     if size == OPSIZE_8 || size == OPSIZE_16 {
+         ctx.builder
+             .const_i32(if size == OPSIZE_8 { 0xFF } else { 0xFFFF });
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, size, FLAGS_ALL | FLAG_SUB);
+ }
+ fn gen_cmp8(ctx: &mut JitContext, dest: &WasmLocal, source: &LocalOrImmediate) {
+@@ -1149,7 +1145,6 @@
+         FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW & !FLAG_ADJUST,
+     );
+ 
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder
+         .const_i32(!FLAG_CARRY & !FLAG_ADJUST & !FLAG_OVERFLOW);
+@@ -1195,7 +1190,7 @@
+     ctx.builder.and_i32();
+     ctx.builder.or_i32();
+ 
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     ctx.builder.get_local(&res);
+     ctx.builder.set_local(dest_operand);
+@@ -1248,7 +1243,6 @@
+         FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW & !FLAG_ADJUST,
+     );
+ 
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder
+         .const_i32(!FLAG_CARRY & !FLAG_ADJUST & !FLAG_OVERFLOW);
+@@ -1294,7 +1288,7 @@
+     ctx.builder.and_i32();
+     ctx.builder.or_i32();
+ 
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     ctx.builder.get_local(&res);
+     ctx.builder.set_local(dest_operand);
+@@ -1318,11 +1312,10 @@
+         dest: local_to_instruction_operand(ctx, dest_operand),
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(dest_operand);
+     source_operand.gen_get(ctx.builder);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(
+         ctx.builder,
+@@ -1331,8 +1324,9 @@
+     );
+     codegen::gen_clear_flags_bits(ctx.builder, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
+ 
+-    ctx.builder
+-        .load_fixed_u8(global_pointers::last_result as u32);
++    ctx.builder.get_mirrored(codegen::FLAG_LOCAL_RESULT);
++    ctx.builder.const_i32(0xFF);
++    ctx.builder.and_i32();
+ }
+ fn gen_and32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &LocalOrImmediate) {
+     ctx.current_instruction = Instruction::Bitwise {
+@@ -1371,7 +1365,6 @@
+         },
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     if is_self_test {
+         ctx.builder.get_local(&dest_operand);
+     }
+@@ -1380,7 +1373,7 @@
+         source_operand.gen_get(ctx.builder);
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(
+         ctx.builder,
+@@ -1405,11 +1398,10 @@
+         dest: local_to_instruction_operand(ctx, dest_operand),
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(dest_operand);
+     source_operand.gen_get(ctx.builder);
+     ctx.builder.or_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(
+         ctx.builder,
+@@ -1418,8 +1410,9 @@
+     );
+     codegen::gen_clear_flags_bits(ctx.builder, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
+ 
+-    ctx.builder
+-        .load_fixed_u8(global_pointers::last_result as u32);
++    ctx.builder.get_mirrored(codegen::FLAG_LOCAL_RESULT);
++    ctx.builder.const_i32(0xFF);
++    ctx.builder.and_i32();
+ }
+ fn gen_or32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &LocalOrImmediate) {
+     ctx.current_instruction = Instruction::Bitwise {
+@@ -1447,11 +1440,10 @@
+         dest: local_to_instruction_operand(ctx, dest_operand),
+     };
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(dest_operand);
+     source_operand.gen_get(ctx.builder);
+     ctx.builder.xor_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+     codegen::gen_set_last_op_size_and_flags_changed(
+         ctx.builder,
+@@ -1460,8 +1452,9 @@
+     );
+     codegen::gen_clear_flags_bits(ctx.builder, FLAG_CARRY | FLAG_OVERFLOW | FLAG_ADJUST);
+ 
+-    ctx.builder
+-        .load_fixed_u8(global_pointers::last_result as u32);
++    ctx.builder.get_mirrored(codegen::FLAG_LOCAL_RESULT);
++    ctx.builder.const_i32(0xFF);
++    ctx.builder.and_i32();
+ }
+ fn gen_xor32(ctx: &mut JitContext, dest_operand: &WasmLocal, source_operand: &LocalOrImmediate) {
+     ctx.current_instruction = Instruction::Bitwise {
+@@ -1645,7 +1638,6 @@
+         FLAGS_ALL & !FLAG_CARRY & !FLAG_OVERFLOW,
+     );
+ 
+-    builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(builder);
+     builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+     builder.and_i32();
+@@ -1663,7 +1655,7 @@
+         builder.and_i32();
+         builder.or_i32();
+     }
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     builder.free_local(b);
+ 
+@@ -1699,7 +1691,6 @@
+         },
+     };
+ 
+-    builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(builder);
+     builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+     builder.and_i32();
+@@ -1719,7 +1710,7 @@
+         builder.and_i32();
+         builder.or_i32()
+     }
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     builder.get_local(dest_operand);
+     ShiftCount::gen_get(builder, &count);
+@@ -1765,7 +1756,6 @@
+         },
+     };
+ 
+-    builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(builder);
+     builder.const_i32(!(FLAG_CARRY | FLAG_OVERFLOW));
+     builder.and_i32();
+@@ -1777,7 +1767,7 @@
+         builder.and_i32();
+         builder.or_i32()
+     }
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     builder.get_local(dest_operand);
+     ShiftCount::gen_get(builder, &count);
+@@ -1812,15 +1802,13 @@
+ fn gen_cmpxchg32(ctx: &mut JitContext, r: u32) {
+     let source = ctx.builder.set_new_local();
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     codegen::gen_get_reg32(ctx, regs::EAX);
+     ctx.builder.get_local(&source);
+     ctx.builder.sub_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     codegen::gen_get_reg32(ctx, regs::EAX);
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, OPSIZE_32, FLAGS_ALL | FLAG_SUB);
+ 
+     codegen::gen_get_reg32(ctx, regs::EAX);
+@@ -1938,7 +1926,6 @@
+         FLAGS_ALL & !1 & !FLAG_OVERFLOW,
+     );
+ 
+-    builder.const_i32(global_pointers::flags as i32);
+     builder.get_local_i64(&result);
+     builder.wrap_i64_to_i32();
+     builder.extend_signed_i32_to_i64();
+@@ -1950,7 +1937,7 @@
+     builder.const_i32(!1 & !FLAG_OVERFLOW);
+     builder.and_i32();
+     builder.or_i32();
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     builder.free_local_i64(result);
+ }
+@@ -2009,7 +1996,6 @@
+     bit_offset: &LocalOrImmediate,
+     offset_mask: u32,
+ ) {
+-    builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(builder);
+     builder.const_i32(!1);
+     builder.and_i32();
+@@ -2026,7 +2012,7 @@
+     builder.const_i32(1);
+     builder.and_i32();
+     builder.or_i32();
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     codegen::gen_clear_flags_changed_bits(builder, 1);
+ }
+@@ -2362,22 +2348,20 @@
+ }
+ 
+ fn gen_inc(ctx: &mut JitContext, dest_operand: &WasmLocal, size: i32) {
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder.const_i32(!1);
+     ctx.builder.and_i32();
+     codegen::gen_getcf(ctx, ConditionNegate::False);
+     ctx.builder.or_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     ctx.builder.get_local(&dest_operand);
+     if size == OPSIZE_8 || size == OPSIZE_16 {
+         ctx.builder
+             .const_i32(if size == OPSIZE_8 { 0xFF } else { 0xFFFF });
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+ 
+     ctx.builder.get_local(dest_operand);
+     ctx.builder.const_i32(1);
+@@ -2389,13 +2373,12 @@
+         ctx.builder.set_local(dest_operand);
+     }
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(&dest_operand);
+     if size == OPSIZE_16 {
+         ctx.builder.const_i32(0xFFFF);
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, size, FLAGS_ALL & !1);
+     ctx.current_instruction = Instruction::Add {
+         opsize: size,
+@@ -2412,22 +2395,20 @@
+ }
+ 
+ fn gen_dec(ctx: &mut JitContext, dest_operand: &WasmLocal, size: i32) {
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder.const_i32(!1);
+     ctx.builder.and_i32();
+     codegen::gen_getcf(ctx, ConditionNegate::False);
+     ctx.builder.or_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+-    ctx.builder.const_i32(global_pointers::last_op1 as i32);
+     ctx.builder.get_local(&dest_operand);
+     if size == OPSIZE_8 || size == OPSIZE_16 {
+         ctx.builder
+             .const_i32(if size == OPSIZE_8 { 0xFF } else { 0xFFFF });
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+ 
+     ctx.builder.get_local(dest_operand);
+     ctx.builder.const_i32(1);
+@@ -2439,13 +2420,12 @@
+         ctx.builder.set_local(dest_operand);
+     }
+ 
+-    ctx.builder.const_i32(global_pointers::last_result as i32);
+     ctx.builder.get_local(&dest_operand);
+     if size == OPSIZE_16 {
+         ctx.builder.const_i32(0xFFFF);
+         ctx.builder.and_i32();
+     }
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_RESULT);
+     codegen::gen_set_last_op_size_and_flags_changed(ctx.builder, size, FLAGS_ALL & !1 | FLAG_SUB);
+     ctx.current_instruction = Instruction::Sub {
+         opsize: size,
+@@ -2489,9 +2469,8 @@
+ }
+ fn gen_neg32(ctx: &mut JitContext, dest_operand: &WasmLocal) {
+     let builder = &mut ctx.builder;
+-    builder.const_i32(global_pointers::last_op1 as i32);
+     builder.const_i32(0);
+-    builder.store_aligned_i32(0);
++    builder.set_mirrored(codegen::FLAG_LOCAL_OP1);
+ 
+     builder.const_i32(0);
+     builder.get_local(&dest_operand);
+@@ -4266,19 +4245,17 @@
+ }
+ 
+ pub fn instr_FC_jit(ctx: &mut JitContext) {
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder.const_i32(!FLAG_DIRECTION);
+     ctx.builder.and_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ }
+ 
+ pub fn instr_FD_jit(ctx: &mut JitContext) {
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder.const_i32(FLAG_DIRECTION);
+     ctx.builder.or_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ }
+ 
+ define_instruction_read_write_mem8!("inc8", instr_FE_0_mem_jit, instr_FE_0_reg_jit, none);
+@@ -4577,7 +4554,6 @@
+ pub fn instr32_9D_jit(ctx: &mut JitContext) { gen_popf(ctx, true) }
+ 
+ pub fn instr_9E_jit(ctx: &mut JitContext) {
+-    ctx.builder.const_i32(global_pointers::flags as i32);
+     codegen::gen_get_flags(ctx.builder);
+     ctx.builder.const_i32(!0xFF);
+     ctx.builder.and_i32();
+@@ -4587,7 +4563,7 @@
+     ctx.builder.and_i32();
+     ctx.builder.const_i32(FLAGS_DEFAULT);
+     ctx.builder.or_i32();
+-    ctx.builder.store_aligned_i32(0);
++    ctx.builder.set_mirrored(codegen::FLAG_LOCAL_FLAGS);
+ 
+     codegen::gen_clear_flags_changed_bits(ctx.builder, 0xFF);
+ }
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -1229,6 +1229,26 @@
+         })
+         .collect();
+ 
++    // the lazy flags, see codegen::FLAG_LOCAL_*
++    builder.load_fixed_i32(global_pointers::last_op1 as u32);
++    let flag_op1 = builder.set_new_local();
++    builder.load_fixed_i32(global_pointers::last_result as u32);
++    let flag_result = builder.set_new_local();
++    builder.load_fixed_i64(global_pointers::last_op_size as u32);
++    let flag_op_size_and_changed = builder.set_new_local_i64();
++    builder.load_fixed_i32(global_pointers::flags as u32);
++    let flag_flags = builder.set_new_local();
++    builder.set_mirrored_locals(vec![
++        (flag_op1.idx(), global_pointers::last_op1 as u32, false),
++        (flag_result.idx(), global_pointers::last_result as u32, false),
++        (
++            flag_op_size_and_changed.idx(),
++            global_pointers::last_op_size as u32,
++            true,
++        ),
++        (flag_flags.idx(), global_pointers::flags as u32, false),
++    ]);
++
+     builder.const_i32(0);
+     let instruction_counter = builder.set_new_local();
+ 
+@@ -2039,6 +2059,11 @@
+     }
+     ctx.builder
+         .free_local(ctx.instruction_counter.unsafe_clone());
++    ctx.builder.set_mirrored_locals(Vec::new());
++    ctx.builder.free_local(flag_op1);
++    ctx.builder.free_local(flag_result);
++    ctx.builder.free_local_i64(flag_op_size_and_changed);
++    ctx.builder.free_local(flag_flags);
+ 
+     ctx.builder.finish();
+ 

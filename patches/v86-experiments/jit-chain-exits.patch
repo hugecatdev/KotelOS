@@ -1,0 +1,315 @@
+JIT: прямые переходы модуль -> модуль с места перехода (эксперимент, в сборку не входит)
+
+На выходе с известной целью (jmp, call, условный переход из модуля) функция сама ищет
+скомпилированную цель (tlb_code, state_flags, таблица состояний - как cycle_internal, плюс предел
+по счётчику инструкций) и уходит в неё хвостовым вызовом return_call_indirect через
+импортированную таблицу; главный цикл - запасной путь. Замысел: у каждого места свой косвенный
+переход с одной целью (предсказуем), а не один вызов из главного цикла на все модули. Синтетика
+в node это подтверждала: вызов через таблицу к одной цели 6.9 нс, к 128 разным модулям в
+случайном порядке - 20.7 нс. Без хвостовых вызовов wasm выключается из js (set_jit_config(8, 0)).
+
+Правильность: jitfn, jitpf. Но tests/pair.py --x: время 1.02 / 1.03 / 1.02, процессор вкладки
++1-8% (модули больше). По счётчикам процессора промахи предсказателя - около 4% тактов, так что
+выигрывать тут нечего; до этого так же ничего не дали общий хвостовой переход на выходе модуля,
+вложенные вызовы и кэш входов по eip. Поэтому не взято.
+
+Применять поверх patches/v86 01-16 в дереве .cache/v86-REV (cpu.js там уже после cond.py).
+
+--- a/src/rust/wasmgen/wasm_opcodes.rs
++++ b/src/rust/wasmgen/wasm_opcodes.rs
+@@ -10,6 +10,9 @@
+ 
+ // Section codes
+ c!(SC_CUSTOM, 0);
++c!(EXT_TABLE_IMPORT, 1);
++c!(TYPE_FUNCREF, 0x70);
++c!(OP_RETURNCALLINDIRECT, 0x13);
+ c!(SC_TYPE, 1);
+ c!(SC_IMPORT, 2);
+ c!(SC_FUNCTION, 3);
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -78,6 +78,9 @@
+     // engine moves unlikely paths out of line and spills registers there, not on the fast path
+     branch_hints: Vec<(u32, bool)>,
+ 
++    // the module calls through the table of compiled code (return_call_indirect): import it
++    uses_table: bool,
++
+     idx_import_table_size: usize, // for rewriting once finished
+     idx_import_count: usize,      // for rewriting once finished
+     idx_import_entries: usize,    // for searching the imports
+@@ -125,6 +128,7 @@
+             output: Vec::with_capacity(256),
+             instruction_body: Vec::with_capacity(256),
+             branch_hints: Vec::new(),
++            uses_table: false,
+ 
+             idx_import_table_size: 0,
+             idx_import_count: 0,
+@@ -170,6 +174,7 @@
+         self.set_import_count(0);
+         self.instruction_body.clear();
+         self.branch_hints.clear();
++        self.uses_table = false;
+         self.free_locals_i32.clear();
+         self.free_locals_i64.clear();
+         self.local_count = 0;
+@@ -184,6 +189,9 @@
+         dbg_assert!(self.label_stack.is_empty());
+ 
+         self.write_memory_import();
++        if self.uses_table {
++            self.write_table_import();
++        }
+         self.write_function_section();
+         self.write_export_section();
+ 
+@@ -195,8 +203,8 @@
+             section.push(name.len().safe_to_u8());
+             section.extend(name.as_bytes());
+             section.push(1); // one function
+-            // the function follows the imports; the last import is the memory
+-            write_leb_u32(&mut section, self.import_count as u32 - 1);
++            // the function follows the imported functions
++            write_leb_u32(&mut section, self.function_index() as u32);
+             write_leb_u32(&mut section, self.branch_hints.len() as u32);
+             // locals are written below as: number of groups, then (count, type) for each group
+             let locals_size = 1 + 2 * self.local_groups().len() as u32;
+@@ -532,6 +540,28 @@
+         self.set_import_table_size(new_table_size);
+     }
+ 
++    /// Index of the function of this module: the imported functions come first; the memory and
++    /// the table are imports, too, but not functions (to be called after they are written)
++    fn function_index(&self) -> u16 { self.import_count - 1 - self.uses_table as u16 }
++
++    pub fn write_table_import(&mut self) {
++        self.output.push(1);
++        self.output.push('e' as u8);
++        self.output.push(1);
++        self.output.push('t' as u8);
++
++        self.output.push(op::EXT_TABLE_IMPORT);
++        self.output.push(op::TYPE_FUNCREF);
++        self.output.push(0); // no maximum
++        self.output.push(0); // initial size: any table will do
++
++        let new_import_count = self.import_count + 1;
++        self.set_import_count(new_import_count);
++
++        let new_table_size = self.import_table_size + 8;
++        self.set_import_table_size(new_table_size);
++    }
++
+     fn write_import_entry(&mut self, fn_name: &str, type_index: FunctionType) -> u16 {
+         self.output.push(1); // length of module name
+         self.output.push('e' as u8); // module name
+@@ -571,7 +601,8 @@
+         let next_op_idx = self.output.len();
+         self.output.push(0);
+         self.output.push(0); // add 2 bytes for writing 16 byte val
+-        write_fixed_leb16_at_idx(&mut self.output, next_op_idx, self.import_count - 1);
++        let function_index = self.function_index();
++        write_fixed_leb16_at_idx(&mut self.output, next_op_idx, function_index);
+     }
+ 
+     fn get_fn_idx(&mut self, fn_name: &str, type_index: FunctionType) -> u16 {
+@@ -936,6 +967,15 @@
+ 
+     pub fn return_(&mut self) { self.instruction_body.push(op::OP_RETURN); }
+ 
++    /// Tail call of a function of the type of this module (FN1) through the imported table:
++    /// stack is the argument and the index in the table
++    pub fn return_call_indirect(&mut self) {
++        self.uses_table = true;
++        self.instruction_body.push(op::OP_RETURNCALLINDIRECT);
++        self.instruction_body.push(FunctionType::FN1.to_u8());
++        self.instruction_body.push(0); // table
++    }
++
+     #[allow(dead_code)]
+     pub fn drop_(&mut self) { self.instruction_body.push(op::OP_DROP); }
+ 
+--- a/src/rust/cpu/cpu.rs
++++ b/src/rust/cpu/cpu.rs
+@@ -320,11 +320,24 @@
+ // used for restoring the state
+ pub static mut tsc_offset: u64 = 0;
+ 
++// compiled code reads this (jit::gen_chain_exit)
++#[repr(C)]
+ pub struct Code {
++    pub state_table: [u16; 0x1000],
+     pub wasm_table_index: jit::WasmTableIndex,
+     pub state_flags: CachedStateFlags,
+-    pub state_table: [u16; 0x1000],
+ }
++pub const CODE_OFFSET_WASM_TABLE_INDEX: u32 = 0x2000;
++pub const CODE_OFFSET_STATE_FLAGS: u32 = 0x2002;
++const _: () = assert!(std::mem::offset_of!(Code, state_table) == 0);
++const _: () = assert!(std::mem::offset_of!(Code, wasm_table_index) == CODE_OFFSET_WASM_TABLE_INDEX as usize);
++const _: () = assert!(std::mem::offset_of!(Code, state_flags) == CODE_OFFSET_STATE_FLAGS as usize);
++const _: () = assert!(std::mem::size_of::<Option<ptr::NonNull<Code>>>() == 4);
++
++// Instruction counter at the start of do_many_cycles_native: compiled code that goes on to other
++// compiled code without returning here (jit::gen_chain_exit) stops doing so when LOOP_COUNTER
++// instructions have run since
++pub static mut jit_cycle_start: u32 = 0;
+ 
+ pub static mut tlb_data: [i32; 0x100000] = [0; 0x100000];
+ pub static mut tlb_code: [Option<ptr::NonNull<Code>>; 0x100000] = [None; 0x100000];
+@@ -3416,6 +3429,7 @@
+ pub unsafe fn do_many_cycles_native() {
+     profiler::stat_increment(stat::DO_MANY_CYCLES);
+     let initial_instruction_counter = *instruction_counter;
++    jit_cycle_start = initial_instruction_counter;
+     while (*instruction_counter).wrapping_sub(initial_instruction_counter) < LOOP_COUNTER as u32
+         && !*in_hlt
+     {
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -84,6 +84,10 @@
+ // less branches will generate if-else, more will generate brtable
+ pub const BRTABLE_CUTOFF: usize = 10;
+ 
++// Jumps and calls out of a module go on to the compiled target directly (gen_chain_exit). Needs
++// tail calls of wasm: turned off from js where the engine has none
++pub static mut JIT_CHAIN: bool = true;
++
+ // needs to be synced to const.js
+ pub const WASM_TABLE_SIZE: u32 = 900;
+ 
+@@ -1434,7 +1438,7 @@
+ 
+                         codegen::gen_debug_track_jit_exit(ctx.builder, block.last_instruction_addr);
+                         codegen::gen_profiler_stat_increment(ctx.builder, stat::DIRECT_EXIT);
+-                        ctx.builder.br(ctx.exit_label);
++                        gen_chain_exit(ctx);
+                     },
+                     &BasicBlockType::Normal {
+                         next_block_addr: Some(next_block_addr),
+@@ -1738,7 +1742,7 @@
+                                     ctx.builder,
+                                     stat::CONDITIONAL_JUMP_EXIT,
+                                 );
+-                                ctx.builder.br(ctx.exit_label);
++                                gen_chain_exit(ctx);
+ 
+                                 if is_first {
+                                     ctx.builder.block_end();
+@@ -2064,6 +2068,74 @@
+     return entries;
+ }
+ 
++// Leave the function to a target that is fixed at this place (jump, call, conditional jump out of
++// the module; eip is set): if the target is compiled, go on there with a tail call instead of
++// returning to the main loop, which would enter it with one indirect call for all the modules -
++// not predictable for the cpu, unlike the jump here that has one target. The conditions are
++// those of cpu::cycle_internal and do_many_cycles_native
++fn gen_chain_exit(ctx: &mut JitContext) {
++    if !unsafe { JIT_CHAIN } {
++        ctx.builder.br(ctx.exit_label);
++        return;
++    }
++
++    codegen::gen_move_registers_from_locals_to_memory(ctx);
++    codegen::gen_update_instruction_counter(ctx);
++
++    let builder = &mut *ctx.builder;
++    let out = builder.block_void();
++
++    builder.load_fixed_i32(global_pointers::instruction_counter as u32);
++    builder.load_fixed_i32(&raw const cpu::jit_cycle_start as u32);
++    builder.sub_i32();
++    builder.const_i32(cpu::LOOP_COUNTER);
++    builder.geu_i32();
++    builder.br_if_hint(out, false);
++
++    builder.load_fixed_i32(global_pointers::instruction_pointer as u32);
++    let eip = builder.tee_new_local();
++    builder.const_i32(12);
++    builder.shr_u_i32();
++    builder.const_i32(2);
++    builder.shl_i32();
++    builder.load_aligned_i32(&raw const cpu::tlb_code as u32);
++    let code = builder.tee_new_local();
++    builder.eqz_i32();
++    builder.br_if_hint(out, false);
++
++    builder.get_local(&code);
++    builder.load_u8(cpu::CODE_OFFSET_STATE_FLAGS);
++    builder.load_fixed_u8(global_pointers::state_flags as u32);
++    builder.ne_i32();
++    builder.br_if_hint(out, false);
++
++    builder.get_local(&code);
++    builder.get_local(&eip);
++    builder.const_i32(0xFFF);
++    builder.and_i32();
++    builder.const_i32(1);
++    builder.shl_i32();
++    builder.add_i32();
++    builder.load_aligned_u16(0);
++    let state = builder.tee_new_local();
++    builder.const_i32(u16::MAX as i32);
++    builder.eq_i32();
++    builder.br_if_hint(out, false);
++
++    builder.get_local(&state);
++    builder.get_local(&code);
++    builder.load_aligned_u16(cpu::CODE_OFFSET_WASM_TABLE_INDEX);
++    builder.const_i32(cpu::WASM_TABLE_OFFSET as i32);
++    builder.add_i32();
++    builder.return_call_indirect();
++
++    builder.block_end();
++    builder.free_local(eip);
++    builder.free_local(code);
++    builder.free_local(state);
++    builder.return_();
++}
++
+ fn jit_generate_basic_block(ctx: &mut JitContext, block: &BasicBlock) {
+     let needs_eip_updated = match block.ty {
+         BasicBlockType::Exit => true,
+@@ -2516,6 +2588,7 @@
+         2 => JIT_USE_LOOP_SAFETY = value != 0,
+         3 => MAX_EXTRA_BASIC_BLOCKS = value,
+         5 => JIT_THRESHOLD = value,
++        8 => JIT_CHAIN = value != 0,
+         _ => dbg_assert!(false),
+     }
+ }
+@@ -2528,6 +2601,7 @@
+         2 => JIT_USE_LOOP_SAFETY as u32,
+         3 => MAX_EXTRA_BASIC_BLOCKS as u32,
+         5 => JIT_THRESHOLD,
++        8 => JIT_CHAIN as u32,
+         _ => 0,
+     }
+ }
+--- a/src/cpu.js
++++ b/src/cpu.js
+@@ -324,6 +324,8 @@
+     const jit_imports = Object.create(null);
+ 
+     jit_imports["m"] = this.wm.exports["memory"];
++    // compiled code goes on to other compiled code through the table (tail calls)
++    jit_imports["t"] = this.wm.wasm_table;
+ 
+     for(const name of Object.keys(this.wm.exports))
+     {
+@@ -985,6 +987,12 @@
+         this.set_jit_config(0, 1);
+     }
+ 
++    // (func return_call 0): without tail calls of wasm compiled code leaves through the main loop
++    if(!WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 10, 6, 1, 4, 0, 18, 0, 11])))
++    {
++        this.set_jit_config(8, 0);
++    }
++
+     settings.cpuid_level && this.set_cpuid_level(settings.cpuid_level);
+ 
+     this.acpi_enabled[0] = 0; // built without ACPI (and so without APIC)
