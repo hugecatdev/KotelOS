@@ -116,6 +116,9 @@ def packages_cpio(names, world, extra=()):
             subprocess.run(["tar", "-xJpf", archive, "-C", root], check=True)
             with open(os.path.join(db, n), "w") as f:
                 subprocess.run(["tar", "-tJf", archive], stdout=f, check=True)
+        # XML без комментариев и отступов, как в пакетах репозитория (build.sh): здесь - пакеты прямо из
+        # Alpine и данные бандла (--file), кроме /root
+        subprocess.run([sys.executable, "-I", "scripts/xmlmin.py", root], check=True)
         if os.path.isdir(os.path.join(root, "root")):
             os.chmod(os.path.join(root, "root"), 0o700)
         if triggers:

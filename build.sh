@@ -38,6 +38,7 @@ minify() {
     sed -i -e '1!{/^[[:space:]]*#/d;/^[[:space:]]*$/d;s/^[[:space:]]*//}' "$f"
   done
   find "$1" -type f -name '*.py' ! -path "$1/root/*" ! -path "*/site-packages/*" -print0 | xargs -0 -r python3 scripts/pymin.py
+  python3 scripts/xmlmin.py "$1"
   find "$1" -type f -path '*/usr/lib/kt-*.js' | while read -r f; do
     case $(head -c 5 "$f") in
       async|"("*) { printf 'var __f='; cat "$f"; } > "$f.in"; w=1 ;;
@@ -100,7 +101,7 @@ rm -rf "$NEW"
 mkdir -p "$NEW"
 PC=.cache/pkg
 mkdir -p $PC
-tools=$( { sed -n '/^minify()/,/^}/p; /^pyc()/,/^}/p; /xz --check/p' build.sh; cat scripts/pymin.py; } | sha256sum | cut -c1-16)
+tools=$( { sed -n '/^minify()/,/^}/p; /^pyc()/,/^}/p; /xz --check/p' build.sh; cat scripts/pymin.py scripts/xmlmin.py; } | sha256sum | cut -c1-16)
 printf 'base\t0/%s\t\n' "$(( $(stat -c %s "$OUT/rootfs.cpio") / 1024 ))" > "$tmp/index"
 : > "$tmp/pypi"
 for d in $(printf '%s\n' packages/*/ "$GEN"/*/ | awk -F/ '{ print $(NF - 1) "\t" $0 }' | LC_ALL=C sort | cut -f2); do

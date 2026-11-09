@@ -10,13 +10,14 @@
 # (build-xosview.sh); рисовалка
 # AzPainter (официальный GitLab автора - build-azpainter.sh):
 # меню берёт то, что установлено. KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
-# подсказки kt при входе (пустой hints.sh), вместо startx - greenos-start с заставкой и
+# подсказки kt при входе (--prep rm: файла подсказок в машине нет), вместо startx - greenos-start с заставкой и
 # os-release (VERSION_ID - прежний, его показывает kt); kt-xclipd (общий с браузером буфер) остаётся.
 # Не пакеты: JWM и greenos-about (bundles/greenos/root - собирает build.sh, в git не идёт), тема,
 # значки, обои (fs), скрипты (bin) - данные этого бандла. X не в снимке (--cmd startx): обои и панель -
 # под настоящий экран; --prep fc-cache - кэш fontconfig (триггер перепакованного fontconfig не срабатывает)
 --snap --vga 8 --mem 256 --worker --title GreenOS
 --prep fc-cache
+--prep "rm /etc/profile.d/hints.sh"
 --prep "sed -i 's/^NAME=.*/NAME=GreenOS/;s/^ID=.*/ID=greenos/;s/^PRETTY_NAME=.*/PRETTY_NAME=\"GreenOS 1.0\"/' /usr/lib/os-release"
 --cmd greenos-start
 --file bundles/greenos/xinitrc:/root/.xinitrc
