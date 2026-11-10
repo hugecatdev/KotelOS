@@ -1,5 +1,5 @@
 /* «О системе GreenOS»: окно на Xlib + Xft (+ XRender и libpng для логотипа) - то, что и так есть
- * у JWM. Имя, версия и подпись - /usr/share/greenos/release (три строки), остальное - из ядра и /proc.
+ * у JWM. Имя, версия, подпись и автор - /usr/share/greenos/release (по строке), остальное - из ядра и /proc.
  * Закрыть - кнопкой, Enter, Escape или крестиком окна. Собирает bundles/greenos/build.sh. */
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -15,7 +15,7 @@
 #include <sys/utsname.h>
 
 #define W 500
-#define H 330
+#define H 353
 #define LOGO "/usr/share/greenos/logo.png"
 #define RELEASE "/usr/share/greenos/release"
 
@@ -31,7 +31,7 @@ static int logo_w, logo_h;
 static int hover, pressed;
 static char line[8][160], name[64] = "GreenOS", version[96] = "1.0", footer[512] = "";
 static int nlines;
-static const char *labels[] = { "Ядро", "Процессор", "Память", "Время работы", "Оболочка", "Сборка" };
+static const char *labels[] = { "Ядро", "Процессор", "Память", "Время работы", "Оболочка", "Сборка", "Автор" };
 static const int bx = W - 150, by = H - 54, bw = 128, bh = 36;
 
 static unsigned long px(const char *hex) {
@@ -90,56 +90,50 @@ static void read_info(void) {
   FILE *f;
   char buf[512];
   struct utsname u;
-  if ((f = fopen(RELEASE, "r"))) {
-    char *dst[] = { name, version, footer };
-    size_t len[] = { sizeof name, sizeof version, sizeof footer };
-    for (int i = 0; i < 3 && fgets(buf, sizeof buf, f); i++) {
-      buf[strcspn(buf, "\n")] = 0;
-      snprintf(dst[i], len[i], "%s", buf);
-    }
-    fclose(f);
+  /* release: имя, версия, подпись, автор - по строке */
+  char *dst[] = { name, version, footer, line[6] };
+  size_t len[] = { sizeof name, sizeof version, sizeof footer, sizeof line[6] };
+  f = fopen(RELEASE, "r");
+  for (int i = 0; i < 4; i++) {
+    fgets(buf, sizeof buf, f);
+    buf[strcspn(buf, "\n")] = 0;
+    snprintf(dst[i], len[i], "%s", buf);
   }
+  fclose(f);
   uname(&u);
   snprintf(line[0], sizeof line[0], "%s %s (%s)", u.sysname, u.release, u.machine);
-  snprintf(line[1], sizeof line[1], "?");
-  if ((f = fopen("/proc/cpuinfo", "r"))) {
-    while (fgets(buf, sizeof buf, f))
-      if (!strncmp(buf, "model name", 10) && strchr(buf, ':')) {
-        char *v = strchr(buf, ':') + 1;
-        v += strspn(v, " \t");
-        v[strcspn(v, "\n")] = 0;
-        snprintf(line[1], sizeof line[1], "%s", v);
-        break;
-      }
-    fclose(f);
-  }
-  long total = 0, avail = 0;
-  if ((f = fopen("/proc/meminfo", "r"))) {
-    while (fgets(buf, sizeof buf, f)) {
-      sscanf(buf, "MemTotal: %ld", &total);
-      sscanf(buf, "MemAvailable: %ld", &avail);
+  f = fopen("/proc/cpuinfo", "r");
+  while (fgets(buf, sizeof buf, f))
+    if (!strncmp(buf, "model name", 10)) {
+      char *v = strchr(buf, ':') + 1;
+      v += strspn(v, " \t");
+      v[strcspn(v, "\n")] = 0;
+      snprintf(line[1], sizeof line[1], "%s", v);
+      break;
     }
-    fclose(f);
+  fclose(f);
+  long total = 0, avail = 0;
+  f = fopen("/proc/meminfo", "r");
+  while (fgets(buf, sizeof buf, f)) {
+    sscanf(buf, "MemTotal: %ld", &total);
+    sscanf(buf, "MemAvailable: %ld", &avail);
   }
+  fclose(f);
   snprintf(line[2], sizeof line[2], "%ld МБ, свободно %ld МБ", total / 1024, avail / 1024);
-  double up = 0;
-  if ((f = fopen("/proc/uptime", "r"))) {
-    if (fscanf(f, "%lf", &up) != 1)
-      up = 0;
-    fclose(f);
-  }
+  double up;
+  f = fopen("/proc/uptime", "r");
+  fscanf(f, "%lf", &up);
+  fclose(f);
   snprintf(line[3], sizeof line[3], "%d ч %02d мин", (int)up / 3600, (int)up / 60 % 60);
   snprintf(line[4], sizeof line[4], "JWM 2.4.6, X.Org");
-  snprintf(line[5], sizeof line[5], "?");
-  if ((f = fopen("/usr/lib/os-release", "r"))) {
-    while (fgets(buf, sizeof buf, f))
-      if (!strncmp(buf, "VERSION_ID=", 11)) {
-        buf[strcspn(buf, "\n")] = 0;
-        snprintf(line[5], sizeof line[5], "%s", buf + 11);
-      }
-    fclose(f);
-  }
-  nlines = 6;
+  f = fopen("/usr/lib/os-release", "r");
+  while (fgets(buf, sizeof buf, f))
+    if (!strncmp(buf, "VERSION_ID=", 11)) {
+      buf[strcspn(buf, "\n")] = 0;
+      snprintf(line[5], sizeof line[5], "%s", buf + 11);
+    }
+  fclose(f);
+  nlines = 7;
 }
 
 static void draw(void) {
