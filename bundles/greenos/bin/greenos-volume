@@ -1,0 +1,14 @@
+#!/bin/sh
+# громкость GreenOS - значок на панели (/etc/system.jwmrc): + и - на шаг (2 дБ), mute - звук выкл/вкл.
+# У SB16 нет выключателя звука: выкл - Master 0, прежний уровень - в /tmp/.greenos-mute.
+# Уровень - полоской xob (~/.xinitrc держит её на /tmp/.xob, шкала 0-31 - шаги SB16); серая - выключен
+saved=/tmp/.greenos-mute
+level() { amixer sget Master | sed -n 's/.*Left: Playback \([0-9]*\) .*/\1/p'; }
+unmute() { amixer -q sset Master "$(cat $saved)"; rm $saved; }
+case $1 in
+  +|-) [ ! -f $saved ] || unmute; amixer -q sset Master "1$1" ;;
+  mute) if [ -f $saved ]; then unmute; else level > $saved; amixer -q sset Master 0; fi ;;
+  *) echo "greenos-volume +|-|mute" >&2; exit 1 ;;
+esac
+if [ -f $saved ]; then v="$(cat $saved)!"; else v=$(level); fi
+[ ! -p /tmp/.xob ] || echo "$v" > /tmp/.xob

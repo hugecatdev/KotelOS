@@ -7,6 +7,11 @@
 - SB16.set_state слал dac-enable всегда, когда DMA не на паузе, даже если
   передачи нет: страница (page.html) по нему будит WebAudio и держит его, пока
   машина не закроет карту. Теперь dac-enable - только при идущей передаче.
+- На speaker-has-initialized (страница подняла вывод звука) SB16 сбрасывал
+  микшер к громкостям по умолчанию (-14 дБ). Без воркера это успевало до
+  восстановления снимка, а в воркере ответ страницы приходит после: громкость,
+  которую выставила машина (amixer, сохранение), терялась при каждом открытии.
+  Теперь странице уходят текущие громкости; сброс - как был, при создании SB16.
 
 --- a/src/cpu.js
 +++ b/src/cpu.js
@@ -30,6 +35,15 @@
      this.devices.uart2 && this.devices.uart2.set_state(state[80]);
 --- a/src/sb16.js
 +++ b/src/sb16.js
+@@ -247,7 +247,7 @@
+     }, this);
+     bus.register("speaker-has-initialized", function()
+     {
+-        this.mixer_reset();
++        this.mixer_full_update();
+     }, this);
+     bus.send("speaker-confirm-initialized");
+
 @@ -414,7 +414,7 @@
      this.dma_buffer_uint16 = new Uint16Array(this.dma_buffer);
      this.dma_syncbuffer = new SyncBuffer(this.dma_buffer);

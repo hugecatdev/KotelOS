@@ -5,7 +5,7 @@
 # build.sh (сначала он); libstdc++ - пакет Alpine. reswrap (картинки -> C) исполняется при сборке - он
 # для хоста. Родные значки программ (GIF из исходников) -> PNG для меню JWM.
 # Xfe - xfe, архиватор xfa и просмотр картинок xfi (текст открывает adie: xferc-greenos), значки - его тема
-# kde-theme, русский интерфейс - его перевод (gettext в musl; LC_MESSAGES ставит xinitrc).
+# gnome-theme (одной линии со значками MATE на панели и в меню), русский интерфейс - его перевод (gettext в musl; LC_MESSAGES ставит xinitrc).
 # Результат -> bundles/greenos/root (в git не идёт), как у build.sh.
 set -e
 cd "$(dirname "$0")/../.."
@@ -85,12 +85,12 @@ make -C $X/src -s -j"$(nproc)" xfe xfa xfi
 cp $X/src/xfe $X/src/xfa $X/src/xfi $OUT/usr/bin/
 rm -rf $OUT/usr/share/xfe
 mkdir -p $OUT/usr/share/xfe/icons $OUT/usr/share/pixmaps $OUT/usr/share/locale/ru/LC_MESSAGES
-cp -r $X/icons/kde-theme $OUT/usr/share/xfe/icons/
-find $OUT/usr/share/xfe/icons -name 'Makefile*' -delete
-# kde-theme - не вся: недостающее Xfe при установке ссылками берёт из default-theme (iconlinks.sh) -
+mkdir -p $OUT/usr/share/xfe/icons/gnome-theme
+cp $X/icons/gnome-theme/*.png $OUT/usr/share/xfe/icons/gnome-theme/
+# gnome-theme - не вся: недостающее Xfe при установке ссылками берёт из default-theme (iconlinks.sh) -
 # здесь только эти значки, копиями
 for i in $X/icons/default-theme/*.png; do
-  [ -f $OUT/usr/share/xfe/icons/kde-theme/${i##*/} ] || cp $i $OUT/usr/share/xfe/icons/kde-theme/
+  [ -f $OUT/usr/share/xfe/icons/gnome-theme/${i##*/} ] || cp $i $OUT/usr/share/xfe/icons/gnome-theme/
 done
 cp $X/icons/apps/xfe.png $X/icons/apps/xfa.png $X/icons/apps/xfi.png $OUT/usr/share/pixmaps/
 cp $X/po/ru.gmo $OUT/usr/share/locale/ru/LC_MESSAGES/xfe.mo

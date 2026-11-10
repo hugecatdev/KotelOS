@@ -1,4 +1,4 @@
-! GreenOS, тема «Трава» для программ X (xterm, xclock, xeyes, xmessage). Xlib читает этот файл сам, пока
+! GreenOS, тема «Трава» для программ X (xterm, xclock, xeyes). Xlib читает этот файл сам, пока
 ! никто не положил ресурсы на сервер (xrdb), - правка действует на новые окна
 
 Xft.antialias: true
@@ -48,26 +48,6 @@ XTerm*color12: #7cc0ea
 XTerm*color13: #cc9ce4
 XTerm*color14: #7ad8ca
 XTerm*color15: #ffffff
-
-! сообщение (xmessage - ответ кнопки «Сохранить сеанс» на панели): Xaw пишет кириллицу только набором
-! шрифтов (international). Набор в UTF-8 берёт латиницу из ISO8859-1, кириллицу - из ISO8859-5: это
-! 6x13 (9x15 есть только в ISO10646 - с ним все буквы квадратами, см. scripts/build-xorg.sh).
-! Без курсора и полосы прокрутки, с полями; белая кнопка, без рамок
-Xmessage*international: true
-Xmessage*fontSet: -misc-fixed-bold-r-semicondensed--13-*-*-*-*-*-*-*
-Xmessage*message.displayCaret: false
-Xmessage*message.scrollVertical: never
-Xmessage*message.scrollHorizontal: never
-Xmessage*message.leftMargin: 12
-Xmessage*message.rightMargin: 12
-Xmessage*message.topMargin: 8
-Xmessage*message.bottomMargin: 8
-Xmessage*message.borderWidth: 0
-Xmessage*message.background: #eef2ea
-Xmessage*Command.background: #ffffff
-Xmessage*Command.foreground: #24301f
-Xmessage*Command.borderColor: #b0d0a0
-Xmessage*Command.highlightThickness: 0
 
 ! часы: сглаженные, секундная стрелка - зелёная
 XClock*render: true

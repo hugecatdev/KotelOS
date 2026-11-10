@@ -1,7 +1,8 @@
 #!/bin/sh
 # меню «Пуск» GreenOS для JWM (<Include>exec:greenos-menu</Include> в /etc/system.jwmrc): программы под
 # своими именами, только установленные, пустые разделы не показываются. Значки - родные значки программ,
-# где они есть, иначе KDE Breeze (/usr/share/greenos/icons)
+# где они есть, иначе MATE Menta (/usr/share/greenos/icons). «Сохранить сеанс» - kt save, ответ - herbe
+# (\$ - чтобы kt save шёл при выборе пункта, а не при сборке меню; ошибки - 2>/dev/stdout, без & в XML)
 item() {  # item программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
   command -v "$1" > /dev/null || return 0
   case $2 in /*) i=$2 ;; *) i=$2.png ;; esac
@@ -25,6 +26,7 @@ $(menu development Разработка "$(item micropython python 'xterm -T mic
 $(menu games Развлечения "$(item lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png; item xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'; item oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'; item xeyes eyes)")
 $(menu system Система "$(item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
 <Separator/>
+<Program icon="save.png" label="Сохранить сеанс">herbe "\$(kt save 2>/dev/stdout)"</Program>
 <Program icon="about.png" label="О системе">greenos-about</Program>
 <Restart icon="restart.png" label="Перезапустить JWM"/>
 <Exit icon="exit.png" label="Выйти" confirm="true"/>

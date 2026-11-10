@@ -2,13 +2,13 @@
 """Значки GreenOS -> fs/usr/share/greenos/:
 - свой только логотип: четыре ровных квадрата (кнопка «Пуск» - icons/greenos.png, ровно в размер значка
   на панели JWM, чтобы не размывался; окно «О системе» - logo.png);
-- остальное - оригинальные значки KDE Breeze (пакет breeze-icons Alpine) для программ без своего
-  значка и пунктов меню, SVG -> PNG (у JWM здесь нет librsvg). Родные значки программ (xterm, feh)
-  меню берёт прямо из их пакетов.
-Нужны Pillow и rsvg-convert; PNG лежат в git: python3 bundles/greenos/icons.py"""
+- остальное - оригинальные значки MATE (пакет mate-icon-theme Alpine): тема Menta (зелёные папки), чего
+  в ней нет - из mate, как и в самой теме; готовые PNG 48x48. Это значки программ без своего значка,
+  разделов и пунктов меню, панели и рабочего стола. Родные значки программ (xterm, feh) меню берёт прямо
+  из их пакетов.
+Нужен Pillow; PNG лежат в git: python3 bundles/greenos/icons.py"""
 import io
 import os
-import subprocess
 import sys
 import tarfile
 
@@ -18,30 +18,33 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "fs/usr/share/greenos")
 GREEN = (43, 191, 32)
 TRAY_ICON = 28  # Tray height=36 в /etc/system.jwmrc: кнопка 34 (без рамки панели), значок - на 6 меньше
+THEMES = ("menta", "mate")
+SIZE = "48x48"
 
-# имя у нас <- путь в breeze-icons (usr/share/icons/breeze/...)
-BREEZE = {
-    "save": "actions/32/document-save.svg",
-    "clock": "preferences/32/preferences-system-time.svg",
-    "monitor": "apps/48/utilities-system-monitor.svg",
-    "eyes": "actions/24/view-visible.svg",
-    "kill": "actions/32/window-close.svg",
-    "appearance": "preferences/32/preferences-desktop-color.svg",
-    "utilities": "categories/32/applications-utilities.svg",
-    "games": "categories/32/applications-games.svg",
-    "system": "categories/32/applications-system.svg",
-    "office": "categories/32/applications-office.svg",
-    "graphics": "categories/32/applications-graphics.svg",
-    "development": "categories/32/applications-development.svg",
-    "python": "mimetypes/64/text-x-python.svg",
-    "folder": "places/48/folder-green.svg",
-    "home": "places/48/user-home.svg",
-    "trash": "places/48/user-trash.svg",
-    "about": "actions/32/help-about.svg",
-    "restart": "actions/32/view-refresh.svg",
-    "exit": "actions/32/system-log-out.svg",
-    "desktop": "places/48/user-desktop.svg",
-    "executable": "mimetypes/64/application-x-executable.svg",
+# имя у нас <- имя значка по freedesktop
+ICONS = {
+    "save": "document-save",
+    "volume": "audio-volume-high",
+    "clock": "preferences-system-time",
+    "monitor": "utilities-system-monitor",
+    "eyes": "face-glasses",
+    "kill": "process-stop",
+    "appearance": "preferences-desktop-theme",
+    "utilities": "applications-utilities",
+    "games": "applications-games",
+    "system": "applications-system",
+    "office": "applications-office",
+    "graphics": "applications-graphics",
+    "development": "applications-development",
+    "python": "text-x-python",
+    "folder": "folder",
+    "home": "user-home",
+    "trash": "user-trash",
+    "about": "help-about",
+    "restart": "view-refresh",
+    "exit": "system-log-out",
+    "desktop": "user-desktop",
+    "executable": "application-x-executable",
 }
 
 
@@ -56,31 +59,37 @@ def squares(size, gap):
     return im
 
 
-def breeze():
+def mate():
     sys.path.insert(0, os.path.join(HERE, "../.."))
     import alpine
     pkgs, _ = alpine.index(tag="xorg-", max_age=30 * 86400)
-    f = "breeze-icons-%s.apk" % pkgs["breeze-icons"]["ver"]
-    apk = alpine.fetch("%s/%s/x86/%s" % (alpine.MIRROR, pkgs["breeze-icons"]["repo"], f), "%s/apk/%s" % (alpine.CACHE, f))
-    want = {"usr/share/icons/breeze/" + v: k for k, v in BREEZE.items()}
+    f = "mate-icon-theme-%s.apk" % pkgs["mate-icon-theme"]["ver"]
+    apk = alpine.fetch("%s/%s/x86/%s" % (alpine.MIRROR, pkgs["mate-icon-theme"]["repo"], f), "%s/apk/%s" % (alpine.CACHE, f))
     with tarfile.open(apk, "r:gz") as t:
         members = {m.name: m for m in t.getmembers()}
-        for name in list(want):
-            m = members.get(name)
-            while m is not None and m.issym():  # многие значки Breeze - ссылки на соседние
+        # значок темы: usr/share/icons/ТЕМА/48x48/РАЗДЕЛ/ИМЯ.png
+        where = {}
+        for name in members:
+            p = name.split("/")
+            if len(p) == 7 and p[:3] == ["usr", "share", "icons"] and p[4] == SIZE and p[6].endswith(".png"):
+                where.setdefault((p[3], p[6][:-4]), name)
+        missing = []
+        for ours, name in ICONS.items():
+            path = next((where[(th, name)] for th in THEMES if (th, name) in where), None)
+            m = members.get(path)
+            while m is not None and m.issym():  # многие значки MATE - ссылки на соседние
                 m = members.get(os.path.normpath(os.path.join(os.path.dirname(m.name), m.linkname)))
             if m is None or not m.isfile():
+                missing.append(name)
                 continue
-            png = subprocess.run(["rsvg-convert", "-w", "48", "-h", "48"], input=t.extractfile(m).read(),
-                                 capture_output=True, check=True).stdout
-            Image.open(io.BytesIO(png)).save(os.path.join(OUT, "icons", want.pop(name) + ".png"), optimize=True)
-    if want:
-        sys.exit("нет в breeze-icons: " + " ".join(want))
+            Image.open(io.BytesIO(t.extractfile(m).read())).save(os.path.join(OUT, "icons", ours + ".png"), optimize=True)
+    if missing:
+        sys.exit("нет в mate-icon-theme: " + " ".join(missing))
 
 
 if __name__ == "__main__":
     os.makedirs(os.path.join(OUT, "icons"), exist_ok=True)
     squares(TRAY_ICON, 2).save(os.path.join(OUT, "icons/greenos.png"), optimize=True)
     squares(96, 6).save(os.path.join(OUT, "logo.png"), optimize=True)
-    breeze()
+    mate()
     print("значки ->", OUT)

@@ -17,7 +17,6 @@
     <Group>
         <Name>calculator</Name>
         <Name>xeyes</Name>
-        <Name>xmessage</Name>
         <Option>nomax</Option>
     </Group>
 
@@ -30,9 +29,12 @@
         <TaskList maxwidth="220"/>
         <Pager labeled="true"/>
         <Dock/>
-        <!-- сохранить машину в браузере (kt save): с этого места откроется страница в следующий раз; ответ
-             kt («сохранено, N МБ» или ошибка) - в окошке, оно само закроется через 4 с (JWM зовёт sh -c) -->
-        <TrayButton icon="save.png" popup="Сохранить сеанс">exec:xmessage -title Сохранение -center -timeout 4 -buttons OK:0 -default OK "$(kt save 2>&1)"</TrayButton>
+        <!-- громкость (greenos-volume): колесо - громче и тише, щелчок - звук выкл/вкл; уровень - полоской -->
+        <TrayButton icon="volume.png" popup="Громкость: колесо мыши, щелчок - выключить">
+            <Button mask="1">exec:greenos-volume mute</Button>
+            <Button mask="4">exec:greenos-volume +</Button>
+            <Button mask="5">exec:greenos-volume -</Button>
+        </TrayButton>
         <Clock format="%H:%M" popup="%A, %d %B %Y"><Button mask="1">exec:xclock</Button></Clock>
         <TrayButton icon="desktop.png" popup="Показать рабочий стол">showdesktop</TrayButton>
     </Tray>

@@ -1,5 +1,5 @@
 [SETTINGS]
-iconpath = /usr/share/xfe/icons/kde-theme
+iconpath = /usr/share/xfe/icons/gnome-theme
 font = Cantarell,100,normal,regular
 textfont = Hack,100,normal,regular
 basecolor = #eef2ea

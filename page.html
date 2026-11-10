@@ -2058,9 +2058,10 @@
       cv.addEventListener("pointerup", (e) => { move(e); click(e); smodAfter(); });
       cv.addEventListener("pointercancel", (e) => { click(e); smodAfter(); });
       cv.addEventListener("contextmenu", (e) => e.preventDefault());
+      // колесо: v86 ждёт знак как у wheelDelta (плюс - вверх), а у deltaY плюс - вниз
       cv.addEventListener("wheel", (e) => {
         e.preventDefault();
-        if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
+        if (emulator) emulator.bus.send("mouse-wheel", [-Math.sign(e.deltaY), 0]);
       }, { passive: false });
     }
 
@@ -2302,7 +2303,7 @@
       cv.addEventListener("contextmenu", (e) => e.preventDefault());
       cv.addEventListener("wheel", (e) => {
         e.preventDefault();
-        if (emulator) emulator.bus.send("mouse-wheel", [Math.sign(e.deltaY), 0]);
+        if (emulator) emulator.bus.send("mouse-wheel", [-Math.sign(e.deltaY), 0]);  // плюс - вверх, как у v86
       }, { passive: false });
       xwLayer.append(el);
     }
