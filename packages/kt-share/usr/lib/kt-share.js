@@ -67,11 +67,12 @@ async (cmd = "", arg = "") => {
   async function build([pre, post], rec, p, rev) {
     const meta = JSON.parse(JSON.stringify(B));
     meta.name = p.id;
-    delete meta.cmd; // startx бандлов xorg и dwm уже отработал
+    meta.cfg = Object.assign({}, B.cfg);
+    delete meta.cfg["boot.cmd"]; // startx бандлов xorg и dwm уже отработал
     delete meta.id; // отпечаток страницы прежних версий
     meta.share = true; // копия сразу берёт свой исходник: получатель шлёт обратно с первого открытия
     for (const k of ["bzimage", "initrd"]) delete meta.files[k]; // ядро в исходник не взято
-    if (/^https?:$/.test(location.protocol)) meta.repo = new URL(B.repo || "/repo", location.href).href;
+    if (/^https?:$/.test(location.protocol)) meta.cfg["pkg.repo"] = new URL(meta.cfg["pkg.repo"] || "/repo", location.href).href;
     meta.state = { mem: rec.memory_size, vga: rec.vga_memory_size, screen: rec.screen || "", gz: true, rev, revs: rec.revs };
     if (rec.screen_on) Object.assign(meta.state, { screen_on: true, screen_size: rec.screen_size });
     return new File([

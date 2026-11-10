@@ -109,18 +109,18 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 python3 bundle.py --bare -o tiny.html
 
 # питон с numpy и matplotlib; --snap - снимок уже загруженной машины
-python3 bundle.py -o lab.html -n lab --mem 256 --snap python3 python-numpy python-matplotlib-tk
+python3 bundle.py -o lab.html -n lab --cfg boot.mem=256 --snap python3 python-numpy python-matplotlib-tk
 
 # свой файл в машину (в /root) и его запуск перед снимком: открывается уже с выводом программы
 python3 bundle.py -o hello.html --file hello.py --run "python3 hello.py" python3
 
 # экран с X; OpenGL-программы рисуются на видеокарте через WebGL2 (glxgears - в xterm)
-python3 bundle.py -o gl.html --snap --vga 8 --mem 256 --cmd startx xorg mesa-utils
+python3 bundle.py -o gl.html --snap --vga 8 --cfg boot.mem=256 --cfg boot.cmd=startx xorg mesa-utils
 
 # X со своей сессией (xinitrc: "sqlitebrowser & exec dwm"), снимок с уже открытым окном
 # программы на Qt; машина сама сохраняется каждые 2 минуты
-python3 bundle.py -o db.html --vga 8 --mem 256 --file xinitrc:/root/.xinitrc --run startx \
-  --save-timer 2 xorg dwm st sqlitebrowser
+python3 bundle.py -o db.html --vga 8 --cfg boot.mem=256 --file xinitrc:/root/.xinitrc --run startx \
+  --cfg save.timer=2 xorg dwm st sqlitebrowser
 
 # пакет, которого нет в своём репозитории, - из Alpine
 python3 bundle.py -o git.html --snap git

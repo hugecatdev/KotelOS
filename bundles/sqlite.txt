@@ -2,8 +2,8 @@
 # пакеты репозитория kt и их зависимости, собраны в машине при сборке (--prep, ~/packages.sql - как).
 # Память 256 МБ: Qt5 и программа держат ~56 МБ; на телефоне точка X - 0.75 точки страницы
 # (--phone-scale), иначе окно не влезает. --prep fc-cache - кэш fontconfig (его триггер в
-# перепакованном fontconfig не срабатывает); v86 в Web Worker (--worker)
---snap --vga 8 --mem 256 --phone-scale 0.75 --worker
+# перепакованном fontconfig не срабатывает); v86 в Web Worker (boot.worker)
+--snap --vga 8 --phone-scale 0.75 --cfg boot.mem=256 --cfg boot.worker=on
 --prep fc-cache
 --prep "ls /var/lib/kt/pkg > /tmp/installed && sqlite3 /root/packages.db < /root/packages.sql"
 --run startx

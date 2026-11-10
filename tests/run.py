@@ -418,7 +418,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="kt-tests-")
     www = os.path.join(tmp, "www")
     os.makedirs(www)
-    worker = (["--worker"] if WORKER else []) + (["--kernel", os.path.abspath(KERNEL)] if KERNEL else [])
+    worker = (["--cfg", "boot.worker=on"] if WORKER else []) + (["--kernel", os.path.abspath(KERNEL)] if KERNEL else [])
     with open(os.path.join(tmp, "app.py"), "w") as f:
         f.write(EMBED_APP)
     with open(os.path.join(tmp, "xinitrc"), "w") as f:

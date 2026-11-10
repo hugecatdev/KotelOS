@@ -27,7 +27,7 @@
   восстановлении страница шлёт 32 байта из `crypto.getRandomValues`, а
   `kt-seed` подмешивает их ioctl'ом `RNDADDENTROPY` и пересевает генератор
   (`RNDRESEEDCRNG`).
-- `boot.worker on` (бандл `--worker`): процессор и устройства v86 идут в Web
+- `boot.worker on` (бандл `--cfg boot.worker=on`): процессор и устройства v86 идут в Web
   Worker, страница - терминал, мост `kt`, сетевой адаптер с TCP - в своём
   потоке (`patches/v86/08-worker.patch`). Воркер создаётся из текста того же
   `libv86.js` (тег `#kt-v86`), шина v86 между ними - `postMessage` пачками на

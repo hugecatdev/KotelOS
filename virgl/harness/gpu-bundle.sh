@@ -13,6 +13,6 @@ if [ "$1" = --no-v86 ]; then
 else
   DEVICES=virtio_gpu OUT=build/v86-gpu ./scripts/build-v86.sh | tail -1
 fi
-python3 bundle.py -o build/virgl-serve/gpu.html -n virgl-gpu --virtio-gpu --mem 256 --v86 build/v86-gpu \
+python3 bundle.py -o build/virgl-serve/gpu.html -n virgl-gpu --virtio-gpu --cfg boot.mem=256 --v86 build/v86-gpu \
   --kernel build/kernel-virtio/bzImage --file ${GUEST:-build/virgl-guest/fs}:/ "$@" \
   ${PKGS:-fun nano kt-ttyd xorg xeyes libstdc++ libgcc libx11 libxext zlib} | cut -c1-70

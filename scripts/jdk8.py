@@ -52,7 +52,7 @@ def cds():
     import bundle
     with tempfile.TemporaryDirectory() as tmp:
         html = os.path.join(tmp, "cds.html")
-        subprocess.run([sys.executable, "bundle.py", "-o", html, "-n", "cds", "--mem", "384", "jdk8"], check=True,
+        subprocess.run([sys.executable, "bundle.py", "-o", html, "-n", "cds", "--cfg", "boot.mem=384", "jdk8"], check=True,
                        stdout=subprocess.DEVNULL)
         c = bundle.Chrome(os.path.join(tmp, "profile"))
         try:

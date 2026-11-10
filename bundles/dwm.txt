@@ -1,14 +1,14 @@
-# максимальный: экран с dwm, при открытии сразу startx (--cmd): обои, часы в панели, st с neofetch и
+# максимальный: экран с dwm, при открытии сразу startx (boot.cmd): обои, часы в панели, st с neofetch и
 # второй st (~/.xinitrc из bundles/dwm/xinitrc); xcalc, xeyes, xclock, шахматы (xboard и gnuchess),
 # OpenGL (mesa-xlib, glxgears; mesa-demos - из /usr/share/mesa-demos: там их данные) - Alt+p (dmenu).
 # X не в снимке: обои и neofetch - под настоящий экран, а не под окно сборки.
 # Клавиша dwm - Alt, консоли с экрана - Ctrl+Alt+1..9; --prep строит кэш fontconfig (его триггер
 # в перепакованном fontconfig не срабатывает), без него первые окна st появляются на 2-5 с позже;
-# обои - scripts/wallpaper.py; v86 в Web Worker (--worker): страница и экран не ждут эмуляцию,
+# обои - scripts/wallpaper.py; v86 в Web Worker (boot.worker): страница и экран не ждут эмуляцию,
 # по-старому - kt cfg boot.worker off
---snap --vga 8 --mem 256 --worker
+--snap --vga 8 --cfg boot.mem=256 --cfg boot.worker=on
 --prep fc-cache
---cmd startx
+--cfg boot.cmd=startx
 --file bundles/dwm/xinitrc:/root/.xinitrc
 --file bundles/dwm/logo.png:/usr/share/backgrounds/kotelos.png
 fun nano htop curl wget pack notify kt-share kt-ttyd xorg dwm st feh xsetroot neofetch

@@ -1,8 +1,8 @@
-# минимальный X: видеопамять 8 МБ, X без OpenGL; при открытии сразу startx (--cmd): twm, xterm, xcalc и
+# минимальный X: видеопамять 8 МБ, X без OpenGL; при открытии сразу startx (boot.cmd): twm, xterm, xcalc и
 # xeyes (~/.xinitrc из bundles/xorg/xinitrc), выход из X - exit в xterm; Doom - kt pkg add doom. X не в
 # снимке: twm не переставляет окна, и снятые при сборке окна на экране телефона уезжали бы за край;
-# v86 в Web Worker (--worker): страница и экран не ждут эмуляцию, по-старому - kt cfg boot.worker off
---snap --vga 8 --mem 256 --worker
---cmd startx
+# v86 в Web Worker (boot.worker): страница и экран не ждут эмуляцию, по-старому - kt cfg boot.worker off
+--snap --vga 8 --cfg boot.mem=256 --cfg boot.worker=on
+--cfg boot.cmd=startx
 --file bundles/xorg/xinitrc:/root/.xinitrc
 fun nano htop curl wget pack notify kt-share kt-ttyd xorg xeyes xcalc

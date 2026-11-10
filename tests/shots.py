@@ -32,7 +32,7 @@ from bundle import Chrome  # noqa: E402
 PC = dict(width=1280, height=800, deviceScaleFactor=1, mobile=False)
 PHONE = dict(width=412, height=915, deviceScaleFactor=2.625, mobile=True)
 X = "DISPLAY=:0 "  # программы X из kt.exec: у агента своего DISPLAY нет
-XUP = "wait: pgrep -x %s"  # бандл с --cmd startx: X поднимается при открытии
+XUP = "wait: pgrep -x %s"  # бандл с boot.cmd=startx: X поднимается при открытии
 LONG = 'setsid sh -c "%s" >/dev/null 2>&1 < /dev/null &'  # окно живёт после выхода kt.exec
 
 # сцена: (бандл, экран, шаги)

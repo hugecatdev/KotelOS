@@ -85,6 +85,38 @@ def shmin(data):
     return b"\n".join(out) + b"\n"
 
 
+def shmin_tree(root):
+    """шелл-скрипты образа (#!/bin/sh, /etc/profile.d) без комментариев, кроме /root - как minify() в
+    build.sh: данные бандла (--file папкой) и пакеты прямо из Alpine; пакеты репозитория уже такие"""
+    for d, _, files in os.walk(root):
+        rel = os.path.relpath(d, root)
+        if rel == "root" or rel.startswith("root/"):
+            continue
+        for n in files:
+            p = os.path.join(d, n)
+            if os.path.islink(p):
+                continue
+            with open(p, "rb") as f:
+                data = f.read()
+            if data and (data.startswith(b"#!/bin/sh") or rel == "etc/profile.d"):
+                small = shmin(data)
+                if small != data:
+                    with open(p, "wb") as f:
+                        f.write(small)
+
+
+def cfg_defaults(items):
+    """--cfg ключ=значение -> {ключ: значение}; ключи - из справки kt cfg (значения проверяет страница)"""
+    keys = {line.split()[0] for line in open("overlay/usr/share/kt/cfg/kt") if line.strip()}
+    out = {}
+    for item in items:
+        k, eq, v = item.partition("=")
+        if not eq or k not in keys:
+            sys.exit("--cfg %s: нужно ключ=значение, ключи - kt cfg (%s)" % (item, " ".join(sorted(keys))))
+        out[k] = v
+    return out
+
+
 def drop_files(root, patterns):
     """--drop: файлы пакетов, которых не будет в образе; из списков kt pkg они тоже вычеркнуты"""
     gone = set()
@@ -127,7 +159,7 @@ def packages_cpio(names, world, extra=(), drop=()):
             target = os.path.join(root, dest.lstrip("/"))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             shutil.copy(src, target)
-            # отдельный шелл-скрипт (~/.xinitrc и т.п.) - сжатым, как скрипты пакетов; папка - как есть
+            # отдельный шелл-скрипт - сжатым, как скрипты пакетов, и в /root (~/.xinitrc)
             with open(target, "rb") as f:
                 data = f.read()
             if data.startswith(b"#!/bin/sh"):
@@ -144,8 +176,9 @@ def packages_cpio(names, world, extra=(), drop=()):
             with open(os.path.join(db, n), "w") as f:
                 subprocess.run(["tar", "-tJf", archive], stdout=f, check=True)
         drop_files(root, drop)
-        # XML без комментариев и отступов, как в пакетах репозитория (build.sh): здесь - пакеты прямо из
-        # Alpine и данные бандла (--file), кроме /root
+        # шелл-скрипты и XML без комментариев и отступов, как в пакетах репозитория (build.sh): здесь - пакеты
+        # прямо из Alpine и данные бандла (--file), кроме /root
+        shmin_tree(root)
         subprocess.run([sys.executable, "-I", "scripts/xmlmin.py", root], check=True)
         if os.path.isdir(os.path.join(root, "root")):
             os.chmod(os.path.join(root, "root"), 0o700)
@@ -393,7 +426,6 @@ def options(argv=None):
     ap.add_argument("packages", nargs="*", default=DEFAULT, help="пакеты (по умолчанию: %s)" % " ".join(DEFAULT))
     ap.add_argument("-o", "--out", default="site/index.html", help="куда (по умолчанию site/index.html)")
     ap.add_argument("-n", "--name", default="kotelos", help="имя: своё сохранение у каждого имени")
-    ap.add_argument("--repo", default="/repo", help="откуда kt pkg add качает пакеты (по умолчанию /repo)")
     ap.add_argument("--snap", action="store_true", help="загрузить машину при сборке и положить снимок")
     ap.add_argument("--run", action="append", default=[], metavar="CMD", help="перед снимком набрать команду (можно несколько)")
     ap.add_argument("--prep", action="append", default=[], metavar="CMD",
@@ -401,9 +433,6 @@ def options(argv=None):
     ap.add_argument("--keep-boot", action="store_true", help="оставить ядро рядом со снимком (kt reset -b)")
     ap.add_argument("--timeout", type=int, default=300, help="сколько ждать каждую --run, с")
     ap.add_argument("--bare", action="store_true", help="без пакетов: только busybox и kt")
-    ap.add_argument("--mem", type=int, help="память машины по умолчанию, МБ (иначе 128)")
-    ap.add_argument("--worker", action="store_true",
-                    help="boot.worker по умолчанию on: процессор и устройства v86 в Web Worker")
     ap.add_argument("--vga", type=int, choices=[4, 8, 16], metavar="МБ",
                     help="экран (boot.vga): видеопамять 4, 8 или 16 МБ (без числа - 8), /dev/fb0")
     ap.add_argument("--virtio-gpu", action="store_true",
@@ -412,8 +441,9 @@ def options(argv=None):
                     help="VirGL: сервер vtest с virglrenderer в wasm (vendor/virgl) на 192.168.86.1:7790")
     ap.add_argument("--phone-scale", type=float, metavar="CSS",
                     help="экран на телефоне при screen.scale auto: точек страницы на точку X (иначе 1); на ПК не действует")
-    ap.add_argument("--save-timer", type=int, metavar="МИН", help="save.timer по умолчанию: сохранять машину каждые N минут (иначе 0 - нет)")
-    ap.add_argument("--cmd", help="команда при загрузке по умолчанию (boot.cmd)")
+    ap.add_argument("--cfg", action="append", default=[], metavar="КЛЮЧ=ЗНАЧЕНИЕ",
+                    help="своё значение настройки kt cfg по умолчанию (можно несколько): boot.mem=256, boot.worker=on, "
+                         "boot.cmd=startx (в новой машине, не в снимке), save.timer=2, pkg.repo=https://..., screen.cursor=off")
     ap.add_argument("--embed", action="store_true",
                     help="для сайта через embed.js: внутри iframe видны только окна tk поверх сайта, без терминала; "
                          "открытый сам по себе бандл - обычный")
@@ -472,19 +502,13 @@ def main():
         "bzimage": blob(open(a.kernel or IMG + "/bzImage", "rb").read(), gz=False),
         "initrd": {"size": len(initrd), "data": b64(zstd(initrd))},
     }
-    bundle = {"name": a.name, "build": json.load(open(IMG + "/build.json")), "repo": a.repo, "files": {**files, **boot}, "state": None}
-    if a.mem:
-        bundle["mem"] = a.mem
+    bundle = {"name": a.name, "build": json.load(open(IMG + "/build.json")), "files": {**files, **boot}, "state": None}
     if a.vga:
         bundle["vga"] = a.vga
     if a.phone_scale:
         bundle["phone_scale"] = a.phone_scale
-    if a.save_timer:
-        bundle["save_timer"] = a.save_timer
-    if a.worker:
-        bundle["worker"] = True
-    if a.cmd:
-        bundle["cmd"] = a.cmd
+    if a.cfg:
+        bundle["cfg"] = cfg_defaults(a.cfg)
     if a.version:
         bundle["version"] = a.version
     if a.title:
@@ -504,9 +528,9 @@ def main():
     page = template(have)
 
     if snap:
-        # снимок - без boot.cmd: команда для того, кто откроет бандл, а не для сборки (иначе --cmd startx
+        # снимок - без boot.cmd: команда для того, кто откроет бандл, а не для сборки (иначе boot.cmd=startx
         # поднимал X ещё в снимке, под окно сборки, а при открытии - второй раз)
-        nocmd = {k: v for k, v in bundle.items() if k != "cmd"}
+        nocmd = dict(bundle, cfg={k: v for k, v in bundle.get("cfg", {}).items() if k != "boot.cmd"})
         bundle["state"] = snapshot(assemble(page, nocmd, False), a.run, a.timeout, a.prep)
         if not a.keep_boot:
             bundle["files"] = files

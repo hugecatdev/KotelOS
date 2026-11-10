@@ -28,6 +28,8 @@
   /* клавиатура телефона открыта: холст той же высоты, что без неё, низ - под рядом клавиш (layoutScreen) */
   #screen.kb canvas { height: var(--sh) !important; transform: translateY(var(--sy)); }
   #screen canvas.px { image-rendering: pixelated !important; }
+  /* screen.cursor off: над экраном только курсор машины - X рисует свой, мышь уходит абсолютной */
+  html.nocursor #screen canvas, html.nocursor .xw canvas { cursor: none; }
   /* #endif */
   /* #if virtio_gpu */
   /* экран - холст virtio-gpu (WebGL2), холст VGA не нужен */
@@ -181,6 +183,24 @@
       if (v !== "auto" && !(+v >= 0.25 && +v <= 4)) throw new Error("screen.scale: auto или 0.25..4 (точек страницы на точку экрана)");
     }
     /* #endif */
+    // сеть машины (ne2k v86), меняется на ходу (patches/v86/18): fetch - HTTP через fetch страницы;
+    // wisps:// - сервер Wisp (TCP через него, адреса и DNS - у v86, как при fetch); wss:// - релей сырого
+    // Ethernet (websockproxy: второй адрес машине даёт его DHCP); off - fetch без fetch. Связь страницы с
+    // машиной (агент kt, консоли) - поддельный стек v86 на 192.168.86.1, она есть при любом значении.
+    // Адрес и маршрут в машине под новую сеть ставит kt net up: после смены и при открытии с релеем
+    function relayCheck(v) {
+      if (v !== "fetch" && v !== "off" && !/^(wss?|wisps?):\/\/\S+$/.test(v)) throw new Error("net.relay: fetch, off, wisps://сервер или wss://релей");
+    }
+    const relayUrl = (v) => (v === "off" ? "fetch" : v);
+    function netOff(v) {
+      if (v === "off" && emulator.network_adapter) emulator.network_adapter.fetch = () => Promise.reject(new TypeError("без сети: kt net"));
+    }
+    function netApply(v) {
+      if (!emulator) return;
+      emulator.set_relay(relayUrl(v));
+      netOff(v);
+      exec("kt net up");
+    }
     function parseKeys(v) {
       let rows;
       try { rows = JSON.parse(v); } catch { try { rows = JSON.parse(v.replace(/'/g, '"')); } catch {} }
@@ -191,7 +211,7 @@
 
     const SETTINGS = {
       "save.auto": { def: "on", values: ["on", "off"] },
-      "save.timer": { def: String((BUNDLE && BUNDLE.save_timer) || 0), range: [0, 240] },
+      "save.timer": { def: "0", range: [0, 240] },
       "term.font": { def: isTouch ? "12" : "13", range: [8, 32], apply: (v) => setFont(+v) },
       "term.family": { def: "system", check: fontCheck, prepare: fontLoad, apply: (v) => setFamily(v) },
       "term.theme": { def: "dark", values: Object.keys(THEMES), apply: (v) => setTheme(v) },
@@ -205,16 +225,31 @@
       /* #if vga */
       "keys.screen": { def: JSON.stringify(KEYS_SCREEN), check: parseKeys, apply: () => buildKeys() },
       "screen.scale": { def: "auto", check: scaleCheck, apply: () => screenResized(true) },
+      "screen.cursor": { def: "on", values: ["on", "off"], apply: (v) => document.documentElement.classList.toggle("nocursor", v === "off") },
       /* #endif */
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
-      "boot.mem": { def: String((BUNDLE && BUNDLE.mem) || 128), range: [32, 512] },
+      "boot.mem": { def: "128", range: [32, 512] },
       /* #if vga */ "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] }, /* #endif */
       "boot.log": { def: "off", values: ["on", "off"] },
-      "boot.worker": { def: BUNDLE && BUNDLE.worker ? "on" : "off", values: ["on", "off"] },
-      "boot.cmd": { def: (BUNDLE && BUNDLE.cmd) || "" },
-      "pkg.repo": { def: (BUNDLE && BUNDLE.repo) || "/repo" },
+      "boot.worker": { def: "off", values: ["on", "off"] },
+      "boot.cmd": { def: "" },
+      "pkg.repo": { def: "/repo" },
+      "net.relay": { def: "fetch", check: relayCheck, apply: netApply },
     };
+    function cfgCheck(k, s, v) {
+      if (s.values && !s.values.includes(v)) throw new Error(`${k}: ${s.values.join("|")}`);
+      if (s.range && !(/^\d+$/.test(v) && +v >= s.range[0] && +v <= s.range[1])) throw new Error(`${k}: ${s.range[0]}..${s.range[1]}`);
+      if (s.check) s.check(v);
+    }
+    // --cfg бандла: свои значения по умолчанию (неверное - в консоль, остаётся встроенное)
+    for (const [k, v] of Object.entries((BUNDLE && BUNDLE.cfg) || {})) {
+      try {
+        if (!Object.hasOwn(SETTINGS, k)) throw new Error("нет ключа " + k);
+        cfgCheck(k, SETTINGS[k], v);
+        SETTINGS[k].def = v;
+      } catch (e) { console.warn("--cfg: " + e.message); }
+    }
     const SPACES = new Set(Object.keys(SETTINGS).map((k) => k.split(".")[0]));
     const cfg = {
       data: (() => { try { return JSON.parse(store.get("kt.cfg") || "{}"); } catch { return {}; } })(),
@@ -240,9 +275,7 @@
           return v;
         }
         v = typeof v === "boolean" && s.values ? (v ? "on" : "off") : String(v);
-        if (s.values && !s.values.includes(v)) throw new Error(`${k}: ${s.values.join("|")}`);
-        if (s.range && !(/^\d+$/.test(v) && +v >= s.range[0] && +v <= s.range[1])) throw new Error(`${k}: ${s.range[0]}..${s.range[1]}`);
-        if (s.check) s.check(v);
+        cfgCheck(k, s, v);
         if (v === s.def) delete this.data[k]; else this.data[k] = v;
         store.set("kt.cfg", JSON.stringify(this.data));
         if (s.apply) s.apply(v);
@@ -1022,6 +1055,7 @@
     }
 
     const execs = new Map();
+    let netSynced = false;
     function onCtl(line) {
       const w = waiters.find((w) => w.re.test(line));
       if (w) {
@@ -1033,6 +1067,11 @@
       if (line === "READY") {
         agentReady = true;
         markReady();
+        // релей Ethernet: свой адрес в его сети машина берёт заново при каждом открытии страницы
+        if (!netSynced) {
+          netSynced = true;
+          if (/^wss?:/.test(cfg.get("net.relay"))) exec("kt net up");
+        }
         hello();
         if (!ttyLink) ttyConnect();
         if (notes.length) {
@@ -2027,6 +2066,20 @@
       const s = cw > 0 ? Math.min(r.width / cw, r.height / ch) * (window.devicePixelRatio || 1) : 0;
       cv.classList.toggle("px", s >= 2 || (s >= 1 && Math.abs(s - Math.round(s)) < 0.02));
     }
+    document.documentElement.classList.toggle("nocursor", cfg.get("screen.cursor") === "off");
+    // колесо - в машину щелчками. Тачпад и колёса с плавной прокруткой присылают на один щелчок десятки
+    // мелких событий: сдвиг копится, щелчок - на каждые 50 точек (как в noVNC), строки - по 19 точек.
+    // v86 ждёт знак как у wheelDelta (плюс - вверх), а у deltaY плюс - вниз
+    let wheelAcc = 0;
+    function wheel(e) {
+      e.preventDefault();
+      const d = e.deltaY * (e.deltaMode === 1 ? 19 : e.deltaMode === 2 ? 400 : 1);
+      if (Math.sign(d) !== Math.sign(wheelAcc)) wheelAcc = 0;
+      wheelAcc += d;
+      if (Math.abs(wheelAcc) < 50) return;
+      if (emulator) emulator.bus.send("mouse-wheel", [-Math.sign(wheelAcc), 0]);
+      wheelAcc = 0;
+    }
     for (const cv of document.querySelectorAll("#screen canvas")) {
       new MutationObserver(fitScreen).observe(cv, { attributes: true, attributeFilter: ["width", "height"] });
       let lx = 0, ly = 0;
@@ -2058,11 +2111,7 @@
       cv.addEventListener("pointerup", (e) => { move(e); click(e); smodAfter(); });
       cv.addEventListener("pointercancel", (e) => { click(e); smodAfter(); });
       cv.addEventListener("contextmenu", (e) => e.preventDefault());
-      // колесо: v86 ждёт знак как у wheelDelta (плюс - вверх), а у deltaY плюс - вниз
-      cv.addEventListener("wheel", (e) => {
-        e.preventDefault();
-        if (emulator) emulator.bus.send("mouse-wheel", [-Math.sign(e.deltaY), 0]);
-      }, { passive: false });
+      cv.addEventListener("wheel", wheel, { passive: false });
     }
 
     // общий буфер обмена с X - пакет kt-xclipd в машине (его ставит xorg, запускает startx). Скопированное
@@ -2301,10 +2350,7 @@
       cv.addEventListener("pointerup", (e) => { xwMouse(...at(e)); xwButtons(e); });
       cv.addEventListener("pointercancel", xwButtons);
       cv.addEventListener("contextmenu", (e) => e.preventDefault());
-      cv.addEventListener("wheel", (e) => {
-        e.preventDefault();
-        if (emulator) emulator.bus.send("mouse-wheel", [-Math.sign(e.deltaY), 0]);  // плюс - вверх, как у v86
-      }, { passive: false });
+      cv.addEventListener("wheel", wheel, { passive: false });
       xwLayer.append(el);
     }
     function xwLine(line) {
@@ -2584,7 +2630,7 @@
         autostart: true,
         disable_mouse: true,
         disable_keyboard: true,
-        net_device: { type: "ne2k", relay_url: "fetch" },
+        net_device: { type: "ne2k", relay_url: relayUrl(cfg.get("net.relay")) },
         preserve_mac_from_state_image: true,
         // диск /disk (virtio-9p): дерево файлов - в машине и её сохранении, содержимое - в каталоге
         // OPFS сайта (patches/v86/13); без OPFS (файл с диска) содержимое остаётся в памяти
@@ -2700,6 +2746,7 @@
           },
         });
       }
+      netOff(cfg.get("net.relay"));
       if (emulator.worker) {
         wasm = null;
         // воркер не поднял машину: дальше без него, сохранение и настройки остаются

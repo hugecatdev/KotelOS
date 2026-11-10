@@ -1,0 +1,60 @@
+#!/bin/sh
+. /usr/lib/kt.sh
+KT_HELP='без аргументов  сеть и адреса машины
+off  без сети
+fetch  только HTTP через браузер, как по умолчанию (сайту нужен CORS)
+wisps://<сервер>  сервер Wisp: любые соединения TCP
+wss://<релей>  релей Ethernet v86 (websockproxy): второй адрес машины - в его сети
+up  заново взять адрес в сети релея (страница зовёт сама)
+меняется сразу и запоминается, как kt cfg net.relay; релей видит, куда ходит машина'
+kt_meta "[off | fetch | <url> | up]" "сеть" "$@"
+[ $# -le 1 ] || kt_usage "[off | fetch | <url> | up]"
+case $1 in -*) kt_usage "[off | fetch | <url> | up]" ;; esac
+
+# связь со страницей - 192.168.86.100 на eth0 (DHCP v86 при загрузке), он не меняется; в сети релея
+# Ethernet - второй адрес, метка eth0:wan (/usr/share/kt/net.script), DHCP с классом kt-wan уходит в релей
+EPID=/var/run/udhcpc.eth0.pid
+WPID=/var/run/udhcpc.wan.pid
+DONE=$KT_RUN/net.done
+
+relay() {
+  kt_page cfg "$(kt_b64 "get net.relay")"
+}
+
+up() {
+  r=$(relay) || exit 1
+  [ ! -f $WPID ] || kill "$(cat $WPID)" 2> /dev/null
+  rm -f $WPID $DONE
+  ip addr flush dev eth0 label eth0:wan 2> /dev/null
+  case $r in
+    ws://* | wss://*)
+      # DHCP v86 больше не продлеваем: его запросы ушли бы в релей; адрес остаётся как есть
+      [ ! -f $EPID ] || kill -9 "$(cat $EPID)" 2> /dev/null
+      rm -f $EPID
+      udhcpc -n -t 5 -T 3 -i eth0 -V kt-wan -s /usr/share/kt/net.script -p $WPID > /dev/null 2>&1 ||
+        { echo "$r" > $DONE; kt_die "$r: адрес по DHCP не получен"; }
+      ;;
+    *)
+      ip route replace default via 192.168.86.1 dev eth0
+      echo "nameserver 192.168.86.1" > /etc/resolv.conf
+      ;;
+  esac
+  echo "$r" > $DONE
+}
+
+case $1 in
+  "") ;;
+  up) up ;;
+  *)
+    rm -f $DONE
+    kt_page cfg "$(kt_b64 "set net.relay $1")" > /dev/null || exit 1
+    # адрес под новую сеть ставит kt net up, его зовёт страница; ждём его
+    n=300
+    while [ "$(cat $DONE 2> /dev/null)" != "$1" ]; do
+      n=$((n - 1))
+      [ $n -gt 0 ] || kt_die "машина не взяла адрес за 30 с"
+      usleep 100000
+    done ;;
+esac
+printf '%s\n' "$(relay)"
+ip -4 addr show dev eth0 2> /dev/null | awk '$1 == "inet" { sub(/\/.*/, "", $2); print "  " $2 "  " ($NF == "eth0:wan" ? "в сети релея" : "связь со страницей") }'

@@ -151,7 +151,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   сборки с устройствами восстанавливаются: лишнее v86 пропускает.
 
   После смены `REV` или патчей: `scripts/build-v86.sh`, `python3 tests/run.py`
-  и `KT_WORKER=1 python3 tests/run.py` (все тестовые бандлы с `--worker`),
+  и `KT_WORKER=1 python3 tests/run.py` (все тестовые бандлы с `boot.worker=on`),
   `python3 tests/bench.py СТАРАЯ_ПАПКА vendor/v86`; правки JIT ещё и в
   debug-сборке: там срабатывают `dbg_assert`.
   Хвост страницы (04, 2026-11-06..07): JIT компилировал инструкции в последних

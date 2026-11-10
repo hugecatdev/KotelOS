@@ -215,7 +215,7 @@ mkdir -p build/embed && cp embed.js examples/embed/index.html build/embed/
 python3 bundle.py --embed -o build/embed/app.html -n embed-demo --file examples/embed/app.py \
   --run "micropython -X heapsize=8M app.py" micropython python-tkinter
 # или X (kt-xwm - в репозитории пакетов: scripts/build-xwm.sh, потом ./build.sh)
-python3 bundle.py --embed --vga --worker --mem 256 -o build/embed/app.html -n embed-x \
+python3 bundle.py --embed --vga --cfg boot.worker=on --cfg boot.mem=256 -o build/embed/app.html -n embed-x \
   --file examples/embed/xinitrc:/root/.xinitrc --run startx xorg kt-xwm xeyes xcalc
 python3 -m http.server -d build/embed
 ```
@@ -226,10 +226,12 @@ python3 -m http.server -d build/embed
 
 ## Настройки (`kt cfg`)
 
+Значения по умолчанию бандл может задать своими: `--cfg ключ=значение` ([bundles.md](bundles.md)).
+
 | ключ | по умолчанию | |
 |---|---|---|
 | `save.auto` | on | сохранять машину при сворачивании вкладки |
-| `save.timer` | 0 (у бандла с `--save-timer` - его число, в `qt` - 2) | сохранять каждые N минут (0 - нет) |
+| `save.timer` | 0 (в `qt` - 2) | сохранять каждые N минут (0 - нет) |
 | `term.font` | 13 (12 на телефоне) | размер шрифта |
 | `term.family` | system | шрифт: system или любой с Google Fonts по имени (`kt font Space Mono`); jetbrains, fira, ibm, ubuntu, source, vt323 - короткие имена. Грузятся только при выборе |
 | `term.theme` | dark | цвета: dark, light, amber, green, gray (три последних - монохромные, как старые мониторы) |
@@ -242,16 +244,18 @@ python3 -m http.server -d build/embed
 | `keys.more` | см. ниже | кнопки под ⋯ |
 | `keys.screen` | см. [screen.md](screen.md) | кнопки под экраном (`kt screen on`) |
 | `screen.scale` | auto | экран X: точек страницы (CSS) на его точку; auto - на ПК точка в точку экрана, на телефоне - как обычный текст или мельче, если бандл задал `--phone-scale` (в `qt` - 0.75) (`startx` и смена размера, см. [screen.md](screen.md)) |
+| `screen.cursor` | on | курсор страницы над экраном; off - только курсор машины (X рисует свой, мышь уходит в машину абсолютной) |
 | `keys.open` | off | показать кнопки под ⋯ |
 | `keys.size` | 16 | размер подписей кнопок |
 | `boot.mem` | 128 | память при загрузке с ядра, МБ |
 | `boot.vga` | off (у бандла с `--vga` - его объём) | экран при загрузке с ядра: видеопамять on (8 МБ), 4, 8 или 16 МБ и `/dev/fb0` |
 | `boot.cmd` | | команда в новой машине (после загрузки с ядра или со встроенного снимка) |
 | `boot.log` | off | лог загрузки ядра и init-скриптов |
-| `boot.worker` | off (у бандла с `--worker` - on) | процессор и устройства v86 в отдельном потоке (Web Worker): терминал, экран и страница не ждут эмуляцию. Со следующего открытия страницы, и для сохранения тоже. См. [internals.md](internals.md) |
-| `pkg.repo` | `--repo` бандла (`/repo`) | откуда `kt pkg` берёт пакеты |
+| `boot.worker` | off (в бандлах с экраном - on) | процессор и устройства v86 в отдельном потоке (Web Worker): терминал, экран и страница не ждут эмуляцию. Со следующего открытия страницы, и для сохранения тоже. См. [internals.md](internals.md) |
+| `pkg.repo` | `/repo` | откуда `kt pkg` берёт пакеты |
+| `net.relay` | fetch | сеть машины, меняется сразу: `fetch` - только HTTP через `fetch` страницы (нужен CORS); `wisps://…` - сервер [Wisp](https://github.com/MercuryWorkshop/wisp-protocol): любые TCP-соединения, адреса и DNS (через DoH) - как при `fetch`; `wss://…` - релей сырого Ethernet v86 (websockproxy): адрес машине даёт его DHCP, после смены - `udhcpc` заново; `off` - без сети |
 
-`keys.screen`, `screen.scale` и `boot.vga` есть только в сборках с экраном (`--vga`).
+`keys.screen`, `screen.scale`, `screen.cursor` и `boot.vga` есть только в сборках с экраном (`--vga`).
 
 `kt font` - список шрифтов, `kt font jetbrains 15` - шрифт и размер сразу,
 `kt theme` - темы с образцом, `kt theme amber` - выбрать.

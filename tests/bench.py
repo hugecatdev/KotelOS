@@ -56,9 +56,9 @@ NET = [
 
 
 def build(v86, out, mem, x=False, worker=False):
-    args = [sys.executable, os.path.join(ROOT, "bundle.py"), "--v86", v86, "-o", out, "-n", "bench", "--mem", str(mem)]
+    args = [sys.executable, os.path.join(ROOT, "bundle.py"), "--v86", v86, "-o", out, "-n", "bench", "--cfg", "boot.mem=%d" % mem]
     if worker:
-        args.append("--worker")
+        args += ["--cfg", "boot.worker=on"]
     if x:
         args += ["--vga", "8", "--no-3d", "--file", os.path.join(ROOT, "tests/bench/xinitrc") + ":/root/.xinitrc"] + XPKGS
     else:

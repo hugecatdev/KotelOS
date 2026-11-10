@@ -134,10 +134,11 @@ def main():
         time.sleep(2)
         m1, title = meta(p1)
         s1 = m1["state"]
-        check("A: p1 - имя proj-*, gzip, ревизия, без cmd, полный repo, заголовок",
-              re.fullmatch(r"proj-[a-z2-9]{6}", m1["name"]) and s1["gz"] and s1["revs"] == [s1["rev"]] and "cmd" not in m1
-              and m1["repo"] == url + "repo" and title == "KotelOS proj" and "bzimage" not in m1["files"],
-              (m1["name"], s1.get("revs"), m1.get("repo"), title))
+        check("A: p1 - имя proj-*, gzip, ревизия, без boot.cmd, полный pkg.repo, заголовок",
+              re.fullmatch(r"proj-[a-z2-9]{6}", m1["name"]) and s1["gz"] and s1["revs"] == [s1["rev"]]
+              and "boot.cmd" not in m1["cfg"] and m1["cfg"].get("pkg.repo") == url + "repo" and title == "KotelOS proj"
+              and "bzimage" not in m1["files"],
+              (m1["name"], s1.get("revs"), m1.get("cfg"), title))
         check("A: kt share в шелле закончился с итогом", "proj.html," in A.screen() and "скачивается" in A.screen(), A.screen())
         print("     t.html %.1f МБ, p1 %.1f МБ" % (os.path.getsize(www + "/t.html") / 1048576, os.path.getsize(p1) / 1048576))
         pid = m1["name"]

@@ -33,8 +33,8 @@ def main():
         args = shlex.split(open(defs[name]).read(), comments=True)
         # бандл лежит в ИМЯ/, репозиторий - рядом: относительный адрес годится и для корня сайта, и
         # для github.io/<репозиторий>/, где /repo указал бы мимо
-        if "--repo" not in args:
-            args += ["--repo", "../repo"]
+        if not any(x.startswith("pkg.repo=") for x in args):
+            args += ["--cfg", "pkg.repo=../repo"]
         out = os.path.join(SITE, name, "index.html")
         tmp = out + ".tmp"
         # сайт может раздаваться прямо сейчас: старый бандл заменяется только готовым новым

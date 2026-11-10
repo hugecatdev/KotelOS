@@ -2,7 +2,7 @@
 """Этап 0 в машине: glxgears в X v86 через VirGL (virpipe -> vtest-bridge -> страница -> WebGL2)
 и для сравнения через softpipe. Бандл - с --virgl, --vga и деревом build/virgl-guest/fs:
 
-  python3 bundle.py -o build/virgl/kt-virgl.html -n virgl --vga 8 --mem 256 --virgl \\
+  python3 bundle.py -o build/virgl/kt-virgl.html -n virgl --vga 8 --cfg boot.mem=256 --virgl \\
     --file build/virgl-guest/fs:/ fun nano kt-ttyd xorg xeyes libstdc++ libgcc libx11 libxext zlib
   python3 virgl/harness/v86-gears.py [build/virgl/kt-virgl.html]
 
