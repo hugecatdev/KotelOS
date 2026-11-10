@@ -87,10 +87,19 @@ def resolve(names, pkgs, provides, skip, stop=()):
     return out
 
 
-def extract(apk, dest, drop, keep):
+def extract(apk, dest, drop, keep, trigger=None):
+    """trigger - имя пакета репозитория: его триггер apk (.trigger и маски triggers из .PKGINFO) ложится в
+    var/lib/kt/trigger/ИМЯ и ИМЯ.dirs - kt pkg запускает их после add и rm, bundle.py - при первой загрузке"""
+    script, dirs = None, ""
     with gzip.open(apk) as gz, tarfile.open(fileobj=gz, mode="r|") as t:
         for m in t:
             name = m.name[2:] if m.name.startswith("./") else m.name
+            if trigger and name == ".trigger":
+                script = t.extractfile(m).read()
+            elif trigger and name == ".PKGINFO":
+                for line in t.extractfile(m).read().decode().splitlines():
+                    if line.startswith("triggers = "):
+                        dirs = line[len("triggers = "):]
             if not name or name.startswith("."):
                 continue
             if any(fnmatch.fnmatchcase(name, p) for p in drop) and not any(fnmatch.fnmatchcase(name, p) for p in keep):
@@ -115,6 +124,15 @@ def extract(apk, dest, drop, keep):
                 with open(path, "wb") as f:
                     shutil.copyfileobj(t.extractfile(m), f)
                 os.chmod(path, m.mode & 0o7777)
+
+    if script is not None:
+        tdir = os.path.join(dest, "var/lib/kt/trigger")
+        os.makedirs(tdir, exist_ok=True)
+        with open(os.path.join(tdir, trigger), "wb") as f:
+            f.write(script)
+        os.chmod(os.path.join(tdir, trigger), 0o755)
+        with open(os.path.join(tdir, trigger + ".dirs"), "w") as f:
+            f.write(dirs + "\n")
 
 
 def kt_index(out, mirrors, ours_names, alias, old, new, desc=None):
@@ -178,6 +196,7 @@ def main():
     ap.add_argument("--alias", action="append", default=[], help="ALPINE=OURS: не импортировать, в зависимостях писать OURS")
     ap.add_argument("--rename", default="", help="OLD-:NEW-: приставка имён")
     ap.add_argument("--keep-existing", action="store_true", help="уже существующие packages/<имя> не трогать")
+    ap.add_argument("--only", action="store_true", help="перепаковать только названные пакеты, зависимости не трогать")
     ap.add_argument("--max-age", type=float, metavar="ЧАСОВ", help="свой индекс не старше стольких часов (общий не трогается)")
     ap.add_argument("--branch", default=BRANCH, help="ветка Alpine, если пакета нет в нашей (v3.24, edge); уже собранные пакеты (musl...) она не перезаписывает")
     a = ap.parse_args()
@@ -206,7 +225,7 @@ def main():
     if not a.keep_existing:
         have -= {ours(n) for n in a.packages}
     existing = {n for n in pkgs if ours(n) in have}
-    for n in resolve(a.packages, pkgs, provides, skip, set(alias) | existing):
+    for n in (a.packages if a.only else resolve(a.packages, pkgs, provides, skip, set(alias) | existing)):
         if n in alias or n in existing:
             continue
         p = pkgs[n]
@@ -214,7 +233,7 @@ def main():
         shutil.rmtree(dest, ignore_errors=True)
         os.makedirs(dest)
         fname = f"{n}-{p['ver']}.apk"
-        extract(fetch(f"{mirror}/{p['repo']}/x86/{fname}", f"{CACHE}/apk/{fname}"), dest, DROP + a.drop, a.keep)
+        extract(fetch(f"{mirror}/{p['repo']}/x86/{fname}", f"{CACHE}/apk/{fname}"), dest, DROP + a.drop, a.keep, ours(n))
         deps = [ours(d) for d in p_direct(p, pkgs, provides, skip | {n})]
         with open(os.path.join(dest, ".deps"), "w") as f:
             f.write(" ".join(deps) + "\n")

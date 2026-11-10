@@ -181,6 +181,9 @@ def packages_cpio(names, world, extra=(), drop=()):
             subprocess.run(["tar", "-xJpf", archive, "-C", root], check=True)
             with open(os.path.join(db, n), "w") as f:
                 subprocess.run(["tar", "-tJf", archive], stdout=f, check=True)
+            # перепакованный из Alpine со своим триггером (alpine.py) - и он при первой загрузке
+            if os.path.exists(os.path.join(root, "var/lib/kt/trigger", n + ".dirs")):
+                triggers.append(n)
         drop_files(root, drop)
         # шелл-скрипты и XML без комментариев и отступов, как в пакетах репозитория (build.sh): здесь - пакеты
         # прямо из Alpine и данные бандла (--file), кроме /root
