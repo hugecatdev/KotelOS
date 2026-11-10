@@ -229,7 +229,7 @@
       /* #endif */
       "keys.open": { def: "off", values: ["on", "off"], apply: (v) => setMore(v === "on") },
       "keys.size": { def: "16", range: [10, 40], apply: (v) => setKeySize(v) },
-      "boot.mem": { def: "128", range: [32, 512] },
+      "boot.mem": { def: "128", range: [32, 2048] },
       /* #if vga */ "boot.vga": { def: BUNDLE && BUNDLE.vga ? String(BUNDLE.vga === true ? "on" : BUNDLE.vga) : "off", values: ["off", "on", "4", "8", "16"] }, /* #endif */
       "boot.log": { def: "off", values: ["on", "off"] },
       "boot.worker": { def: "off", values: ["on", "off"] },

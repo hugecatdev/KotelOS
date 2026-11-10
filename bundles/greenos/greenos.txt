@@ -33,11 +33,13 @@
 # своего /repo рядом нет. Приглашение шелла - как в Ubuntu (fs/etc/profile.d/prompt.sh, после
 # /etc/profile KotelOS); в xterm шелл входной (loginShell в Xdefaults) - читает его же.
 # --cfg screen.cursor=off - над экраном только курсор X, без второго курсора браузера поверх.
+# boot.mem=1024: ядро без highmem видит из них 887 МБ (свободно ~805 против ~409 на 512) - GIMP; вкладке
+# это почти ничего не стоит (нетронутую память v86 не заводит): после загрузки 280 МБ против 271.
 # Браузер - Dillo (Alpine, FLTK, без JavaScript; с ним GNU wget и сертификаты), шрифты - fs/root/.dillo.
 # В интернет он ходит только с релеем: меню «Система» - «Сеть» (/usr/lib/greenos/net -> kt net), по
 # умолчанию сеть - fetch (только HTTP через страницу).
 --snap --vga 8 --no-3d --title GreenOS
---cfg boot.mem=512 --cfg boot.worker=on --cfg screen.cursor=off --cfg pkg.repo=https://hugecatdev.github.io/KotelOS/repo
+--cfg boot.mem=1024 --cfg boot.worker=on --cfg screen.cursor=off --cfg pkg.repo=https://hugecatdev.github.io/KotelOS/repo
 --drop "/usr/lib/libbrotlienc.so*"
 --drop "/usr/lib/libxcb-composite.so*" --drop "/usr/lib/libxcb-dbe.so*" --drop "/usr/lib/libxcb-dpms.so*"
 --drop "/usr/lib/libxcb-dri2.so*" --drop "/usr/lib/libxcb-dri3.so*" --drop "/usr/lib/libxcb-glx.so*"
