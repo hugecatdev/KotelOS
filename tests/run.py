@@ -987,11 +987,13 @@ def main():
 
         pack("ktsmall", {"usr/share/ktsmall/x": b"x\n", "usr/share/ktsmall/y": b"->x", "usr/share/ktsmall/top": b"->../../../etc/hostname"})
         pack("ktbad", {"usr/share/ktbad/a": b"a\n", "usr/share/ktbad/r": os.urandom(300000)}, cut=True)
+        pack("ktuser", {"usr/share/ktuser/u": b"u\n"})
         shutil.copy(os.path.join(www, "repo", "index.txt"), repo)
         with open(os.path.join(repo, "index.txt"), "a") as f:
             f.write("kthuge\t1/%d\t\tне влезет\n" % (room * 2))
             f.write("ktbig\t1/%d\t\tпочти вся память\n" % (room - 8192))
             f.write("ktsmall\t1/4\t\tзависимость\nktbad\t1/4\tktsmall\tбитый архив\n")
+            f.write("ktuser\t1/4\tktsmall\tзависит от ktsmall\n")
 
     def pkg_memory():
         # корень - tmpfs: вся память без 16 МБ и без предела файлов (S01mount)
@@ -1024,6 +1026,14 @@ def main():
         code, out, err = s.sh("ls -d /var/lib/kt/pkg/ktsmall /var/lib/kt/pkg/ktbad /usr/share/ktsmall /usr/share/ktbad")
         assert code != 0 and not out, out
         assert "ktsmall" not in s.ok("cat /var/lib/kt/world")
+        # у пакета сборка вырезала файл (bundle.py --drop) - новому пакету, что от него зависит, он
+        # скачивается заново и возвращает вырезанное
+        s.ok("KT_REPO=/memrepo kt pkg add -y ktsmall")
+        s.ok("rm /usr/share/ktsmall/x && sed -i '/ktsmall\\/x$/d' /var/lib/kt/pkg/ktsmall && echo ktsmall >> /var/lib/kt/dropped")
+        out = s.ok("KT_REPO=/memrepo kt pkg add -y ktuser")
+        assert re.search(r"^ +ktsmall ", out, re.M) and s.ok("cat /usr/share/ktsmall/x") == "x\n", out
+        assert "ktsmall" not in s.ok("cat /var/lib/kt/dropped")
+        s.ok("KT_REPO=/memrepo kt pkg rm -y ktuser ktsmall")
         # корень полон - запись упирается в предел, машина жива
         out = s.ok("dd if=/dev/zero of=/root/fill bs=1M count=%d 2>/dev/shm/e; rm -f /root/fill; cat /dev/shm/e; rm /dev/shm/e" % (total // 1024))
         assert "No space left on device" in out, out

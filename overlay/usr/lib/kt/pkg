@@ -22,6 +22,9 @@ MIR=/var/lib/kt/mirror
 RMIR=/var/lib/kt/mirror.relay
 TRIG=/var/lib/kt/trigger
 WORLD=/var/lib/kt/world
+# пакеты, у которых сборка вырезала файлы (bundle.py --drop): для плана установки их нет - новому
+# пакету, что от них зависит, они скачаются заново, целиком
+DROPPED=/var/lib/kt/dropped
 T=/tmp/.kt-pkg.$$
 # память, КБ: файлы лежат в ОЗУ, корню не дают последние RESERVE (предел в S01mount); если после
 # установки свободной останется меньше LOW, add спросит
@@ -128,7 +131,7 @@ A='function pick(t, n, a, i) {
 }'
 
 plan() {
-  installed | awk -F'\t' -v want="$*" "$L$A"'
+  installed | { if [ -s $DROPPED ]; then grep -vxF -f $DROPPED; else cat; fi; } | awk -F'\t' -v want="$*" "$L$A"'
     function visit(p, n, a, i) {
       if (p in seen) return
       seen[p] = 1
@@ -588,6 +591,11 @@ EOF
     done
     remember "$@"
     fire $(echo "$new" | awk -v db=$DB '{ print db "/" $1 }')
+    if [ -s $DROPPED ]; then
+      echo "$new" | cut -d" " -f1 > $T.got
+      grep -vxF -f $T.got $DROPPED > $T.drop
+      mv $T.drop $DROPPED
+    fi
     clr ;;
   rm)
     shift

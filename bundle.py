@@ -118,7 +118,8 @@ def cfg_defaults(items):
 
 
 def drop_files(root, patterns):
-    """--drop: файлы пакетов, которых не будет в образе; из списков kt pkg они тоже вычеркнуты"""
+    """--drop: файлы пакетов, которых не будет в образе; из списков kt pkg они тоже вычеркнуты, а сами
+    пакеты - в /var/lib/kt/dropped: kt pkg add скачает такой пакет заново, когда он понадобится новому"""
     gone = set()
     for pat in patterns:
         hits = glob.glob(os.path.join(root, pat.lstrip("/")))
@@ -133,13 +134,18 @@ def drop_files(root, patterns):
                 os.remove(p)
             gone.add(os.path.relpath(p, root))
     db = os.path.join(root, "var/lib/kt/pkg")
-    for n in os.listdir(db):
+    cut = []
+    for n in sorted(os.listdir(db)):
         with open(os.path.join(db, n)) as f:
             lines = f.read().splitlines()
         keep = [x for x in lines if x.removeprefix("./").rstrip("/") not in gone]
         if len(keep) != len(lines):
+            cut.append(n)
             with open(os.path.join(db, n), "w") as f:
                 f.write("".join(x + "\n" for x in keep))
+    if cut:
+        with open(os.path.join(root, "var/lib/kt/dropped"), "w") as f:
+            f.write("".join(n + "\n" for n in cut))
 
 
 def packages_cpio(names, world, extra=(), drop=()):
