@@ -1,18 +1,17 @@
 #!/bin/sh
 . /usr/lib/kt.sh
-KT_HELP='без аргументов  установленные явно; размер - вместе с зависимостями
--a  все установленные, и зависимости тоже; * - установленные явно
+KT_HELP='без аргументов  установленные пакеты по алфавиту: размер, описание; (диск) - стоит на диске, (apk) - из Alpine
 <name>...  что поставится, сколько займёт и сколько памяти свободно
-search [-r] <word>  поиск по имени и описанию в репозитории и Alpine; -r - только в репозитории
-add [-dqy] <name>...  установка с зависимостями из репозитория или Alpine; -d - на диск, -q - без вывода, -y - без вопросов
-пакеты ставятся в память машины; если свободной останется меньше 16 МБ, add спросит, а если не влезет - предложит диск
-диск /disk - файлы в браузере, в памяти от них только ссылки; первый запуск программы с него медленнее
+search [-r] <word>  поиск по имени и описанию в репозитории и Alpine; -r - только в репозитории; * - установлен
+add [-dqy] <name>...  установка с зависимостями: называет пакеты и размер, скачивает после ответа «да»; -d - на диск, -q - без списка, -y - без вопроса
+пакеты ставятся в память машины; если в неё не влезет, add предложит диск
+диск /mnt/browser - файлы в хранилище браузера, в памяти от них только ссылки; первый запуск программы с него медленнее
 rm [-y] <name>...  удаление, зависимости остаются; -y - без вопроса
 rm -d <name>...  удаление вместе с зависимостями, которые больше никому не нужны
 rm -c <name>...  удаление вместе с пакетами, которым он нужен
 files <name>...  файлы установленного пакета
 репозиторий - kt cfg pkg.repo, на одну команду - KT_REPO=адрес kt pkg ...'
-kt_meta "[-a | <name>... | search | add | rm | files]" "пакеты" "$@"
+kt_meta "[<name>... | search | add | rm | files]" "пакеты" "$@"
 REPO=${KT_REPO:-$(kt cfg pkg.repo 2>/dev/null)}
 REPO=${REPO:-/repo}
 DB=/var/lib/kt/pkg
@@ -27,11 +26,12 @@ T=/tmp/.kt-pkg.$$
 # установки свободной останется меньше LOW, add спросит
 RESERVE=16384
 LOW=16384
-# диск (/disk - 9p, файлы в OPFS браузера): add -d или когда в память не влезает - все новые пакеты
+# диск (DISK - 9p, файлы в OPFS браузера): add -d или когда в память не влезает - все новые пакеты
 # команды распаковываются в DPKG, дерево как корень (программа, что ищет соседей от своего настоящего
 # пути, как gcc, находит их там), а в корне от них папки и ссылки на файлы; это стоит ОЗУ, LINK КБ на
 # мегабайт пакета. DSK - эта команда ставит на диск, DFREE - свободно на нём, КБ; отметки - в ONDISK
-DPKG=/disk/pkg
+DISK=/mnt/browser
+DPKG=$DISK/pkg
 ONDISK=/var/lib/kt/disk
 LINK=16
 DSK=
@@ -165,9 +165,12 @@ total() {
   '
 }
 
-# диск для больших пакетов: смонтирован 9p и у страницы есть OPFS; DFREE - свободно на нём, КБ
+# диск для больших пакетов: смонтирован 9p и у страницы есть OPFS; DFREE - свободно на нём, КБ;
+# нет - NODISK, почему
 disk() {
-  grep -q '^host9p /disk 9p ' /proc/mounts || return 1
+  NODISK="диск $DISK не подключён: машина сохранена до его появления, новая - kt reset"
+  grep -q "^host9p $DISK 9p " /proc/mounts || return 1
+  NODISK="диска $DISK нет: браузер не даёт хранилище этой странице (открыта из файла или по http не с localhost)"
   DFREE=$(kt_js 'navigator.storage.getDirectory().then(() => navigator.storage.estimate()).then((e) => Math.floor((e.quota - e.usage) / 1024), () => "")' 2>/dev/null)
   [ -n "$DFREE" ]
 }
@@ -310,37 +313,30 @@ fail() {
 
 case "$1" in
   "")
+    # все установленные по алфавиту: свой размер у каждого, итог - последней строкой
     index
-    [ -s $WORLD ] || exit 0
-    if awk -F'\t' 'NR == FNR { k[$1]; next } !($1 in k) { f = 1 } END { exit !f }' $IDX $WORLD && alpine; then ALP=1; fi
-    installed | awk -F'\t' -v w="$(width)" -v world="$(tr '\n' ' ' < $WORLD)" -v dk="$(ls $ONDISK 2>/dev/null | tr '\n' ' ')" "$L$H$A$U$K"'
+    cut -f1 $IDX > $T.idx 2>/dev/null
+    if ls $DB | grep -qvxF -f $T.idx && alpine; then ALP=1; fi
+    rm -f $T.idx
+    installed | awk -F'\t' -v w="$(width)" -v dk="$(ls $ONDISK 2>/dev/null | tr '\n' ' ')" "$L$H$U$K"'
       { order[++no] = $1 }
-      function sum(p, n, a, i) {
-        if (p in seen) return
-        seen[p] = 1
-        tdl += dl[p]
-        tmem += mem[p]
-        n = split(deps[p], a, " ")
-        for (i = 1; i <= n; i++) sum(pick(a[i]))
-      }
       function show(p, m, line, room, d) {
-        split("", seen)
-        tdl = tmem = 0
-        sum(p)
         m = (src[p] != "" ? "  (apk)" : "") (ondisk(p) ? "  (диск)" : "")
-        line = sprintf("* %-" nw "s %6s", p, h(tdl))
-        if (w >= 50) line = line sprintf(" %6s", h(tmem))
+        line = sprintf("%-" nw "s %6s", p, h(mem[p]))
         room = w - length(line) - 2 - length(m)
         d = room > 8 ? cut(desc[p], room) : ""
-        print line (d != "" ? "  " d : "") m
+        print line (d != "" ? "  " d : "") m | "sort"
+        n++
+        if (ondisk(p)) tdk += mem[p]; else tmem += mem[p]
       }
       END {
-        n = split(world, a, " ")
-        for (i = 1; i <= n; i++) if (a[i] in inst) W[a[i]] = 1
         nw = 12
-        for (p in W) if (len(p) > nw) nw = len(p)
-        for (i = 1; i <= no; i++) if (order[i] in W) { show(order[i]); done[order[i]] = 1 }
-        for (i = 1; i <= n; i++) if ((a[i] in W) && !(a[i] in done)) { print "* " a[i]; done[a[i]] = 1 }
+        delete inst["@"]
+        for (p in inst) if (len(p) > nw) nw = len(p)
+        for (i = 1; i <= no; i++) if (order[i] in inst) { show(order[i]); done[order[i]] = 1 }
+        for (p in inst) if (!(p in done)) { print p | "sort"; n++ }
+        close("sort")
+        printf "пакетов: %d, в памяти %s%s\n", n, h(tmem), tdk ? ", на диске " h(tdk) : ""
       }
     ' - $(files) ;;
   search)
@@ -382,7 +378,7 @@ case "$1" in
     done
     shift $((OPTIND - 1))
     [ $# -gt 0 ] || kt_usage "add [-dqy] <name>..."
-    if [ -n "$DSK" ] && ! disk; then kt_die "диска нет: /disk не подключён или браузер не даёт хранилище (страница из файла)"; fi
+    if [ -n "$DSK" ] && ! disk; then kt_die "$NODISK"; fi
     index
     want "$@"
     check "$list"
@@ -393,17 +389,16 @@ case "$1" in
       [ -n "$q" ] || echo "уже установлено"
       exit 0
     fi
-    [ -n "$q" ] || echo "$new" | total
     free=$(room)
     read -r need used <<EOF
 $(echo "$new" | peak)
 EOF
     # в память не влезет - на диск, если он есть
-    if [ -z "$DSK" ] && [ "$need" -gt "$free" ] && disk; then
-      clr
-      [ -n "$y" ] || kt_ask "в память не влезет: нужно $(kb $need) вместе с архивами, свободно $(kb $free). поставить на диск /disk?" || exit 1
+    ask="установить?"
+    if [ -z "$DSK" ] && [ "$need" -gt "$free" ]; then
+      disk || { clr; kt_die "не хватит памяти: нужно $(kb $need) вместе с архивами, свободно $(kb $free)"; }
+      ask="в память не влезет: нужно $(kb $need) вместе с архивами, свободно $(kb $free). установить на диск $DISK?"
       DSK=1
-      [ -n "$q" ] || echo "$new" | total
       read -r need used <<EOF
 $(echo "$new" | peak)
 EOF
@@ -417,10 +412,16 @@ EOF
       clr
       kt_die "не хватит места на диске: нужно $(kb $(echo "$new" | dneed)), свободно $(kb $DFREE)"
     fi
-    if [ -z "$y" ] && [ $left -lt $LOW ]; then
-      clr
-      kt_ask "свободной памяти останется $(kb $left), программам её может не хватить. ставить?" || exit 1
+    if [ $left -lt $LOW ]; then
+      ask="свободной памяти останется $(kb $left), программам её может не хватить. установить?"
     fi
+    # что поставится - до вопроса, скачивание - после ответа
+    clr
+    [ -n "$q" ] || echo "$new" | awk -v w="$(width)" '
+      { if (n && n + length($1) + 1 > w) { printf "\n"; n = 0 } if (!n) { printf " "; n = 1 } printf " %s", $1; n += length($1) + 1 }
+      END { printf "\n" }'
+    [ -n "$q" ] && [ -n "$y" ] || echo "$new" | total
+    [ -n "$y" ] || kt_ask "$ask" || exit 1
     trap 'rm -rf $T.* $DPKG/.dl.$$' EXIT
     [ -z "$DSK" ] || mkdir -p $DPKG/.dl.$$ $ONDISK
     for p in $(echo "$new" | cut -d" " -f1); do
@@ -571,35 +572,7 @@ EOF
     for p in "$@"; do
       sed -n '/\/$/!s|^|/|p' "$DB/$p"
     done ;;
-  -a)
-    # все установленные: свой размер у каждого, * - установленные явно (world)
-    [ $# -eq 1 ] || kt_usage "-a"
-    index
-    cut -f1 $IDX > $T.idx 2>/dev/null
-    if ls $DB | grep -qvxF -f $T.idx && alpine; then ALP=1; fi
-    rm -f $T.idx
-    installed | awk -F'\t' -v w="$(width)" -v world="$(tr '\n' ' ' < $WORLD)" -v dk="$(ls $ONDISK 2>/dev/null | tr '\n' ' ')" "$L$H$U$K"'
-      { order[++no] = $1 }
-      function show(p, m, line, room, d) {
-        m = (src[p] != "" ? "  (apk)" : "") (ondisk(p) ? "  (диск)" : "")
-        line = sprintf("%s %-" nw "s %6s", (p in W) ? "*" : " ", p, h(dl[p]))
-        if (w >= 50) line = line sprintf(" %6s", h(mem[p]))
-        room = w - length(line) - 2 - length(m)
-        d = room > 8 ? cut(desc[p], room) : ""
-        print line (d != "" ? "  " d : "") m
-      }
-      END {
-        n = split(world, a, " ")
-        for (i = 1; i <= n; i++) W[a[i]] = 1
-        nw = 12
-        for (p in inst) if (len(p) > nw) nw = len(p)
-        delete inst["@"]
-        delete inst["base"]
-        for (i = 1; i <= no; i++) if (order[i] in inst) { show(order[i]); done[order[i]] = 1 }
-        for (p in inst) if (!(p in done)) print ((p in W) ? "* " : "  ") p
-      }
-    ' - $(files) ;;
-  -*) kt_usage "[-a | <name>... | search | add | rm | files]" ;;
+  -*) kt_usage "[<name>... | search | add | rm | files]" ;;
   *)
     index
     want "$@"
@@ -608,6 +581,6 @@ EOF
     echo "$list" | total
     need=$(echo "$list" | peak)
     if [ "${need% *}" -gt "$(room)" ] && disk; then
-      echo "в память не влезет, на диске свободно $(kb $DFREE): kt pkg add -d $*"
+      echo "в память не влезет, на диске $DISK свободно $(kb $DFREE): kt pkg add -d $*"
     fi ;;
 esac

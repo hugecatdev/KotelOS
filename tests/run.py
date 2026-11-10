@@ -887,27 +887,32 @@ def main():
     def pkg_alpine():
         assert "ktapk" in s.ok("kt pkg search ktap", 60)
         assert "ktapk" not in s.ok("kt pkg search -r ktap", 60)
-        out = s.ok("kt pkg add ktapk", 120)
+        # без ответа «да» ничего не скачивается: сначала пакеты и размер, потом вопрос
+        code, out, err = s.sh("kt pkg add ktapk", 120)
+        assert code == 1 and re.search(r"^  ktapklib ktapk$", out, re.M) and "пакетов: 2, скачать" in out and err.endswith("установить? [y/N] \n"), (code, out, err)
+        assert s.sh("ls /var/lib/kt/pkg/ktapk /var/lib/kt/pkg/ktapklib")[0] != 0, "поставлено без ответа"
+        out = s.ok("echo y | kt pkg add ktapk", 120)
         assert "ktapk" in out and "(apk)" in out, out
         assert s.ok("ktapk").strip() == "hello from alpine"
         assert s.ok("ktapk-trig").strip() == "hello from alpine", "триггер не сработал"
         assert s.sh("ls /.PKGINFO")[0] != 0, "мусор .PKGINFO в /"
         assert s.ok("cat /var/lib/kt/mirror").strip() == base + "alpine"
         out = s.ok("kt pkg")
-        assert re.search(r"^\* ktapk .*test apk  \(apk\)$", out, re.M) and "ktapklib" not in out, out
-        out = s.ok("kt pkg -a")
-        assert re.search(r"^\* ktapk ", out, re.M) and re.search(r"^  ktapklib ", out, re.M) and not re.search(r"^. base ", out, re.M), out
-        s.ok("kt pkg add ktold", 120)
+        # список один: все установленные, и система, и зависимости, итог - последней строкой
+        assert re.search(r"^ktapk .*test apk  \(apk\)$", out, re.M) and re.search(r"^ktapklib ", out, re.M) and re.search(r"^base ", out, re.M), out
+        assert re.search(r"^пакетов: %d, в памяти \S+$" % (len(out.strip().split("\n")) - 1), out.strip().split("\n")[-1]), out
+        assert s.sh("kt pkg -a")[0] != 0
+        s.ok("kt pkg add -y ktold", 120)
         assert s.ok("ktold").strip() == "new"
-        code, out, err = s.sh("kt pkg add ktgone", 120)
+        code, out, err = s.sh("kt pkg add -y ktgone", 120)
         assert code == 1 and "не скачать ktgone" in err, (code, out, err)
         assert s.sh("ls /var/lib/kt/pkg/ktlib2")[0] != 0, "ktlib2 поставлен без ktgone"
         out = s.ok("kt pkg rm -y ktapk ktapk", 60)
         assert re.findall(r"^- \S+$", out, re.M) == ["- ktapk"], out
         assert s.ok("cat /usr/share/ktapklib/msg").strip() == "hello from alpine", "ktapklib удалён без -d"
-        assert re.search(r"^\* ktapklib ", s.ok("kt pkg"), re.M), "ktapklib не попал в world"
+        assert "ktapklib" in s.ok("cat /var/lib/kt/world").split(), "ktapklib не попал в world"
         s.ok("kt pkg rm -y ktapklib", 60)
-        s.ok("kt pkg add ktapk", 120)
+        s.ok("kt pkg add -y ktapk", 120)
         code, out, err = s.sh("kt pkg rm ktapklib ktapklib", 60)
         assert err.count("ktapklib нужен для ktapk") == 1 and "- " not in out, (out, err)
         out = s.ok("kt pkg rm -dy ktapk ktold", 60)
@@ -927,7 +932,7 @@ def main():
         db = s.ok("cat /var/lib/kt/pkg/base").split("\n")
         lost = {"bin/busybox", "opt/", "root/", "usr/lib/kt/pkg", "usr/lib/os-release", "var/lib/kt/pkg/base"} - set(db)
         assert not lost, "в base нет " + " ".join(sorted(lost))
-        assert not re.search(r"^\* base ", s.ok("kt pkg"), re.M), "base среди поставленных явно"
+        assert "base" not in s.ok("cat /var/lib/kt/world").split(), "base среди поставленных явно"
         assert re.search(r"^\* base .*базовая система", s.ok("kt pkg search -r base"), re.M), "поиск не видит base"
 
     def pkg_cascade():
@@ -994,24 +999,24 @@ def main():
         mem_repo()
         # в память не влезет: есть диск - вопрос, нет - отказ
         code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
-        assert code == 1 and "в память не влезет: нужно" in err and "поставить на диск /disk? [y/N]" in err, (code, out, err)
+        assert code == 1 and "в память не влезет: нужно" in err and "установить на диск /mnt/browser? [y/N]" in err, (code, out, err)
         out = s.ok("KT_REPO=/memrepo kt pkg kthuge")
         assert "kt pkg add -d kthuge" in out, out
-        s.ok("umount /disk")
+        s.ok("umount /mnt/browser")
         try:
             code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
-            assert code == 1 and "не хватит памяти: нужно" in err and "свободно" in out, (code, out, err)
+            assert code == 1 and "не хватит памяти: нужно" in err, (code, out, err)
             code, out, err = s.sh("KT_REPO=/memrepo kt pkg add -d ktsmall")
-            assert code == 1 and "диска нет" in err, (code, out, err)
+            assert code == 1 and "диск /mnt/browser не подключён" in err, (code, out, err)
         finally:
-            s.ok("eval \"$(grep -o 'mount -t 9p [^|]*/disk' /etc/init.d/S01mount)\"")
+            s.ok("eval \"$(grep -o 'mount -t 9p [^|]*/mnt/browser' /etc/init.d/S01mount)\"")
         for answer in ("", "echo n | "):
             code, out, err = s.sh(answer + "KT_REPO=/memrepo kt pkg add ktbig")
             assert code == 1 and "свободной памяти останется" in err and "[y/N]" in err, (code, out, err)
         code, out, err = s.sh("KT_REPO=/memrepo kt pkg add -y ktbig")
         assert code == 1 and "не скачать ktbig" in err and "останется" not in err, (code, out, err)
         # архив не распаковался - убрано всё, что поставила эта команда, и зависимость тоже
-        code, out, err = s.sh("KT_REPO=/memrepo kt pkg add ktbad")
+        code, out, err = s.sh("KT_REPO=/memrepo kt pkg add -y ktbad")
         assert code == 1 and "не распаковать ktbad, установка отменена" in err, (code, out, err)
         code, out, err = s.sh("ls -d /var/lib/kt/pkg/ktsmall /var/lib/kt/pkg/ktbad /usr/share/ktsmall /usr/share/ktbad")
         assert code != 0 and not out, out
@@ -1022,11 +1027,11 @@ def main():
         s.ok("kt pkg > /dev/null")
 
     def disk():
-        # /disk - 9p v86, содержимое файлов в OPFS: кэш страниц есть (ignoreqv), writeback нет
-        opts = s.ok("grep ' /disk ' /proc/mounts").split()[3].split(",")
+        # /mnt/browser - 9p v86, содержимое файлов в OPFS: кэш страниц есть (ignoreqv), writeback нет
+        opts = s.ok("grep ' /mnt/browser ' /proc/mounts").split()[3].split(",")
         assert "cache=b" in opts and "ignoreqv" in opts, opts
         keys = len(s.ev("emulator.fs9p_keys()"))
-        out = s.ok("head -c 2000000 /dev/urandom > /tmp/r && cp /tmp/r /disk/r && echo 3 > /proc/sys/vm/drop_caches && md5sum < /tmp/r && md5sum < /disk/r && rm /tmp/r")
+        out = s.ok("head -c 2000000 /dev/urandom > /tmp/r && cp /tmp/r /mnt/browser/r && echo 3 > /proc/sys/vm/drop_caches && md5sum < /tmp/r && md5sum < /mnt/browser/r && rm /tmp/r")
         assert len(set(out.split())) == 2, out
         # файл уходит в OPFS через секунду после закрытия
         time.sleep(3)
@@ -1036,13 +1041,14 @@ def main():
             assert left == 0, "файлов в памяти страницы: %s" % left
         # пакет на диск: в корне ссылки на файлы, его ссылки - как есть
         mem_repo()
-        out = s.ok("KT_REPO=/memrepo kt pkg add -d ktsmall", 60)
+        out = s.ok("KT_REPO=/memrepo kt pkg add -y -d ktsmall", 60)
         assert "на диске" in out, out
-        assert s.ok("readlink /usr/share/ktsmall/x; readlink /usr/share/ktsmall/y").split() == ["/disk/pkg/usr/share/ktsmall/x", "x"]
+        assert s.ok("readlink /usr/share/ktsmall/x; readlink /usr/share/ktsmall/y").split() == ["/mnt/browser/pkg/usr/share/ktsmall/x", "x"]
         assert s.ok("cat /usr/share/ktsmall/y /usr/share/ktsmall/top") == "x\n" + s.ok("cat /etc/hostname")
-        assert re.search(r"^\* ktsmall .*\(диск\)", s.ok("KT_REPO=/memrepo kt pkg"), re.M)
+        out = s.ok("KT_REPO=/memrepo kt pkg")
+        assert re.search(r"^ktsmall .*\(диск\)", out, re.M) and re.search(r"^пакетов: .*, на диске 4K$", out, re.M), out
         s.ok("KT_REPO=/memrepo kt pkg rm -y ktsmall")
-        code, out, err = s.sh("ls -d /usr/share/ktsmall /disk/pkg/usr/share/ktsmall /var/lib/kt/disk/ktsmall")
+        code, out, err = s.sh("ls -d /usr/share/ktsmall /mnt/browser/pkg/usr/share/ktsmall /var/lib/kt/disk/ktsmall")
         assert code != 0 and not out, out
         # уборка OPFS: ключ, на который не ссылается машина, уходит, моложе 10 минут - остаётся
         names = s.ev("""(async () => {
@@ -1060,7 +1066,7 @@ def main():
         assert "1-old" not in names and any(n.endswith("-young") for n in names), names
 
     def chawan():
-        s.ok("kt pkg add chawan", 180)
+        s.ok("kt pkg add -y chawan", 180)
         Server.cha_log.clear()
         out = s.ok("cha -d %scha/start" % base, 120)
         assert "Привет, chawan" in out, out
@@ -1127,7 +1133,7 @@ def main():
 
     def save_restore():
         s.ok("rm -f /tmp/rw.bin /tmp/dl.bin /tmp/up.bin")
-        keep = s.ok("head -c 300000 /dev/urandom > /disk/keep && sleep 2 && md5sum < /disk/keep").split()[0]
+        keep = s.ok("head -c 300000 /dev/urandom > /mnt/browser/keep && sleep 2 && md5sum < /mnt/browser/keep").split()[0]
         s.ev("term.clear()")
         s.typed("kt save; echo SAVED-OK")
         # не 8 с наугад: под нагрузкой сохранение идёт дольше. SAVED-OK дважды - команда и её вывод
@@ -1143,7 +1149,7 @@ def main():
         assert "восстановлено сохранение" in scr and scr.count("SAVED-OK") >= 2, scr[-300:]
         assert s.ok("kt js 1+1").strip() == "2"
         # файл диска: дерево - из сохранения, содержимое - из OPFS
-        assert s.ok("echo 3 > /proc/sys/vm/drop_caches; md5sum < /disk/keep").split()[0] == keep, "файл /disk после восстановления другой"
+        assert s.ok("echo 3 > /proc/sys/vm/drop_caches; md5sum < /mnt/browser/keep").split()[0] == keep, "файл /mnt/browser после восстановления другой"
         return "восстановление %.1f с" % t
 
     def snap_rules():
@@ -1617,7 +1623,7 @@ def main():
         ("cpython 8 потоков", cpython_threads), ("requests и curl", requests_shim),
         ("alert/confirm/prompt", dialogs), ("kt notify", notify), ("pack/unpack", pack), ("sync", sync),
         ("kt cfg свои ключи", cfg_custom), ("рендер терминала", render), ("ai инструменты", ai_tool), ("ai сжатие контекста", ai_context),
-        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade), ("kt pkg add и память", pkg_memory), ("диск /disk", disk),
+        ("ai диалог", ai_repl), ("ai протокол responses", ai_proto), ("ai /model", ai_model), ("pip", pip_shim), ("pip из репозитория", pip_repo), ("kt pkg из Alpine", pkg_alpine), ("kt pkg base", pkg_base), ("kt pkg rm -c, -y и files", pkg_cascade), ("kt pkg add и память", pkg_memory), ("диск /mnt/browser", disk),
         ("chawan", chawan), ("в /run/kt нет мусора", run_clean),
         ("kt save + перезагрузка", save_restore), ("один агент после восстановления", one_agent),
         ("чистый терминал после восстановления", clean_screen), ("kill kt-netd и агента", kill_server),

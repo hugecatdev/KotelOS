@@ -14,7 +14,7 @@ SRC=$CACHE/v86-$REV
 OUT=${OUT:-vendor/v86}
 # устройства по выбору (patches/v86/06): floppy ide sound virtio 9p parallel acpi modem multiboot
 # virtio_gpu, all - все; по умолчанию virtio_gpu (3D для программ OpenGL, patches/v86/10), 9p (диск
-# /disk с файлами в OPFS, patches/v86/13) и sound (Sound Blaster 16 и вывод WebAudio, patches/v86/14),
+# /mnt/browser с файлами в OPFS, patches/v86/13) и sound (Sound Blaster 16 и вывод WebAudio, patches/v86/14),
 # остальные ядру не нужны. Пример: DEVICES="virtio_gpu ide sound" scripts/build-v86.sh, без них - DEVICES=
 DEVICES=${DEVICES-virtio_gpu 9p sound}
 [ "$DEVICES" = all ] && DEVICES="floppy ide sound virtio 9p parallel acpi modem multiboot virtio_gpu"

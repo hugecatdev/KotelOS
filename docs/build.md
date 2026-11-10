@@ -100,7 +100,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
   - `12-jit-fxhash.patch` - FxHash вместо SipHash в хеш-таблицах JIT (учёт нагрева
     страниц на каждый запуск интерпретатора, анализ и сборка модулей): Designer
     открывается на 12% быстрее, перерисовка -3.5%.
-  - `13-9p-opfs.patch` - 9p с содержимым файлов в OPFS (диск `/disk`, см.
+  - `13-9p-opfs.patch` - 9p с содержимым файлов в OPFS (диск `/mnt/browser`, см.
     [internals.md](internals.md)): хранилище `OpfsFileStorage`, записанный файл
     уходит туда при закрытии, в воркере тоже; устройство `9p` в сборке по
     умолчанию. Патч трогает только JS: `v86.wasm` от устройств не зависит.
@@ -136,7 +136,7 @@ python3 tests/bench.py vendor/v86 ПАПКА...     # скорость сбор�
 
   Устройства, которые нашему ядру не нужны, в `libv86.js` не попадают: 304 КБ
   вместо 361. По умолчанию из них есть `virtio_gpu` (3D для программ OpenGL,
-  `10-virtio-gpu.patch`, см. [screen.md](screen.md)), `9p` (диск `/disk`) и `sound`
+  `10-virtio-gpu.patch`, см. [screen.md](screen.md)), `9p` (диск `/mnt/browser`) и `sound`
   (звук, +41 КБ, gzip +8.5); без всех трёх было бы 192 КБ
   (gzip 54 вместо 94), это `DEVICES= scripts/build-v86.sh`, и такая сборка побайтно
   та же, что до virtio-gpu. Вернуть - `DEVICES="ide sound"

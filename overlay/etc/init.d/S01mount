@@ -19,6 +19,6 @@ mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null
 # (кэш страниц, ядро его вытесняет). cache=0xb - файлы и метаданные в кэше без проверок (диск меняет
 # только эта машина), без writeback: с ним файл уходит в OPFS, лишь когда ядро вытеснит inode;
 # ignoreqv - у v86 версия qid всегда 0, без него кэша нет вовсе (patches/v86/13)
-mkdir -p /disk
-mount -t 9p -o trans=virtio,version=9p2000.L,cache=0xb,ignoreqv,msize=512000 host9p /disk 2>/dev/null || rmdir /disk
+mkdir -p /mnt/browser
+mount -t 9p -o trans=virtio,version=9p2000.L,cache=0xb,ignoreqv,msize=512000 host9p /mnt/browser 2>/dev/null || rmdir /mnt/browser
 hostname -F /etc/hostname 2>/dev/null
