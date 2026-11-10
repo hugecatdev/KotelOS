@@ -10,14 +10,16 @@
 # монитор xosview (build-xosview.sh); рисовалка AzPainter (официальный GitLab автора - build-azpainter.sh);
 # текстовый процессор Ted на Motif (официальное зеркало автора - build-ted.sh; .rtf из Xfe - в нём):
 # меню берёт то, что установлено. KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
-# подсказки kt при входе (--prep rm: файла подсказок в машине нет), вместо startx - greenos-start с заставкой и
+# подсказки kt при входе (fs/etc/profile.d/hints.sh пустой - их нет и на экране снимка, --prep rm - и файла нет) и
 # os-release (VERSION_ID - прежний, его показывает kt); kt-xclipd (общий с браузером буфер) остаётся.
 # Не пакеты: JWM и greenos-about (bundles/greenos/root - собирает build.sh, в git не идёт), тема,
-# значки, обои (fs), скрипты (bin) - данные этого бандла. X не в снимке (--cmd startx): обои и панель -
+# значки, обои (fs), служебные скрипты (lib -> /usr/lib/greenos: меню, обои, громкость; в PATH только
+# greenos-about) - данные этого бандла. X не в снимке (boot.cmd=startx): обои и панель -
 # под настоящий экран; --prep fc-cache - кэш fontconfig (триггер перепакованного fontconfig не срабатывает).
 # «Сохранить сеанс» в меню - kt save; в Xfe правая кнопка - «Сценарии» - «Скачать» - kt dl
 # (fs/root/.config/xfe/scripts); ответ обоих - уведомлением herbe. --no-3d: программ OpenGL здесь нет.
-# Громкость - значок на панели (greenos-volume, amixer; полоска - xob). Громкость SB16 после сброса -
+# Громкость - значок на панели: щелчок - ползунок mixer (как в MATE), колесо - volume
+# (amixer; полоска - xob). Громкость SB16 после сброса -
 # по -14 дБ на мастере и ЦАП, звук игр почти не слышен: --prep ставит мастер 0 дБ и PCM -10 дБ (страница
 # добавляет к ЦАП ещё x3, итог ~1); из alsa-utils нужен только amixer, остальное - в --drop.
 # --drop - чего из пакетов в образе нет: библиотеки, которые не грузит ни одна программа
@@ -26,11 +28,19 @@
 # fs/etc/asound.conf - карта только на 22050 Гц: sdl12-compat открывает её не ниже 44100 и пересчитывает
 # звук игры 22050 -> 44100 плавающей точкой - в v86 это 44% процессора на LBreakout2 вместо 21%;
 # fs/root/.lgames/lbreakout2.conf - буфер звука игры 1024 вместо 512 (реже просыпается, 17%; без звука 5%)
---snap --vga 8 --no-3d --mem 256 --worker --title GreenOS
+# pkg.repo - пакеты kt pkg add с сайта KotelOS на GitHub Pages (там CORS открыт): GreenOS - отдельный файл,
+# своего /repo рядом нет. Приглашение шелла - как в Ubuntu (fs/etc/profile.d/prompt.sh, после
+# /etc/profile KotelOS); в xterm шелл входной (loginShell в Xdefaults) - читает его же.
+# --cfg screen.cursor=off - над экраном только курсор X, без второго курсора браузера поверх.
+# Браузер - Dillo (Alpine, FLTK, без JavaScript; с ним GNU wget и сертификаты), шрифты - fs/root/.dillo.
+# В интернет он ходит только с релеем: меню «Система» - «Сеть» (/usr/lib/greenos/net -> kt net), по
+# умолчанию сеть - fetch (только HTTP через страницу).
+--snap --vga 8 --no-3d --title GreenOS
+--cfg boot.mem=256 --cfg boot.worker=on --cfg screen.cursor=off --cfg pkg.repo=https://hugecatdev.github.io/KotelOS/repo
 --drop "/usr/lib/libbrotlienc.so*"
 --drop "/usr/lib/libxcb-composite.so*" --drop "/usr/lib/libxcb-dbe.so*" --drop "/usr/lib/libxcb-dpms.so*"
 --drop "/usr/lib/libxcb-dri2.so*" --drop "/usr/lib/libxcb-dri3.so*" --drop "/usr/lib/libxcb-glx.so*"
---drop "/usr/lib/libxcb-randr.so*" --drop "/usr/lib/libxcb-record.so*" --drop "/usr/lib/libxcb-render.so*"
+--drop "/usr/lib/libxcb-randr.so*" --drop "/usr/lib/libxcb-record.so*"
 --drop "/usr/lib/libxcb-res.so*" --drop "/usr/lib/libxcb-screensaver.so*" --drop "/usr/lib/libxcb-shape.so*"
 --drop "/usr/lib/libxcb-sync.so*" --drop "/usr/lib/libxcb-xf86dri.so*" --drop "/usr/lib/libxcb-xinerama.so*"
 --drop "/usr/lib/libxcb-xinput.so*" --drop "/usr/lib/libxcb-xkb.so*" --drop "/usr/lib/libxcb-xtest.so*"
@@ -40,20 +50,19 @@
 --drop /usr/bin/axfer --drop /usr/bin/speaker-test --drop /usr/bin/iecset --drop /usr/bin/amidi
 --drop /usr/bin/aconnect --drop /usr/bin/nhlt-dmic-info --drop "/usr/sbin/alsa*" --drop /usr/lib/alsa-topology
 --drop /usr/share/alsa/init --drop /usr/share/alsa/ucm2 --drop /usr/share/sounds/alsa --drop /usr/bin/dialog
+--drop /usr/share/icons/hicolor/128x128 --drop /usr/bin/dillo-install-hyphenation --drop /usr/lib/engines-3 --drop /usr/lib/ossl-modules
+--drop "/usr/lib/libcairo-script-interpreter.so*" --drop /usr/lib/cairo
 --drop "/usr/lib/libfftw3f*" --drop "/usr/lib/libformw.so*" --drop "/usr/lib/libmenuw.so*" --drop "/usr/lib/libpanelw.so*" --drop "/usr/lib/libpcreposix.so*"
 --prep fc-cache
 --prep "amixer -q sset Master 31 && amixer -q sset PCM 26"
 --prep "rm /etc/profile.d/hints.sh"
 --prep "sed -i 's/^NAME=.*/NAME=GreenOS/;s/^ID=.*/ID=greenos/;s/^PRETTY_NAME=.*/PRETTY_NAME=\"GreenOS 1.0\"/' /usr/lib/os-release"
---cmd greenos-start
+--cfg boot.cmd=startx
 --file bundles/greenos/xinitrc:/root/.xinitrc
 --file bundles/greenos/fs:/
 --file bundles/greenos/root:/
---file bundles/greenos/bin/greenos-menu:/usr/bin/greenos-menu
---file bundles/greenos/bin/greenos-wallpaper:/usr/bin/greenos-wallpaper
---file bundles/greenos/bin/greenos-start:/usr/bin/greenos-start
---file bundles/greenos/bin/greenos-volume:/usr/bin/greenos-volume
-nano htop pack notify micropython xorg feh xclock xeyes xkill font-hack zip lbreakout2 alsa-lib alsa-utils xob motif pcre libpaper
+--file bundles/greenos/lib:/usr/lib/greenos
+nano htop pack notify curl dillo ca-certificates-bundle micropython xorg feh xclock xeyes xkill font-hack zip lbreakout2 alsa-lib alsa-utils xob motif pcre libpaper
 libxft libxrender libxpm libxinerama libpng
 # библиотеки программ FOX (build-fox.sh)
 libstdc++ libjpeg-turbo libxrandr zlib

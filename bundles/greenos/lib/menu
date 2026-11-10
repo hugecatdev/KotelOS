@@ -1,7 +1,8 @@
 #!/bin/sh
-# меню «Пуск» GreenOS для JWM (<Include>exec:greenos-menu</Include> в /etc/system.jwmrc): программы под
+# меню «Пуск» GreenOS для JWM (<Include>exec:/usr/lib/greenos/menu</Include> в /etc/system.jwmrc): программы под
 # своими именами, только установленные, пустые разделы не показываются. Значки - родные значки программ,
-# где они есть, иначе MATE Menta (/usr/share/greenos/icons). «Сохранить сеанс» - kt save, ответ - herbe
+# где они есть, иначе MATE Menta (/usr/share/greenos/icons). Разделы - как в MATE: редактор, калькулятор,
+# архиватор - «Стандартные», терминал и файловый менеджер - «Система». «Сохранить сеанс» - kt save, ответ - herbe
 # (\$ - чтобы kt save шёл при выборе пункта, а не при сборке меню; ошибки - 2>/dev/stdout, без & в XML)
 item() {  # item программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
   command -v "$1" > /dev/null || return 0
@@ -11,20 +12,23 @@ item() {  # item программа значок [команда]: значок 
 menu() {  # menu значок название пункты: раздел, если в нём что-то есть
   [ -z "$3" ] || printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$1" "$2" "$3"
 }
+# сеть: kt net через /usr/lib/greenos/net (ответ - herbe); релей - Ethernet v86 из демо copy.sh/v86
+net() {  # net значок название значение
+  echo "<Program icon=\"$1.png\" label=\"$2\">/usr/lib/greenos/net $3</Program>"
+}
 cat <<EOF
 <?xml version="1.0"?>
 <JWM>
-<RootMenu onroot="3" label="GreenOS" labeled="true" height="28">
-$(item xterm /usr/share/pixmaps/xterm-color_48x48.xpm)
-$(item xfe /usr/share/pixmaps/xfe.png)
-$(item adie /usr/share/greenos/icons/fox/adie.png)
-<Separator/>
+<RootMenu onroot="3" height="28">
 $(menu office Офис "$(item Ted /usr/share/Ted/Ted.png; item abiword /usr/share/icons/hicolor/48x48/apps/abiword.png; item gnumeric /usr/share/icons/hicolor/48x48/apps/gnumeric.png)")
-$(menu utilities Стандартные "$(item calculator /usr/share/greenos/icons/fox/calculator.png; item xclock clock; item xfa /usr/share/pixmaps/xfa.png)")
+$(menu utilities Стандартные "$(item adie /usr/share/greenos/icons/fox/adie.png; item calculator /usr/share/greenos/icons/fox/calculator.png; item xclock clock; item xfa /usr/share/pixmaps/xfa.png)")
+$(menu internet Интернет "$(item dillo /usr/share/icons/hicolor/48x48/apps/dillo.png)")
 $(menu graphics Графика "$(item azpainter /usr/share/pixmaps/azpainter.png; item xfi /usr/share/pixmaps/xfi.png; item feh /usr/share/feh/images/feh.png 'feh --scale-down -g 900x600 -. /usr/share/backgrounds'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
 $(menu development Разработка "$(item micropython python 'xterm -T micropython -e micropython')")
 $(menu games Развлечения "$(item lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png; item xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'; item oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'; item xeyes eyes)")
-$(menu system Система "$(item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill)")
+$(menu system Система "$(item xterm /usr/share/pixmaps/xterm-color_48x48.xpm; item xfe /usr/share/pixmaps/xfe.png; item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill
+  menu network Сеть "$(net network-offline 'Без сети' off; net network-browser 'Только через браузер' fetch
+    net network-relay 'Интернет: relay.widgetry.org' wss://relay.widgetry.org/)")")
 <Separator/>
 <Program icon="save.png" label="Сохранить сеанс">herbe "\$(kt save 2>/dev/stdout)"</Program>
 <Program icon="about.png" label="О системе">greenos-about</Program>

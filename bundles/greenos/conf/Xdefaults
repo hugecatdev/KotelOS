@@ -11,13 +11,15 @@ Xft.rgba: none
 *borderColor: #b0d0a0
 
 ! терминал: шрифт Hack, тёмно-зелёный фон, копирование - в общий буфер (и браузера, kt-xclipd);
-! Ctrl+Shift+C / Ctrl+Shift+V - как в Konsole
+! Ctrl+Shift+C / Ctrl+Shift+V - как в Konsole. Шелл - входной: читает /etc/profile, а с ним приглашение
+! (profile.d/prompt.sh), функцию kt (kt cd) и алиасы; без этого в xterm были бы только переменные
 XTerm*faceName: Hack
 XTerm*faceSize: 10
 XTerm*renderFont: true
 XTerm*locale: true
 XTerm*utf8Title: true
 XTerm*termName: xterm-256color
+XTerm*loginShell: true
 XTerm*internalBorder: 8
 XTerm*borderWidth: 0
 XTerm*scrollBar: false

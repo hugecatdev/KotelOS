@@ -1,9 +1,0 @@
-table Icon
-  Caption: adie
-  Command: adie
-  Icon: /usr/share/greenos/icons/fox/adie.png
-  Width: 48
-  Height: 48
-  X: 40
-  Y: 296
-end

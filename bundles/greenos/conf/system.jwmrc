@@ -5,8 +5,8 @@
 <JWM>
 
     <!-- меню «Пуск» (кнопка-кубик на панели, Alt+F1, правый щелчок по столу): только установленные
-         программы - собирает greenos-menu -->
-    <Include>exec:greenos-menu</Include>
+         программы - собирает /usr/lib/greenos/menu -->
+    <Include>exec:/usr/lib/greenos/menu</Include>
 
     <Group>
         <Class>GreenAbout</Class>
@@ -29,11 +29,12 @@
         <TaskList maxwidth="220"/>
         <Pager labeled="true"/>
         <Dock/>
-        <!-- громкость (greenos-volume): колесо - громче и тише, щелчок - звук выкл/вкл; уровень - полоской -->
-        <TrayButton icon="volume.png" popup="Громкость: колесо мыши, щелчок - выключить">
-            <Button mask="1">exec:greenos-volume mute</Button>
-            <Button mask="4">exec:greenos-volume +</Button>
-            <Button mask="5">exec:greenos-volume -</Button>
+        <!-- громкость, как в MATE: щелчок - ползунок над значком (/usr/lib/greenos/mixer, второй щелчок - убрать);
+             колесо - громче и тише сразу (/usr/lib/greenos/volume, уровень - полоской xob) -->
+        <TrayButton icon="volume.png">
+            <Button mask="1">exec:pkill -x mixer || exec /usr/lib/greenos/mixer</Button>
+            <Button mask="4">exec:/usr/lib/greenos/volume +</Button>
+            <Button mask="5">exec:/usr/lib/greenos/volume -</Button>
         </TrayButton>
         <Clock format="%H:%M" popup="%A, %d %B %Y"><Button mask="1">exec:xclock</Button></Clock>
         <TrayButton icon="desktop.png" popup="Показать рабочий стол">showdesktop</TrayButton>
@@ -125,11 +126,11 @@
     <IconPath>/usr/share/greenos/icons</IconPath>
     <DefaultIcon>executable.png</DefaultIcon>
 
-    <!-- два рабочих стола; обои - greenos-wallpaper (feh): JWM зовёт его на старте и после смены
+    <!-- два рабочих стола; обои - /usr/lib/greenos/wallpaper (feh): JWM зовёт его на старте и после смены
          размера экрана (тогда он перезапускается сам). Background - до Desktop: JWM читает Desktops,
          пока не насчитает столько столов, сколько задано, остальное пропускает -->
     <Desktops width="2" height="1">
-        <Background type="command">greenos-wallpaper</Background>
+        <Background type="command">/usr/lib/greenos/wallpaper</Background>
         <Desktop name="1"/>
         <Desktop name="2"/>
     </Desktops>

@@ -1,6 +1,6 @@
 #!/bin/sh
-# JWM и greenos-about для GreenOS: тулчейн musl против заголовков и библиотек Alpine x86, как dwm
-# (scripts/build-dwm.sh). Это данные бандла (bundles/greenos/greenos.txt, --file), не пакеты
+# JWM, greenos-about и /usr/lib/greenos/mixer (ползунок громкости) для GreenOS: тулчейн musl против заголовков и
+# библиотек Alpine x86, как dwm (scripts/build-dwm.sh). Это данные бандла (bundles/greenos/greenos.txt, --file), не пакеты
 # репозитория; результат - дерево bundles/greenos/root (в git не идёт). Программы FOX - build-fox.sh.
 # JWM 2.4 сглаживает шрифты только через Pango (а с ним glib, harfbuzz, cairo - мегабайты), без него -
 # растровые шрифты X без кириллицы; jwm-xft.patch возвращает прямой Xft, как было в JWM 2.3.
@@ -25,7 +25,7 @@ f=jwm-$JWM.tar.xz
 [ "$(sha256sum $CACHE/$f | cut -d' ' -f1)" = b5871ec28317594b3fa22b83ed5524cc911d498c455eaab3ae68def195dd802d ] ||
   { echo "$f: не та контрольная сумма" >&2; exit 1; }
 rm -rf $B/jwm-$JWM
-mkdir -p $B $OUT/usr/bin
+mkdir -p $B $OUT/usr/bin $OUT/usr/lib/greenos
 tar -xJf $CACHE/$f -C $B
 patch -d $B/jwm-$JWM -p1 -s < bundles/greenos/jwm-xft.patch
 patch -d $B/jwm-$JWM -p1 -s < bundles/greenos/jwm-utf8-names.patch
@@ -37,7 +37,7 @@ import sys
 import alpine
 pkgs, provides = alpine.index(tag="xorg-", max_age=7 * 86400)
 want = """libx11-dev libxext-dev libxft-dev libxrender-dev libxpm-dev libxmu-dev libxinerama-dev libxrandr-dev
-libpng-dev libjpeg-turbo-dev zlib-dev fontconfig-dev freetype-dev""".split()
+libpng-dev libjpeg-turbo-dev zlib-dev fontconfig-dev freetype-dev alsa-lib-dev""".split()
 for n in alpine.resolve(want, pkgs, provides, {"python3", "linux-headers"}):
     f = f"{n}-{pkgs[n]['ver']}.apk"
     alpine.extract(alpine.fetch(f"{alpine.MIRROR}/{pkgs[n]['repo']}/x86/{f}", f"{alpine.CACHE}/apk/{f}"), sys.argv[1], [], [])
@@ -58,12 +58,13 @@ cp $S/src/jwm $OUT/usr/bin/jwm
 
 $CC -Os -Wall -Wno-format-truncation $CPPFLAGS -o $OUT/usr/bin/greenos-about bundles/greenos/greenos-about.c \
   $LDFLAGS -lXft -lXrender -lX11 -lpng16
+$CC -Os -Wall $CPPFLAGS -o $OUT/usr/lib/greenos/mixer bundles/greenos/greenos-mixer.c $LDFLAGS -lXft -lX11 -lasound
 
 # конфиги - без комментариев и отступов (в машине всё в памяти); исходники с пояснениями - conf/
 mkdir -p $OUT/etc $OUT/root
 python3 bundles/greenos/minify.py xml bundles/greenos/conf/system.jwmrc $OUT/etc/system.jwmrc
 python3 bundles/greenos/minify.py xres bundles/greenos/conf/Xdefaults $OUT/root/.Xdefaults
 
-for f in $OUT/usr/bin/jwm $OUT/usr/bin/greenos-about; do
+for f in $OUT/usr/bin/jwm $OUT/usr/bin/greenos-about $OUT/usr/lib/greenos/mixer; do
   echo "${f#$PWD/} $(du -h $f | cut -f1): $($TC/bin/i686-linux-musl-readelf -d $f | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 done
