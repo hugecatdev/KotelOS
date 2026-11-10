@@ -66,7 +66,7 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 <td><a href="https://hugecatdev.github.io/KotelOS/dwm/"><img src="docs/img/dwm.png" alt="dwm"></a><br>dwm: st с neofetch, рядом второй терминал, часы в панели</td>
 </tr>
 <tr>
-<td colspan="2"><a href="https://hugecatdev.github.io/KotelOS/greenos/"><img src="docs/img/greenos.png" alt="greenos"></a><br>greenos: меню, текстовый процессор Ted, рисовалка AzPainter и LBreakout2 на рабочем столе JWM</td>
+<td colspan="2"><a href="https://hugecatdev.github.io/KotelOS/greenos/"><img src="docs/img/greenos.png" alt="greenos"></a><br>greenos: JWM с меню программ, значки idesk, Ted, AzPainter, LBreakout2</td>
 </tr>
 </table>
 
