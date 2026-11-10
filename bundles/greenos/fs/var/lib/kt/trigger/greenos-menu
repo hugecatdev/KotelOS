@@ -1,1 +1,2 @@
 DISPLAY=:0 jwm -reload
+DISPLAY=:0 /usr/lib/greenos/desk prune

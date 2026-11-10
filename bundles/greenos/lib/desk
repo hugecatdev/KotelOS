@@ -5,8 +5,13 @@
 #   rm ФАЙЛ   - убрать значок (правый двойной щелчок по нему, Execute[1] в ~/.ideskrc)
 #   layout О  - разложить все: стоя (tall) - сеткой по три сверху (кубик ниже), иначе - столбцом слева;
 #               только когда ориентация сменилась - перетащенные мышью значки остаются на местах
-# idesk читает значки только при запуске - после любого из них он перезапускается
-D=$HOME/.idesktop
+#   prune     - убрать значки программ, которых больше нет (kt pkg rm: триггер greenos-menu); программа -
+#               слово после последнего exec в команде, иначе первое (xterm -e - то, что после него)
+# idesk читает значки только при запуске - после любого из них он перезапускается (после prune - если
+# что-то убрано)
+# в GreenOS один пользователь - root; HOME явно: триггер kt pkg бывает и с HOME=/
+H=/root
+D=$H/.idesktop
 
 pos() {  # pos место ориентация
   if [ "$2" = tall ]; then echo "$((32 + $1 % 3 * 110)) $((14 + $1 / 3 * 96))"; else echo "40 $((20 + $1 * 92))"; fi
@@ -29,6 +34,17 @@ EOF
   rm)
     rm "$2"
     ;;
+  prune)
+    gone=
+    for f in "$D"/*.lnk; do
+      [ -f "$f" ] || continue
+      c=$(sed -n 's/^  Command\(\[0\]\)\{0,1\}: //p' "$f")
+      case $c in *"exec "*) c=${c##*exec } ;; esac
+      c=${c#xterm -e }
+      command -v "${c%% *}" > /dev/null || { rm "$f"; gone=1; }
+    done
+    [ -n "$gone" ] || exit 0
+    ;;
   layout)
     if [ "$(cat /tmp/.greenos-desk 2> /dev/null)" != "$2" ]; then
       i=0
@@ -42,5 +58,5 @@ EOF
     ;;
 esac
 pkill -x idesk
-mkdir -p "$HOME/.local/share/Trash/files"
-cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
+mkdir -p "$H/.local/share/Trash/files"
+cd "$H" && HOME=$H setsid idesk > /dev/null 2>&1 < /dev/null &

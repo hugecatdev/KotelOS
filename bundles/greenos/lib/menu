@@ -6,7 +6,7 @@
 # включить. «Сохранить сеанс» - kt save, ответ - herbe (ошибки - 2>/dev/stdout, без & в XML).
 # Поставленное через kt pkg add - из его .desktop (/usr/share/applications): раздел по Categories, имя, значок
 # темы hicolor или pixmaps; кроме программ, что уже есть ниже. После add и rm меню пересобирает триггер kt pkg
-# (/var/lib/kt/trigger/greenos-menu: jwm -reload). «На рабочий стол» - те же программы по тем же
+# (/var/lib/kt/trigger/greenos-menu: jwm -reload, и со стола уходят значки удалённых программ). «На рабочий стол» - те же программы по тем же
 # разделам: выбранная встаёт значком на стол (/usr/lib/greenos/desk add N - строка N из /tmp/.greenos-apps:
 # имя, значок, команда - их меню пишет каждый раз заново)
 d=$(mktemp -d)
