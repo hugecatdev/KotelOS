@@ -15,7 +15,7 @@
 #include <sys/utsname.h>
 
 #define W 500
-#define H 353
+#define H 330
 #define LOGO "/usr/share/greenos/logo.png"
 #define RELEASE "/usr/share/greenos/release"
 
@@ -29,9 +29,9 @@ static GC gc;
 static Picture logo;
 static int logo_w, logo_h;
 static int hover, pressed;
-static char line[8][160], name[64] = "GreenOS", version[96] = "1.0", footer[512] = "";
+static char line[8][160], name[64] = "GreenOS", version[96] = "1.0", footer[512] = "", author[160] = "";
 static int nlines;
-static const char *labels[] = { "Ядро", "Процессор", "Память", "Время работы", "Оболочка", "Сборка", "Автор" };
+static const char *labels[] = { "Ядро", "Процессор", "Память", "Время работы", "Оболочка", "Сборка" };
 static const int bx = W - 150, by = H - 54, bw = 128, bh = 36;
 
 static unsigned long px(const char *hex) {
@@ -91,8 +91,8 @@ static void read_info(void) {
   char buf[512];
   struct utsname u;
   /* release: имя, версия, подпись, автор - по строке */
-  char *dst[] = { name, version, footer, line[6] };
-  size_t len[] = { sizeof name, sizeof version, sizeof footer, sizeof line[6] };
+  char *dst[] = { name, version, footer, author };
+  size_t len[] = { sizeof name, sizeof version, sizeof footer, sizeof author };
   f = fopen(RELEASE, "r");
   for (int i = 0; i < 4; i++) {
     fgets(buf, sizeof buf, f);
@@ -133,7 +133,7 @@ static void read_info(void) {
       snprintf(line[5], sizeof line[5], "%s", buf + 11);
     }
   fclose(f);
-  nlines = 7;
+  nlines = 6;
 }
 
 static void draw(void) {
@@ -174,6 +174,7 @@ static void draw(void) {
   }
   rrect(bx, by, bw, bh, 2, px("#2b8a1d"));
   rrect(bx + 1, by + 1, bw - 2, bh - 2, 1, px(pressed ? "#2e9a1f" : hover ? "#5fd04a" : "#3dbb2b"));
+  text(f_small, &c_dim, 172, by + bh / 2 + f_small->ascent / 2 - 1, author);  /* автор - у кнопки, без подписи */
   const char *b = "Закрыть";
   text(f_txt, &c_white, bx + (bw - text_w(f_txt, b)) / 2, by + bh / 2 + f_txt->ascent / 2 - 1, b);
   XFlush(dpy);
