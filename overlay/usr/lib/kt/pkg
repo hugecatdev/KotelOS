@@ -19,6 +19,7 @@ BASE=base
 IDX=/var/lib/kt/index
 AIDX=/var/lib/kt/alpine
 MIR=/var/lib/kt/mirror
+RMIR=/var/lib/kt/mirror.relay
 TRIG=/var/lib/kt/trigger
 WORLD=/var/lib/kt/world
 T=/tmp/.kt-pkg.$$
@@ -103,6 +104,7 @@ L='NR == FNR { inst[$1] = 1; next }
 {
   known[$1] = 1
   src[$1] = $6
+  sum[$1] = $7
   split($2, s, "/")
   dl[$1] = s[1] + 0
   mem[$1] = s[2] + 0
@@ -133,7 +135,7 @@ plan() {
       if (!(p in known)) { print "?" p; return }
       n = split(deps[p], a, " ")
       for (i = 1; i <= n; i++) visit(pick(a[i]))
-      print p, dl[p], mem[p], (p in inst) ? 1 : 0, src[p]
+      print p, dl[p], mem[p], (p in inst) ? 1 : 0, src[p], sum[p]
     }
     END {
       n = split(want, w, " ")
@@ -281,6 +283,69 @@ mirrors() {
   ' $AIDX
 }
 
+# сеть с релеем (kt net): пакет Alpine качает сама машина, напрямую с быстрого зеркала, CORS не нужен.
+# busybox wget без TLS - зеркала по http (строки #relay индекса), поэтому пакет сверяется с суммой из
+# индекса (он пришёл по https): управляющая часть .apk (второй поток gzip) - с SHA1 из APKINDEX (C:),
+# данные (третий) - с datahash из неё. Не скачался или не сошлось - как без релея, через браузер
+relay_on() {
+  [ -z "$RCHK" ] || return $RELAY
+  RCHK=1
+  RELAY=1
+  RV=$(kt cfg net.relay 2> /dev/null)
+  case $RV in ws://* | wss://* | wisp://* | wisps://*) RELAY=0 ;; esac
+  return $RELAY
+}
+
+# зеркала для релея, быстрейшее первым: замер один раз на релей (первая строка $RMIR - он)
+relays() {
+  if [ "$(head -1 $RMIR 2> /dev/null)" != "$RV" ]; then
+    {
+      echo "$RV"
+      awk -F'\t' '!/^#/ { exit } /^#relay/ { print $2 }' $AIDX | while read -r m; do
+        read -r t0 _ < /proc/uptime
+        busybox wget -q --spider -T 5 "$m/main/x86/APKINDEX.tar.gz" 2> /dev/null || continue
+        read -r t1 _ < /proc/uptime
+        echo "$t0 $t1 $m"
+      done | awk '{ print $2 - $1, $3 }' | sort -n | cut -d" " -f2
+    } > $RMIR
+  fi
+  tail -n +2 $RMIR
+}
+
+# apkcheck файл Q1...: начала потоков gzip (1f 8b 08) в первых 64 КБ - кандидаты границ; пара, на
+# которой сходится SHA1 управляющей части, и datahash данных за ней - пакет тот самый
+apkcheck() {
+  want=$(echo "${2#Q1}" | base64 -d 2> /dev/null | od -An -tx1 -v | tr -d ' \n')
+  [ -n "$want" ] || return 1
+  f=$1
+  set -- $(head -c 65536 "$f" | od -An -tx1 -v | awk '
+    { for (i = 1; i <= NF; i++) { if (b2 == "1f" && b1 == "8b" && $i == "08") print k - 2; b2 = b1; b1 = $i; k++ } }')
+  for c in "$@"; do
+    for d in "$@"; do
+      [ "$d" -gt "$c" ] || continue
+      [ "$(tail -c +$((c + 1)) "$f" | head -c $((d - c)) | sha1sum | cut -d" " -f1)" = "$want" ] || continue
+      h=$(tail -c +$((c + 1)) "$f" | head -c $((d - c)) | gunzip -c 2> /dev/null | tar -xOf - .PKGINFO 2> /dev/null |
+        sed -n 's/^datahash = //p')
+      [ -n "$h" ] && [ "$(tail -c +$((d + 1)) "$f" | sha256sum | cut -d" " -f1)" = "$h" ]
+      return
+    done
+  done
+  return 1
+}
+
+# apk_relay путь файл сумма: с зеркал релея по очереди
+apk_relay() {
+  [ -n "$3" ] || return 1
+  for m in $(relays); do
+    if e=$(busybox wget -q -T 20 -O "$2" "$m/$1" 2>&1); then
+      apkcheck "$2" "$3" && return 0
+      e="не сошлась контрольная сумма"
+    fi
+    echo "${e#wget: }" > "$(errf "$m")"
+  done
+  return 1
+}
+
 # последняя ошибка источника - в файле: errf источник; why ошибка адрес - что ответил источник
 errf() {
   echo "$T.err.$(echo "$1" | tr -c 'a-zA-Z0-9\n' _)"
@@ -322,10 +387,12 @@ apk_once() {
   return 1
 }
 
-# apk путь файл: круг по зеркалам, не вышло - через паузу ещё круг, и отказавшие зеркала - снова в деле
+# apk путь файл сумма: с релеем - сначала его зеркала, потом браузер; круг по зеркалам, не вышло - через
+# паузу ещё круг, и отказавшие зеркала - снова в деле
 apk() {
   r=1
   while :; do
+    if relay_on && apk_relay "$1" "$2" "$3"; then return 0; fi
     apk_once "$1" "$2" && return 0
     [ $r -lt $TRIES ] || return 1
     DEAD=
@@ -349,7 +416,7 @@ repo_get() {
 fail() {
   if [ -n "$q" ]; then clr; else printf '\r!\n'; fi
   kt_err "не скачать $1"
-  for m in $(mirrors 2> /dev/null) "$REPO"; do
+  for m in $(tail -n +2 $RMIR 2> /dev/null) $(mirrors 2> /dev/null) "$REPO"; do
     f=$(errf "$m")
     [ ! -f "$f" ] || printf '  %s: %s\n' "$m" "$(cat "$f")" >&2
   done
@@ -471,9 +538,10 @@ EOF
     [ -z "$DSK" ] || mkdir -p $DPKG/.dl.$$ $ONDISK
     for p in $(echo "$new" | cut -d" " -f1); do
       s=$(echo "$new" | awk -v p="$p" '$1 == p { print $5 }')
+      c=$(echo "$new" | awk -v p="$p" '$1 == p { print $6 }')
       [ -n "$q" ] || printf '  %-21s %6s%s' "$p" "$(echo "$new" | awk -v p="$p" "$H"'$1 == p { print h($2) }')" "${s:+  (apk)}"
       if [ -n "$s" ]; then
-        apk "$s" "$(arc $p)" || fail "$p"
+        apk "$s" "$(arc $p)" "$c" || fail "$p"
       else
         repo_get "$p" "$(arc $p)" || fail "$p"
       fi

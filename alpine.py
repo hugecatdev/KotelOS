@@ -12,6 +12,10 @@ import urllib.request
 BRANCH = "v3.22"
 MIRROR = "https://dl-cdn.alpinelinux.org/alpine/" + BRANCH
 KT_MIRRORS = ["https://mirrors.sdu.edu.cn/alpine/v3.22", "https://mirror.xtom.com.hk/alpine/v3.22"]
+# зеркала для машины с релеем (kt net): CORS не нужен, качает сама машина - busybox wget без TLS, поэтому
+# http; пакет сверяется с суммой из индекса (kt pkg apkcheck). Быстрейшее машина выбирает сама
+KT_RELAY_MIRRORS = ["http://dl-cdn.alpinelinux.org/alpine/" + BRANCH, "http://mirror.yandex.ru/mirrors/alpine/" + BRANCH,
+                    "http://mirrors.edge.kernel.org/alpine/" + BRANCH]
 REPOS = ["main", "community"]
 CACHE = ".cache/alpine"
 OWN = "packages"  # свои пакеты, в git
@@ -57,7 +61,7 @@ def index(mirror=MIRROR, tag="", max_age=None):
             pkg = {"name": name, "ver": rec["V"][0], "repo": repo,
                    "deps": " ".join(rec.get("D", [])).split(), "provides": " ".join(rec.get("p", [])).split(),
                    "size": int(rec.get("S", ["0"])[0]), "isize": int(rec.get("I", ["0"])[0]),
-                   "desc": rec.get("T", [""])[0]}
+                   "desc": rec.get("T", [""])[0], "csum": rec.get("C", [""])[0]}
             pkgs.setdefault(name, pkg)
             provides.setdefault(name, name)
             for p in " ".join(rec.get("p", [])).split():
@@ -138,11 +142,13 @@ def kt_index(out, mirrors, ours_names, alias, old, new, desc=None):
             continue
         deps = [ours(d) for d in p_direct(p, pkgs, provides, base | {n})]
         rows[name] = [name, "%d/%d" % (p["size"] // 1024 + 1, p["isize"] // 1024 + 1), deps,
-                      p["desc"].replace("\t", " "), "", "%s/x86/%s-%s.apk" % (p["repo"], n, p["ver"])]
+                      p["desc"].replace("\t", " "), "", "%s/x86/%s-%s.apk" % (p["repo"], n, p["ver"]), p["csum"]]
     known = set(rows) | ours_names
     with gzip.open(out, "wt", compresslevel=9) as f:
         for m in mirrors:
             f.write("#mirror\t%s\n" % m)
+        for m in KT_RELAY_MIRRORS:
+            f.write("#relay\t%s\n" % m)
         for r in rows.values():
             r[2] = " ".join(d for d in r[2] if d in known)
             f.write("\t".join(r) + "\n")
