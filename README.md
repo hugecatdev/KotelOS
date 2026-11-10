@@ -47,7 +47,7 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 <tr><td><a href="https://hugecatdev.github.io/KotelOS/dwm/">dwm</a></td><td>X с dwm: st, neofetch, часы в панели, шахматы, OpenGL на видеокарте</td></tr>
 <tr><td><a href="https://hugecatdev.github.io/KotelOS/sqlite/">sqlite</a></td><td>DB Browser for SQLite из Alpine с базой пакетов этой же машины</td></tr>
 <tr><td><a href="https://hugecatdev.github.io/KotelOS/qt/">qt</a></td><td>стенд для Qt: Qt Designer и PyQt5</td></tr>
-<tr><td><a href="https://hugecatdev.github.io/KotelOS/greenos/">greenos</a></td><td>рабочий стол на JWM: меню и значки на столе, файловый менеджер Xfe, текстовый процессор Ted, браузер Dillo, звук; поставленное через <code>kt pkg add</code> само встаёт в меню</td></tr>
+<tr><td><a href="https://hugecatdev.github.io/KotelOS/greenos/">greenos</a></td><td>рабочий стол на JWM со значками idesk, Xfe и другие программы на FOX, Ted, Dillo; поставленное через <code>kt pkg add</code> появляется в меню само</td></tr>
 </table>
 
 ### Скриншоты
@@ -66,7 +66,7 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 <td><a href="https://hugecatdev.github.io/KotelOS/dwm/"><img src="docs/img/dwm.png" alt="dwm"></a><br>dwm: st с neofetch, рядом второй терминал, часы в панели</td>
 </tr>
 <tr>
-<td colspan="2"><a href="https://hugecatdev.github.io/KotelOS/greenos/"><img src="docs/img/greenos.png" alt="greenos"></a><br>greenos: JWM с меню программ, значки idesk, Ted, AzPainter, LBreakout2</td>
+<td colspan="2"><a href="https://hugecatdev.github.io/KotelOS/greenos/"><img src="docs/img/greenos.png" alt="greenos"></a><br>greenos: JWM с меню программ, значки idesk, программы на FOX, Ted, AzPainter, LBreakout2</td>
 </tr>
 </table>
 
@@ -87,7 +87,7 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 <tr><td>Пакетный менеджер с поддержкой Alpine</td><td>чего нет в своём репозитории, <code>kt pkg add</code> берёт из Alpine Linux: git, gcc, nodejs, vim и почти всё остальное, с триггерами и удалением как у обычных пакетов</td></tr>
 <tr><td>Сохранение состояния</td><td>машина целиком, с запущенными процессами, сохраняется в браузере и восстанавливается при следующем открытии. Именные снимки, экспорт в файл и обратно, автосохранение</td></tr>
 <tr><td>Файлы</td><td><code>kt pack</code> хранит файлы в браузере между машинами, файл можно перетащить в терминал, <code>kt dl</code> и <code>kt up</code> - скачать и загрузить</td></tr>
-<tr><td>Диск в браузере</td><td><code>/mnt/browser</code> - файлы лежат в хранилище браузера (OPFS) и читаются по требованию, в памяти машины только то, что сейчас нужно. Пакеты, которым мало памяти (gcc), <code>kt pkg add -d</code> ставит туда. Хранилище есть, когда машина открыта с сайта; у файла, открытого с диска, его нет, и записанное остаётся в памяти</td></tr>
+<tr><td>Диск в браузере</td><td><code>/mnt/browser</code> хранит файлы в OPFS браузера и читает их по требованию, поэтому они не занимают память машины. <code>kt pkg add -d</code> ставит туда большие пакеты вроде gcc. OPFS есть, только когда машина открыта с сайта; у html-файла, открытого с диска, её нет</td></tr>
 <tr><td>Лёгкий и быстрый Python</td><td>CPython 3.12, собранный под эмулятор: <code>minipython</code> - лёгкое ядро, <code>python3</code> - целиком, тяжёлые модули - отдельными пакетами. pip ставит колёса с PyPI через браузер, а пакеты с C-кодом берёт из Alpine</td></tr>
 <tr><td>pyzygote</td><td>демон, прогревающий питон и позволяющий его форкать: новый <code>python3</code> не ждёт загрузки интерпретатора и библиотек</td></tr>
 <tr><td>tkinter в браузере</td><td>окна tkinter рисует сама страница, без X: IDLE и turtle работают без правок, у matplotlib свой бэкенд для этих окон; и на телефоне тоже. Бандл с <code>--embed</code> показывает их поверх своего сайта, без терминала</td></tr>
@@ -95,10 +95,10 @@ with one command. Below are demo builds; the rest of this README is in Russian.
 <tr><td>Мост с браузером</td><td>Shell API (команда <code>kt</code>) и Python API (модуль <code>kt</code>): выполнить JS на странице, события страницы, буфер обмена, уведомления и диалоги браузера. Гость и страница говорят по TCP через сетевую карту машины, терминалу остаётся последовательный порт. Сайт может встроить машину в iframe и управлять ею</td></tr>
 <tr><td>Телефон</td><td>ряд клавиш как в Termux, залипающие Ctrl, Alt и Shift, долгое нажатие - правая кнопка, окна ужимаются под экран, X подстраивается под размер и поворот</td></tr>
 <tr><td>X и OpenGL</td><td>Xorg на экране машины, dwm, JWM, Qt5 и PyQt5. OpenGL-программы рисуются на видеокарте через WebGL2 вкладки: virtio-gpu в v86 и virglrenderer в wasm</td></tr>
-<tr><td>Окна X на странице</td><td>с оконным менеджером <code>kt-xwm</code> каждое окно X - отдельное окно страницы, без экрана машины: его двигают, меняют размер и сворачивают, как окна tkinter. Бандл с <code>--embed</code> показывает их поверх своего сайта</td></tr>
+<tr><td>Окна X на странице</td><td>оконный менеджер <code>kt-xwm</code> показывает каждое окно X отдельным окном страницы, без экрана машины. Их двигают и растягивают так же, как окна tkinter, а с <code>--embed</code> они открываются поверх своего сайта</td></tr>
 <tr><td>ИИ-ассистент <code>ai</code></td><td>в терминале, с любым OpenAI-совместимым API: сам выполняет команды, читает и правит файлы, знает скиллы и <code>AGENTS.md</code>. Ключ хранится в браузере и в машину не попадает</td></tr>
-<tr><td>Сеть через браузер</td><td>curl, wget, requests, pip и текстовый браузер chawan ходят в интернет через fetch страницы; работают и Telegram-боты. С релеем (<code>kt net</code>: сервер Wisp или websockproxy) у машины настоящая сеть - любые TCP-соединения, а <code>kt pkg</code> берёт пакеты Alpine прямо с зеркал и сверяет их с индексом</td></tr>
-<tr><td>Звук</td><td>Sound Blaster 16 в v86 и WebAudio страницы: программы и игры играют через ALSA, без звукового сервера</td></tr>
+<tr><td>Сеть через браузер</td><td>curl, wget, requests, pip и текстовый браузер chawan ходят в интернет через fetch страницы; работают и Telegram-боты. Если подключить релей (<code>kt net</code>, сервер Wisp или websockproxy), машине доступен любой TCP, а <code>kt pkg</code> скачивает пакеты Alpine с зеркал сам и проверяет их по индексу</td></tr>
+<tr><td>Звук</td><td>машина видит Sound Blaster 16, звук выводится через WebAudio страницы. Программы и игры используют ALSA без звукового сервера</td></tr>
 <tr><td>Виртуальные консоли</td><td>Alt+1..9 переключают шеллы, у каждой консоли свой терминал на странице, консоли переживают перезагрузку страницы</td></tr>
 <tr><td>Доработанный v86</td><td>эмулятор собирается из исходников с патчами: только нужные устройства, Web Worker, окно и повтор в TCP, ленивое обнуление памяти, настройки JIT, virtio-gpu, 9p с файлами в хранилище браузера</td></tr>
 <tr><td>MicroPython</td><td>с тем же <code>import kt</code> и примерами: камера в терминале, синтез речи, QR-коды, погода, змейка, рисовалка на странице</td></tr>
@@ -135,7 +135,7 @@ python3 bundle.py -o git.html --snap git
 ## Ограничения
 
 - Один процессор x86 (32 бит) в эмуляторе: всё работает очень медленно, но для консольных утилит и небольших программ хватает.
-- В сеть - только через fetch браузера: открываются сайты с CORS, входящих соединений нет.
+- Без релея сеть идёт через fetch браузера, поэтому открываются только сайты с CORS и входящих соединений нет.
 - Часть инструкций SSE3 и всё новее v86 не умеет: такие бинарники падают с SIGILL.
 - 3D-контекст не сохраняется в снимке: OpenGL-программу после восстановления запускают заново.
 
