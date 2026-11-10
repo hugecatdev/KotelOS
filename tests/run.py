@@ -906,6 +906,8 @@ def main():
         assert s.ok("ktold").strip() == "new"
         code, out, err = s.sh("kt pkg add -y ktgone", 120)
         assert code == 1 and "не скачать ktgone" in err, (code, out, err)
+        # под ним - каждое зеркало со своей ошибкой: мёртвое - «нет связи», живое - чего на нём нет
+        assert "  http://127.0.0.1:1/alpine: нет связи" in err and "  %salpine: нет ktgone в" % base in err, err
         assert s.sh("ls /var/lib/kt/pkg/ktlib2")[0] != 0, "ktlib2 поставлен без ktgone"
         out = s.ok("kt pkg rm -y ktapk ktapk", 60)
         assert re.findall(r"^- \S+$", out, re.M) == ["- ktapk"], out

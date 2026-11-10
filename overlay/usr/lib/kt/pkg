@@ -39,6 +39,9 @@ DFREE=
 q=
 ALP=
 DEAD=
+# скачивание - с повтором: обрыв посреди большой установки (сотни мегабайт) не должен ронять её
+# целиком. TRIES кругов по зеркалам Alpine (пакет репозитория - TRIES попыток), между ними пауза
+TRIES=3
 mkdir -p $DB
 [ -f $WORLD ] || ls $DB | grep -vxF $BASE > $WORLD
 
@@ -278,8 +281,17 @@ mirrors() {
   ' $AIDX
 }
 
-apk() {
-  live=
+# последняя ошибка источника - в файле: errf источник; why ошибка адрес - что ответил источник
+errf() {
+  echo "$T.err.$(echo "$1" | tr -c 'a-zA-Z0-9\n' _)"
+}
+why() {
+  w=${1#*"$2: "}
+  case $w in *"Failed to fetch"*) w="нет связи (сеть или CORS)" ;; esac
+  echo "$w"
+}
+
+apk_once() {
   d=${1%/*}
   n=${1##*/}
   n=${n%-*-r*.apk}
@@ -289,25 +301,58 @@ apk() {
       echo "$m" > $MIR
       return 0
     fi
+    why "$e" "$m/$1" > "$(errf "$m")"
     case "$e" in
-      *": 404"*) live=1 ;;
+      *": 404"*) ;;
       *) DEAD="$DEAD $m"; continue ;;
     esac
     i=$T.i.$(echo "$m/$d" | tr -c 'a-zA-Z0-9\n' _)
-    [ -f $i ] || kt_get "$m/$d/APKINDEX.tar.gz" $i 2>/dev/null || continue
+    if [ ! -f $i ] && ! e=$(kt_get "$m/$d/APKINDEX.tar.gz" $i 2>&1); then
+      why "$e" "$m/$d/APKINDEX.tar.gz" > "$(errf "$m")"
+      continue
+    fi
     v=$(tar -xzOf $i APKINDEX 2>/dev/null | awk -v n="$n" '/^P:/ { p = substr($0, 3) } /^V:/ && p == n { print substr($0, 3); exit }')
-    if [ -n "$v" ] && kt_get "$m/$d/$n-$v.apk" "$2" 2>/dev/null; then
+    [ -n "$v" ] || { echo "нет $n в $d/APKINDEX.tar.gz" > "$(errf "$m")"; continue; }
+    if e=$(kt_get "$m/$d/$n-$v.apk" "$2" 2>&1); then
       echo "$m" > $MIR
       return 0
     fi
+    why "$e" "$m/$d/$n-$v.apk" > "$(errf "$m")"
   done
-  [ -n "$live" ] || return 2
   return 1
 }
 
+# apk путь файл: круг по зеркалам, не вышло - через паузу ещё круг, и отказавшие зеркала - снова в деле
+apk() {
+  r=1
+  while :; do
+    apk_once "$1" "$2" && return 0
+    [ $r -lt $TRIES ] || return 1
+    DEAD=
+    sleep $((r * 3))
+    r=$((r + 1))
+  done
+}
+
+# repo_get пакет файл: пакет из репозитория KotelOS, с повтором
+repo_get() {
+  r=1
+  until e=$(kt_get "$REPO/$1.tar.xz" "$2" 2>&1); do
+    why "$e" "$REPO/$1.tar.xz" > "$(errf "$REPO")"
+    [ $r -lt $TRIES ] || return 1
+    sleep $((r * 3))
+    r=$((r + 1))
+  done
+}
+
+# fail пакет: не скачался - и что ответил каждый источник (зеркала Alpine или репозиторий) в последний раз
 fail() {
   if [ -n "$q" ]; then clr; else printf '\r!\n'; fi
-  if [ "$2" = 2 ]; then kt_err "Alpine недоступен"; else kt_err "не скачать $1"; fi
+  kt_err "не скачать $1"
+  for m in $(mirrors 2> /dev/null) "$REPO"; do
+    f=$(errf "$m")
+    [ ! -f "$f" ] || printf '  %s: %s\n' "$m" "$(cat "$f")" >&2
+  done
   exit 1
 }
 
@@ -428,9 +473,9 @@ EOF
       s=$(echo "$new" | awk -v p="$p" '$1 == p { print $5 }')
       [ -n "$q" ] || printf '  %-21s %6s%s' "$p" "$(echo "$new" | awk -v p="$p" "$H"'$1 == p { print h($2) }')" "${s:+  (apk)}"
       if [ -n "$s" ]; then
-        apk "$s" "$(arc $p)" || fail "$p" $?
+        apk "$s" "$(arc $p)" || fail "$p"
       else
-        kt_get "$REPO/$p.tar.xz" "$(arc $p)" 2>/dev/null || fail "$p"
+        repo_get "$p" "$(arc $p)" || fail "$p"
       fi
       [ -n "$q" ] || printf '\r+\n'
     done
