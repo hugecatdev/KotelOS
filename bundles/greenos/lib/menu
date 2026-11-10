@@ -6,14 +6,21 @@
 # включить. «Сохранить сеанс» - kt save, ответ - herbe (ошибки - 2>/dev/stdout, без & в XML).
 # Поставленное через kt pkg add - из его .desktop (/usr/share/applications): раздел по Categories, имя, значок
 # темы hicolor или pixmaps; кроме программ, что уже есть ниже. После add и rm меню пересобирает триггер kt pkg
-# (/var/lib/kt/trigger/greenos-menu: jwm -reload)
+# (/var/lib/kt/trigger/greenos-menu: jwm -reload). «На рабочий стол» - те же программы по тем же
+# разделам: выбранная встаёт значком на стол (/usr/lib/greenos/desk add N - строка N из /tmp/.greenos-apps:
+# имя, значок, команда - их меню пишет каждый раз заново)
 d=$(mktemp -d)
 trap 'rm -rf "$d"' EXIT
 
 item() {  # item раздел программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
-  case $3 in /*) i=$3 ;; *) i=$3.png ;; esac
+  case $3 in /*) i=$3 ;; *) i=/usr/share/greenos/icons/$3.png ;; esac
   echo "$2" >> "$d/known"
   echo "<Program icon=\"$i\" label=\"$2\">${4:-$2}</Program>" >> "$d/$1"
+  desk "$1" "$2" "$i" "$(printf '%s' "${4:-$2}" | sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g')"
+}
+desk() {  # desk раздел имя значок команда: пункт «На рабочий стол» (имя - уже для XML, команда - как есть)
+  printf '%s\t%s\t%s\n' "$2" "$3" "$4" | sed 's/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&amp;/\&/g' >> "$d/apps"
+  echo "<Program icon=\"$3\" label=\"$2\">/usr/lib/greenos/desk add $(wc -l < "$d/apps")</Program>" >> "$d/desk.$1"
 }
 net() {  # net значок название значение
   echo "<Program icon=\"$1.png\" label=\"$2\">/usr/lib/greenos/net $3</Program>"
@@ -88,13 +95,16 @@ while IFS="$(printf '\t')" read -r s name icon cmd; do
           [ ! -f "$f" ] || { i=$f; break; }
         done ;;
   esac
+  raw=$cmd
   name=$(printf '%s' "$name" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
   cmd=$(printf '%s' "$cmd" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
   echo "<Program icon=\"$i\" label=\"$name\">$cmd</Program>" >> "$d/$s"
+  desk "$s" "$name" "$i" "$raw"
 done
+mv "$d/apps" /tmp/.greenos-apps
 
-menu() {  # menu раздел значок название: раздел, если в нём есть программы
-  [ ! -f "$d/$1" ] || printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$2" "$3" "$(cat "$d/$1")"
+menu() {  # menu раздел значок название [префикс файла]: раздел, если в нём есть программы
+  [ ! -f "$d/$4$1" ] || printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$2" "$3" "$(cat "$d/$4$1")"
 }
 cat <<EOF
 <?xml version="1.0"?>
@@ -114,6 +124,17 @@ $(net network-offline 'Без сети' off; net network-browser 'Только �
 </Menu>
 </Menu>
 $(menu other other Прочее)
+<Menu icon="desktop.png" label="На рабочий стол">
+$(menu office office Офис desk.)
+$(menu utilities utilities Стандартные desk.)
+$(menu internet internet Интернет desk.)
+$(menu graphics graphics Графика desk.)
+$(menu multimedia multimedia "Звук и видео" desk.)
+$(menu development development Разработка desk.)
+$(menu games games Развлечения desk.)
+$(menu system system Система desk.)
+$(menu other other Прочее desk.)
+</Menu>
 <Separator/>
 <Program icon="save.png" label="Сохранить сеанс">herbe "\$(kt save 2>/dev/stdout)"</Program>
 <Program icon="about.png" label="О системе">greenos-about</Program>

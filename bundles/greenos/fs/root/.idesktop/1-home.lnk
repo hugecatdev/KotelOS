@@ -1,6 +1,7 @@
 table Icon
   Caption: Домашняя папка
-  Command: xfe /root
+  Command[0]: xfe /root
+  Command[1]: /usr/lib/greenos/desk rm /root/.idesktop/1-home.lnk
   Icon: /usr/share/greenos/icons/home.png
   Width: 48
   Height: 48

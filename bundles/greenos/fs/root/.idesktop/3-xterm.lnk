@@ -1,6 +1,7 @@
 table Icon
   Caption: xterm
-  Command: xterm
+  Command[0]: xterm
+  Command[1]: /usr/lib/greenos/desk rm /root/.idesktop/3-xterm.lnk
   Icon: /usr/share/pixmaps/xterm-color_48x48.xpm
   Width: 48
   Height: 48

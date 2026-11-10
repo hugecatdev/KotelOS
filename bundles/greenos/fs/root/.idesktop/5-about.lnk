@@ -1,6 +1,7 @@
 table Icon
   Caption: О системе
-  Command: greenos-about
+  Command[0]: greenos-about
+  Command[1]: /usr/lib/greenos/desk rm /root/.idesktop/5-about.lnk
   Icon: /usr/share/greenos/icons/about.png
   Width: 48
   Height: 48

@@ -1,0 +1,46 @@
+#!/bin/sh
+# значки рабочего стола (idesk, ~/.idesktop/*.lnk):
+#   add N     - программу N из /tmp/.greenos-apps (её пишет меню, раздел «На рабочий стол») - на стол, в
+#               первое свободное место раскладки
+#   rm ФАЙЛ   - убрать значок (правый двойной щелчок по нему, Execute[1] в ~/.ideskrc)
+#   layout О  - разложить все: стоя (tall) - сеткой по три сверху (кубик ниже), иначе - столбцом слева;
+#               только когда ориентация сменилась - перетащенные мышью значки остаются на местах
+# idesk читает значки только при запуске - после любого из них он перезапускается
+D=$HOME/.idesktop
+
+pos() {  # pos место ориентация
+  if [ "$2" = tall ]; then echo "$((32 + $1 % 3 * 110)) $((14 + $1 / 3 * 96))"; else echo "40 $((20 + $1 * 92))"; fi
+}
+
+case $1 in
+  add)
+    IFS="$(printf '\t')" read -r label icon cmd <<EOF
+$(sed -n "${2}p" /tmp/.greenos-apps)
+EOF
+    o=$(cat /tmp/.greenos-desk)
+    used=$(awk '/^  X: / { x = $2 } /^  Y: / { print x " " $2 }' "$D"/*.lnk)
+    i=0
+    while printf '%s\n' "$used" | grep -qxF "$(pos $i "$o")"; do i=$((i + 1)); done
+    set -- $(pos $i "$o")
+    f=$D/$(ls "$D" | wc -l)-$(printf '%s' "$label" | tr -c 'a-zA-Z0-9' _).lnk
+    printf 'table Icon\n  Caption: %s\n  Command[0]: %s\n  Command[1]: /usr/lib/greenos/desk rm %s\n  Icon: %s\n  Width: 48\n  Height: 48\n  X: %s\n  Y: %s\nend\n' \
+      "$label" "$cmd" "$f" "$icon" "$1" "$2" > "$f"
+    ;;
+  rm)
+    rm "$2"
+    ;;
+  layout)
+    if [ "$(cat /tmp/.greenos-desk 2> /dev/null)" != "$2" ]; then
+      i=0
+      for f in "$D"/*.lnk; do
+        set -- "$1" "$2" $(pos $i "$2")
+        sed -i "s/^  X: .*/  X: $3/; s/^  Y: .*/  Y: $4/" "$f"
+        i=$((i + 1))
+      done
+      echo "$2" > /tmp/.greenos-desk
+    fi
+    ;;
+esac
+pkill -x idesk
+mkdir -p "$HOME/.local/share/Trash/files"
+cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &

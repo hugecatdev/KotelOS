@@ -13,19 +13,8 @@ elif [ $((w * 1200)) -lt $((h * 1920)) ]; then
 else
   feh --no-fehbg --bg-fill --geometry +0-0 "$d/greenos.jpg"
 fi
-pkill -x idesk
-mkdir -p "$HOME/.local/share/Trash/files"
-# раскладка значков - только когда экран повернули: стоя - сеткой по три сверху (кубик ниже), иначе -
-# столбцом слева; перетащенные мышью значки при простой смене размера остаются на местах
+# значки рабочего стола - заново (idesk берёт подложку подписей с обоев на экране); раскладка - только
+# когда экран повернули (/usr/lib/greenos/desk)
 o=wide
 [ "$w" -ge "$h" ] || o=tall
-if [ "$(cat /tmp/.greenos-desk 2>/dev/null)" != $o ]; then
-  i=0
-  for f in "$HOME"/.idesktop/*.lnk; do
-    if [ $o = tall ]; then x=$((32 + i % 3 * 110)) y=$((14 + i / 3 * 96)); else x=40 y=$((20 + i * 92)); fi
-    sed -i "s/^  X: .*/  X: $x/; s/^  Y: .*/  Y: $y/" "$f"
-    i=$((i + 1))
-  done
-  echo $o > /tmp/.greenos-desk
-fi
-cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
+/usr/lib/greenos/desk layout $o

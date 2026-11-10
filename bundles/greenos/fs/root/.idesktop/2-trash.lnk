@@ -1,6 +1,7 @@
 table Icon
   Caption: Корзина
-  Command: xfe /root/.local/share/Trash/files
+  Command[0]: xfe /root/.local/share/Trash/files
+  Command[1]: /usr/lib/greenos/desk rm /root/.idesktop/2-trash.lnk
   Icon: /usr/share/greenos/icons/trash.png
   Width: 48
   Height: 48
