@@ -76,6 +76,14 @@ def main():
     subprocess.run([a.strip, os.path.join(b, "python3.12")], check=True)
     os.symlink("python3.12", os.path.join(b, "python3"))
     os.symlink("python3", os.path.join(b, "python"))
+    # питон на диске (kt pkg add -d) берёт sys.prefix от настоящего пути программы - /mnt/browser/pkg/usr
+    # - и читает только свой site-packages: без этой строки он не видит ни kt.pth образа (/usr/lib/kt-python),
+    # ни пакетов, поставленных в память. Питону в памяти корень уже в sys.path - строка ничего не делает
+    # (и не зацикливается: addsitedir корня снова прочитал бы этот же .pth)
+    sp = os.path.join(a.out, "minipython", L, "site-packages")
+    os.makedirs(sp, exist_ok=True)
+    with open(os.path.join(sp, "kt-root.pth"), "w") as f:
+        f.write("import sys, site; '/%s/site-packages' in sys.path or site.addsitedir('/%s/site-packages')\n" % (L, L))
     for n, (cmd, mod) in BIN.items():
         b = os.path.join(a.out, n, "usr/bin")
         os.makedirs(b)

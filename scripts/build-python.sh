@@ -14,6 +14,19 @@ ARCH="-march=pentium4 -mtune=generic -mfpmath=sse -fno-asynchronous-unwind-table
 LTO="-fno-semantic-interposition -flto -ffat-lto-objects -flto-partition=none"
 
 [ -x $TC/bin/i686-linux-musl-gcc ] || { echo "нет тулчейна, сначала scripts/build-busybox.sh"; exit 1; }
+
+# раскладка собранного по пакетам (scripts/pysplit.py) и пустая libpython для программ, что ищут её по имени;
+# --split - только это, из прошлой сборки ($B/stage), без пересборки питона
+split() {
+  python3 scripts/pysplit.py $B/stage --strip $TC/bin/i686-linux-musl-strip
+  printf '' | $TC/bin/i686-linux-musl-gcc -shared -nostdlib -Wl,-soname,libpython3.12.so.1.0 -o build/packages/python3/usr/lib/libpython3.12.so.1.0 -x c -
+  $TC/bin/i686-linux-musl-strip build/packages/python3/usr/lib/libpython3.12.so.1.0
+}
+if [ "$1" = --split ]; then
+  [ -d $B/stage ] || { echo "нет $B/stage - сначала scripts/build-python.sh"; exit 1; }
+  split
+  exit 0
+fi
 [ -x $LD ] || { echo "нет build/packages/musl, сначала scripts/get-packages.sh"; exit 1; }
 [ -f $CACHE/Python-$VER.tar.xz ] || curl -fsSL https://www.python.org/ftp/python/$VER/Python-$VER.tar.xz -o $CACHE/Python-$VER.tar.xz
 rm -rf $SRC
@@ -135,6 +148,4 @@ rm -rf stage
 make install DESTDIR=$B/stage LINKFORSHARED="-Xlinker -export-dynamic -no-pie" > inst.log 2>&1 || { tail -30 inst.log; exit 1; }
 cd - > /dev/null
 
-python3 scripts/pysplit.py $B/stage --strip $TC/bin/i686-linux-musl-strip
-printf '' | i686-linux-musl-gcc -shared -nostdlib -Wl,-soname,libpython3.12.so.1.0 -o build/packages/python3/usr/lib/libpython3.12.so.1.0 -x c -
-i686-linux-musl-strip build/packages/python3/usr/lib/libpython3.12.so.1.0
+split
