@@ -1,0 +1,490 @@
+JIT: обращения к памяти повторно используют проверенную страницу в пределах блока (эксперимент, в сборку не входит)
+
+Обращение к памяти - около 14 машинных команд (поиск в TLB, проверка флагов и границы
+страницы), обращений в сессии X 835 млн. Здесь обращение, на быстром пути нашедшее страницу
+действительной, оставляет её в паре локальных переменных (codegen::MemSlot, по базовому регистру
+адреса: esp, ebp, указатель), и следующее обращение блока от того же регистра сначала проверяет
+одним вычитанием и сравнением, что лежит в той же странице, и берёт трансляцию готовой. Вызов
+медленного пути отравляет записи на ходу, любой другой вызов сбрасывает их при компиляции, в
+конце блока они сбрасываются; страница, проверенная для чтения, для записи не годится.
+Подготовка записи, которой никто в блоке не воспользовался, затирается nop'ами задним числом
+(WasmBuilder::replace_with_nops) - без этого выигрыша не было вовсе. set_jit_config(9, 0) -
+выключить.
+
+Правильность: tests/jitflags.c, jitfn, jitpf. Счётчики на прогретой сессии X: под повторное
+использование идёт 35% обращений, попаданий 98.6%. Микротест: чтение 0.53 -> 0.39 нс, запись
+0.51 -> 0.35, push/pop 0.82 -> 0.37. tests/pair.py: сессии X 1.00 / 0.98 / 0.91 по времени (две
+копии базы 1.00 / 1.01 / 0.97), Lua 0.93, цикл CPython 0.95, sha256 0.96, gzip 0.98, запуск и
+импорт CPython 1.02-1.03, в среднем по счётным 0.99; процессор вкладки +3% в среднем, на
+холодной сессии X и загрузке ядра +6-8% (модули крупнее). То есть размен: горячие циклы быстрее
+на 4-7%, холодный запуск чуть медленнее - поэтому в сборку не включено.
+
+Применять поверх patches/v86 01-16: patch -p1 в дереве .cache/v86-REV.
+
+--- a/src/rust/wasmgen/wasm_builder.rs
++++ b/src/rust/wasmgen/wasm_builder.rs
+@@ -78,6 +78,9 @@
+     // engine moves unlikely paths out of line and spills registers there, not on the fast path
+     branch_hints: Vec<(u32, bool)>,
+ 
++    // number of calls generated so far (codegen::MemSlot: a call may change the tlb)
++    call_count: u32,
++
+     idx_import_table_size: usize, // for rewriting once finished
+     idx_import_count: usize,      // for rewriting once finished
+     idx_import_entries: usize,    // for searching the imports
+@@ -125,6 +128,7 @@
+             output: Vec::with_capacity(256),
+             instruction_body: Vec::with_capacity(256),
+             branch_hints: Vec::new(),
++            call_count: 0,
+ 
+             idx_import_table_size: 0,
+             idx_import_count: 0,
+@@ -679,6 +683,10 @@
+         self.instruction_body.push(local.idx());
+         local
+     }
++    pub fn set_local_i64(&mut self, local: &WasmLocalI64) {
++        self.instruction_body.push(op::OP_SETLOCAL);
++        self.instruction_body.push(local.idx());
++    }
+     pub fn get_local_i64(&mut self, local: &WasmLocalI64) {
+         self.instruction_body.push(op::OP_GETLOCAL);
+         self.instruction_body.push(local.idx());
+@@ -861,6 +869,7 @@
+     pub fn leu_i32(&mut self) { self.instruction_body.push(op::OP_I32LEU); }
+ 
+     pub fn gtu_i64(&mut self) { self.instruction_body.push(op::OP_I64GTU); }
++    pub fn sub_i64(&mut self) { self.instruction_body.push(op::OP_I64SUB); }
+ 
+     pub fn reinterpret_i32_as_f32(&mut self) {
+         self.instruction_body.push(op::OP_F32REINTERPRETI32);
+@@ -956,6 +965,19 @@
+         self.instruction_body.push(op::OP_BR);
+         self.write_label(label);
+     }
++    /// Replace a part of the function body with nops. The part has to leave the stack as it
++    /// found it, except for a tee_local, and nothing may read what it has set
++    pub fn replace_with_nops(&mut self, from: u32, to: u32) {
++        for b in &mut self.instruction_body[from as usize..to as usize] {
++            *b = op::OP_NOP;
++        }
++    }
++    /// br out of the n-th enclosing block (0: the innermost)
++    pub fn br_outer(&mut self, n: u32) {
++        dbg_assert!((n as usize) < self.label_stack.len());
++        self.instruction_body.push(op::OP_BR);
++        write_leb_u32(&mut self.instruction_body, n);
++    }
+     pub fn br_if(&mut self, label: Label) {
+         self.instruction_body.push(op::OP_BRIF);
+         self.write_label(label);
+@@ -982,7 +1004,12 @@
+         );
+     }
+ 
++    pub fn call_count(&self) -> u32 { self.call_count }
++    /// How many blocks, loops and ifs are open
++    pub fn label_depth(&self) -> usize { self.label_stack.len() }
++
+     fn call_fn(&mut self, name: &str, function: FunctionType) {
++        self.call_count += 1;
+         let i = self.get_fn_idx(name, function);
+         self.instruction_body.push(op::OP_CALL);
+         write_leb_u32(&mut self.instruction_body, i as u32);
+--- a/src/rust/modrm.rs
++++ b/src/rust/modrm.rs
+@@ -17,6 +17,16 @@
+     is_16: bool,
+ }
+ impl ModrmByte {
++    /// The register the address is based on, if any (for codegen::MemSlot)
++    pub fn base_reg(&self) -> Option<u32> {
++        if self.is_16 {
++            None
++        }
++        else {
++            self.first_reg
++                .or(if self.shift == 0 { self.second_reg } else { None })
++        }
++    }
+     pub fn is_nop(&self, reg: u32) -> bool {
+         self.first_reg == Some(reg)
+             && self.second_reg.is_none()
+--- a/src/rust/codegen.rs
++++ b/src/rust/codegen.rs
+@@ -471,6 +471,7 @@
+ }
+ 
+ pub fn gen_modrm_resolve(ctx: &mut JitContext, modrm_byte: ModrmByte) {
++    ctx.mem_base = modrm_byte.base_reg();
+     modrm::gen(ctx, modrm_byte, 0)
+ }
+ pub fn gen_modrm_resolve_with_local(
+@@ -479,6 +480,7 @@
+     gen: &dyn Fn(&mut JitContext, &WasmLocal),
+ ) {
+     if let Some(r) = modrm::get_as_reg_index_if_possible(ctx, &modrm_byte) {
++        ctx.mem_base = Some(r);
+         gen(ctx, &ctx.reg(r));
+     }
+     else {
+@@ -639,6 +641,181 @@
+     )
+ }
+ 
++// A page that a memory access of the current basic block has found valid on its fast path, kept
++// for the following accesses based on the same register (most are relative to esp, ebp or one
++// pointer): such an access only checks that it lies inside that page and uses the translation
++// directly - a subtraction and a comparison instead of the walk through the tlb.
++//
++// The translation stays valid while the tlb does, and only calls of the emulator change it. The
++// slow path of an access poisons all the slots at run time (page is set to a value no address is
++// near); any other call drops them at compile time (WasmBuilder::call_count). A slot is created
++// and used only at the nesting depth of the basic block itself, so its creation dominates its
++// uses, and is dropped at the end of the block. A page checked for reading is not used for
++// writing
++pub struct MemSlot {
++    // address of the page, zero extended; MEM_SLOT_POISON if not valid
++    page: WasmLocalI64,
++    // tlb entry of the page without the flags: host address = address ^ host
++    host: WasmLocal,
++    write: bool,
++    // The code that has filled the slot and that no access has used yet (ranges of the function
++    // body): if none does, it is replaced with nops when the slot is dropped, so only accesses
++    // that are followed by another one pay for the slot
++    unused: Vec<(u32, u32)>,
++}
++const MEM_SLOT_POISON: i64 = 1 << 40;
++
++pub fn gen_mem_slots_begin(ctx: &mut JitContext) {
++    gen_mem_slots_end(ctx);
++    ctx.mem_base = None;
++    ctx.mem_calls = ctx.builder.call_count();
++    ctx.mem_depth = ctx.builder.label_depth();
++}
++pub fn gen_mem_slots_end(ctx: &mut JitContext) {
++    for i in 0..ctx.mem_slots.len() {
++        if let Some(slot) = ctx.mem_slots[i].take() {
++            for (from, to) in slot.unused {
++                ctx.builder.replace_with_nops(from, to);
++            }
++            ctx.builder.free_local_i64(slot.page);
++            ctx.builder.free_local(slot.host);
++        }
++    }
++}
++
++struct MemAccess {
++    // the slot (base register) this access fills
++    slot: Option<usize>,
++    // the access first tries the slot: local for the host address, set on both paths
++    reuse: Option<WasmLocal>,
++}
++
++/// Before the tlb lookup of an access: try the slot of the base register
++fn gen_mem_access_begin(
++    ctx: &mut JitContext,
++    address_local: &WasmLocal,
++    bytes: u32,
++    is_write: bool,
++) -> MemAccess {
++    let base = ctx.mem_base.take();
++    if ctx.builder.call_count() != ctx.mem_calls {
++        // a call since the last access: the tlb may be different
++        gen_mem_slots_end(ctx);
++        ctx.mem_calls = ctx.builder.call_count();
++    }
++    let slot = match base {
++        Some(r)
++            if unsafe { crate::jit::JIT_MEM_REUSE }
++                && ctx.builder.label_depth() == ctx.mem_depth =>
++        {
++            Some(r as usize)
++        },
++        _ => None,
++    };
++    let mut reuse = None;
++    if let Some(s) = slot.and_then(|i| ctx.mem_slots[i].as_mut()) {
++        if s.write || !is_write {
++            // what has filled the slot is used now
++            s.unused.clear();
++            // outer block: closed in gen_mem_access_end; inner block: the lookup follows
++            ctx.builder.block_void();
++            let lookup = ctx.builder.block_void();
++            ctx.builder.get_local(address_local);
++            ctx.builder.extend_unsigned_i32_to_i64();
++            ctx.builder.get_local_i64(&s.page);
++            ctx.builder.sub_i64();
++            ctx.builder.const_i64(0x1000 - bytes as i64);
++            ctx.builder.gtu_i64();
++            ctx.builder.br_if_hint(lookup, false);
++            ctx.builder.get_local(address_local);
++            ctx.builder.get_local(&s.host);
++            ctx.builder.xor_i32();
++            let host_address = ctx.builder.set_new_local();
++            // out of the outer block
++            ctx.builder.br_outer(1);
++            ctx.builder.block_end();
++            reuse = Some(host_address);
++        }
++    }
++    MemAccess { slot, reuse }
++}
++
++/// Right before the branch to the fast path (the condition is on the stack): the slot gets the
++/// page of this access - if the slow path is taken, it is poisoned there
++fn gen_mem_access_fill(
++    ctx: &mut JitContext,
++    access: &MemAccess,
++    address_local: &WasmLocal,
++    is_write: bool,
++) {
++    let i = match access.slot {
++        Some(i) => i,
++        None => return,
++    };
++    let from = ctx.builder.instruction_body_length();
++    ctx.builder.get_local(address_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    ctx.builder.extend_unsigned_i32_to_i64();
++    match &mut ctx.mem_slots[i] {
++        Some(slot) => {
++            ctx.builder.set_local_i64(&slot.page);
++            slot.write = is_write;
++            slot.unused
++                .push((from, ctx.builder.instruction_body_length()));
++        },
++        None => {
++            let page = ctx.builder.set_new_local_i64();
++            ctx.builder.const_i32(0);
++            let host = ctx.builder.set_new_local();
++            ctx.mem_slots[i] = Some(MemSlot {
++                page,
++                host,
++                write: is_write,
++                unused: vec![(from, ctx.builder.instruction_body_length())],
++            });
++        },
++    }
++}
++
++/// On the slow path, after its call: the tlb may have changed, and what the call returned is
++/// only good for this access
++fn gen_mem_access_slow(ctx: &mut JitContext) {
++    for i in 0..ctx.mem_slots.len() {
++        if let Some(slot) = &ctx.mem_slots[i] {
++            ctx.builder.const_i64(MEM_SLOT_POISON);
++            ctx.builder.set_local_i64(&slot.page);
++        }
++    }
++    ctx.mem_calls = ctx.builder.call_count();
++}
++
++/// After the lookup: leaves the host address on the stack
++fn gen_mem_access_end(
++    ctx: &mut JitContext,
++    access: MemAccess,
++    entry_local: &WasmLocal,
++    address_local: &WasmLocal,
++) {
++    ctx.builder.get_local(entry_local);
++    ctx.builder.const_i32(!0xFFF);
++    ctx.builder.and_i32();
++    if let Some(slot) = access.slot.and_then(|i| ctx.mem_slots[i].as_mut()) {
++        let from = ctx.builder.instruction_body_length();
++        ctx.builder.tee_local(&slot.host);
++        slot.unused
++            .push((from, ctx.builder.instruction_body_length()));
++    }
++    ctx.builder.get_local(address_local);
++    ctx.builder.xor_i32();
++    if let Some(host_address) = access.reuse {
++        ctx.builder.set_local(&host_address);
++        ctx.builder.block_end();
++        ctx.builder.get_local(&host_address);
++        ctx.builder.free_local(host_address);
++    }
++}
++
+ fn gen_safe_read(
+     ctx: &mut JitContext,
+     bits: BitSize,
+@@ -654,6 +831,8 @@
+     //   if page_fault: goto exit-with-pagefault
+     //   fast: mem[(entry & ~0xFFF) ^ addr]
+ 
++    let access = gen_mem_access_begin(ctx, address_local, bits.bytes(), false);
++
+     let cont = ctx.builder.block_void();
+     ctx.builder.get_local(&address_local);
+ 
+@@ -692,6 +871,7 @@
+     ctx.builder.const_i32(TLB_VALID as i32);
+     ctx.builder.eq_i32();
+ 
++    gen_mem_access_fill(ctx, &access, address_local, false);
+     ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+@@ -735,16 +915,13 @@
+     }
+ 
+     ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
++    gen_mem_access_slow(ctx);
+ 
+     ctx.builder.block_end();
+ 
+     gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_READ_FAST); // XXX: Both fast and slow
+ 
+-    ctx.builder.get_local(&entry_local);
+-    ctx.builder.const_i32(!0xFFF);
+-    ctx.builder.and_i32();
+-    ctx.builder.get_local(&address_local);
+-    ctx.builder.xor_i32();
++    gen_mem_access_end(ctx, access, &entry_local, address_local);
+ 
+     // where_to_write is only used by dqword
+     dbg_assert!((where_to_write != None) == (bits == BitSize::DQWORD));
+@@ -795,6 +972,7 @@
+     // XXX: Currently does not use ctx.start_of_current_instruction, but rather assumes that eip is
+     //      already correct (pointing at the current instruction)
+ 
++    ctx.mem_base = None;
+     let cont = ctx.builder.block_void();
+     ctx.builder.get_local(&address_local);
+ 
+@@ -874,6 +1052,8 @@
+     //   if page_fault: goto exit-with-pagefault
+     //   fast: mem[(entry & ~0xFFF) ^ addr] <- value
+ 
++    let access = gen_mem_access_begin(ctx, address_local, bits.bytes(), true);
++
+     let cont = ctx.builder.block_void();
+     ctx.builder.get_local(&address_local);
+ 
+@@ -908,6 +1088,7 @@
+     ctx.builder.const_i32(TLB_VALID as i32);
+     ctx.builder.eq_i32();
+ 
++    gen_mem_access_fill(ctx, &access, address_local, true);
+     ctx.builder.br_if_hint(cont, true);
+ 
+     if cfg!(feature = "profiler") {
+@@ -966,16 +1147,13 @@
+     }
+ 
+     ctx.builder.br_if_hint(ctx.exit_with_fault_label, false);
++    gen_mem_access_slow(ctx);
+ 
+     ctx.builder.block_end();
+ 
+     gen_profiler_stat_increment(ctx.builder, profiler::stat::SAFE_WRITE_FAST); // XXX: Both fast and slow
+ 
+-    ctx.builder.get_local(&entry_local);
+-    ctx.builder.const_i32(!0xFFF);
+-    ctx.builder.and_i32();
+-    ctx.builder.get_local(&address_local);
+-    ctx.builder.xor_i32();
++    gen_mem_access_end(ctx, access, &entry_local, address_local);
+ 
+     match value_local {
+         GenSafeWriteValue::I32(local) => ctx.builder.get_local(local),
+@@ -1031,6 +1209,7 @@
+     //   if !can_use_fast_path { safe_write_jit_slow(addr, value, instruction_pointer) }
+     //   mem[(entry & ~0xFFF) ^ addr] <- value
+ 
++    ctx.mem_base = None;
+     let cont = ctx.builder.block_void();
+     ctx.builder.get_local(address_local);
+ 
+@@ -1368,6 +1547,7 @@
+ }
+ 
+ pub fn gen_pop32s_ss32(ctx: &mut JitContext) {
++    ctx.mem_base = Some(regs::ESP);
+     if !ctx.cpu.has_flat_segmentation() {
+         gen_get_reg32(ctx, regs::ESP);
+         gen_get_ss_offset(ctx);
+@@ -1551,6 +1731,7 @@
+ }
+ 
+ pub fn gen_push32(ctx: &mut JitContext, value_local: &WasmLocal) {
++    ctx.mem_base = Some(regs::ESP);
+     if ctx.cpu.ssize_32() {
+         gen_get_reg32(ctx, regs::ESP);
+     }
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -84,6 +84,10 @@
+ // less branches will generate if-else, more will generate brtable
+ pub const BRTABLE_CUTOFF: usize = 10;
+ 
++// Memory accesses based on the same register reuse the page checked by an earlier access of the
++// basic block, see codegen::MemSlot
++pub static mut JIT_MEM_REUSE: bool = true;
++
+ // needs to be synced to const.js
+ pub const WASM_TABLE_SIZE: u32 = 900;
+ 
+@@ -353,6 +357,11 @@
+     pub previous_instruction: Instruction,
+     pub instruction_counter: WasmLocal,
+     pub wasm_table_index: WasmTableIndex,
++    // see codegen::MemSlot
++    pub mem_base: Option<u32>,
++    pub mem_slots: [Option<codegen::MemSlot>; 8],
++    pub mem_calls: u32,
++    pub mem_depth: usize,
+ }
+ impl<'a> JitContext<'a> {
+     pub fn reg(&self, i: u32) -> WasmLocal {
+@@ -1262,6 +1271,10 @@
+         previous_instruction: Instruction::Other,
+         instruction_counter,
+         wasm_table_index,
++        mem_base: None,
++        mem_slots: [None, None, None, None, None, None, None, None],
++        mem_calls: 0,
++        mem_depth: 0,
+     };
+ 
+     let entry_blocks = {
+@@ -2093,7 +2106,10 @@
+     ctx.current_instruction = Instruction::Other;
+     ctx.previous_instruction = Instruction::Other;
+ 
++    codegen::gen_mem_slots_begin(ctx);
++
+     loop {
++        ctx.mem_base = None;
+         let mut instruction = 0;
+         if cfg!(feature = "profiler") {
+             instruction = memory::read32s(ctx.cpu.eip) as u32;
+@@ -2154,6 +2170,8 @@
+ 
+         ctx.previous_instruction = mem::replace(&mut ctx.current_instruction, Instruction::Other);
+     }
++
++    codegen::gen_mem_slots_end(ctx);
+ }
+ 
+ pub fn jit_increase_hotness_and_maybe_compile(
+@@ -2516,6 +2534,7 @@
+         2 => JIT_USE_LOOP_SAFETY = value != 0,
+         3 => MAX_EXTRA_BASIC_BLOCKS = value,
+         5 => JIT_THRESHOLD = value,
++        9 => JIT_MEM_REUSE = value != 0,
+         _ => dbg_assert!(false),
+     }
+ }
+@@ -2528,6 +2547,7 @@
+         2 => JIT_USE_LOOP_SAFETY as u32,
+         3 => MAX_EXTRA_BASIC_BLOCKS as u32,
+         5 => JIT_THRESHOLD,
++        9 => JIT_MEM_REUSE as u32,
+         _ => 0,
+     }
+ }
