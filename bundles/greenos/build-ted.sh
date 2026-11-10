@@ -4,6 +4,7 @@
 # Исходник - официальное зеркало автора (ftp.nluug.nl/pub/editors/ted, сумма ниже), GPL. Тулчейн musl на
 # sysroot от build.sh (сначала он) + заголовки motif, pcre, libpaper и картинок. Данные Ted (метрики
 # шрифтов, справка, настройки) - его TedDatadir.tar без английского словаря проверки орфографии (4.4 МБ).
+# ted-time64.patch - 64-битный time_t в musl (без него File > New падает).
 # Результат -> bundles/greenos/root
 set -e
 cd "$(dirname "$0")/../.."
@@ -25,6 +26,7 @@ S=$B/Ted-$V
 rm -rf $S
 mkdir -p $B $OUT/usr/bin $OUT/usr/share/Ted
 tar -xzf $CACHE/$f -C $B
+for p in bundles/greenos/ted-*.patch; do patch -d $S -p1 -s < "$p"; done
 
 python3 - "$SR" <<'EOF'
 import sys
@@ -48,8 +50,10 @@ export CC="i686-linux-musl-gcc -march=pentium4 -mtune=generic" CFLAGS="-Os -w"
 export CPPFLAGS="-I$SR/usr/include -I$SR/usr/include/freetype2"
 export LDFLAGS="-s -L$SR/usr/lib -Wl,-rpath-link,$SR/usr/lib:$SR/lib -Wl,--as-needed"
 export PKG_CONFIG_LIBDIR=$B/pc:$SR/usr/lib/pkgconfig:$SR/usr/share/pkgconfig PKG_CONFIG_SYSROOT_DIR=$SR
+# --datadir явно: иначе configure Ted вписывает в программу путь "${datarootdir}/Ted" как есть, и Ted не
+# видит ни своих настроек (Ted.properties), ни справки, ни метрик шрифтов
 make -C $S -s compile.shared \
-  CONFIGURE_OPTIONS="--with-MOTIF --prefix=/usr --host=i686-linux-musl --x-includes=$SR/usr/include --x-libraries=$SR/usr/lib"
+  CONFIGURE_OPTIONS="--with-MOTIF --prefix=/usr --datadir=/usr/share --host=i686-linux-musl --x-includes=$SR/usr/include --x-libraries=$SR/usr/lib"
 cp $S/Ted/Ted $OUT/usr/bin/Ted
 tar -xf $S/tedPackage/TedDatadir.tar -C $OUT/usr/share/Ted --exclude 'dfa/*'
 echo "Ted $(du -h $OUT/usr/bin/Ted | cut -f1): $($TC/bin/i686-linux-musl-readelf -d $OUT/usr/bin/Ted | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"

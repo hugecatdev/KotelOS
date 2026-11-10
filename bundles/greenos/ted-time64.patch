@@ -1,0 +1,14 @@
+Ted 2013 года считает, что time_t - это long. В musl на i386 time_t 64-битный, и "%ld" брал только
+его половину: аргументы съезжали, на место %s (расширение файла журнала правок) попадал 0 - File > New
+падал в sioOutVPrintf на нулевом указателе.
+
+--- a/docEdit/docEditTrace.c
++++ b/docEdit/docEditTrace.c
+@@ -240,7 +240,7 @@
+ 	int		fd;
+
+ 	utilMemoryBufferPrintf( &try, "/tmp/%ld-%d.%s",
+-						    now, turn, extension );
++						    (long)now, turn, extension );
+
+ 	fd= sioFdOpenFile( &try, read, write, append, create, exclusive );

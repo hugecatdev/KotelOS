@@ -50,7 +50,8 @@ XTerm*color14: #7ad8ca
 XTerm*color15: #ffffff
 
 ! Ted (Motif): меню и диалоги - Cantarell через Xft, как у остальных программ, а не растровый fixed;
-! цвета - общие (*background выше)
+! цвета - общие (*background выше). Шрифт нового документа, бумага и единицы - не ресурсы X, а
+! /usr/share/Ted/Ted.properties (fs)
 Ted*renderTable: variable
 Ted*renderTable.variable.fontType: FONT_IS_XFT
 Ted*renderTable.variable.fontName: Cantarell
