@@ -5,10 +5,5 @@ case $1 in
   fetch) what="Только через браузер" ;;
   *) what="Интернет через ${1#*://}" ;;
 esac
-what=${what%/}
-if out=$(kt net "$1" 2>&1); then
-  addr=$(printf '%s\n' "$out" | sed -n 's/^  \([0-9.]*\)  в сети релея$/адрес \1/p')
-  herbe "$what" ${addr:+"$addr"}
-else
-  herbe "Сеть не переключилась" "$out"
-fi
+addr=$(kt net "$1" | sed -n 's/^  \([0-9.]*\)  в сети релея$/адрес \1/p')
+herbe "${what%/}" ${addr:+"$addr"}

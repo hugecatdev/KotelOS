@@ -9,7 +9,7 @@
 # (idesk - build-idesk.sh); с GitHub - herbe (уведомления), xroach и oneko (build-extras.sh), системный
 # монитор xosview (build-xosview.sh); рисовалка AzPainter (официальный GitLab автора - build-azpainter.sh);
 # текстовый процессор Ted на Motif (официальное зеркало автора - build-ted.sh; .rtf из Xfe - в нём):
-# меню берёт то, что установлено. KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
+# меню - эти программы, без проверок «а вдруг нет». KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
 # подсказки kt при входе (fs/etc/profile.d/hints.sh пустой - их нет и на экране снимка, --prep rm - и файла нет) и
 # os-release (VERSION_ID - прежний, его показывает kt); kt-xclipd (общий с браузером буфер) остаётся.
 # Не пакеты: JWM и greenos-about (bundles/greenos/root - собирает build.sh, в git не идёт), тема,

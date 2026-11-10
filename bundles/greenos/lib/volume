@@ -8,7 +8,6 @@ unmute() { amixer -q sset Master "$(cat $saved)"; rm $saved; }
 case $1 in
   +|-) [ ! -f $saved ] || unmute; amixer -q sset Master "1$1" ;;
   mute) if [ -f $saved ]; then unmute; else level > $saved; amixer -q sset Master 0; fi ;;
-  *) echo "volume +|-|mute" >&2; exit 1 ;;
 esac
 if [ -f $saved ]; then v="$(cat $saved)!"; else v=$(level); fi
-[ ! -p /tmp/.xob ] || echo "$v" > /tmp/.xob
+echo "$v" > /tmp/.xob

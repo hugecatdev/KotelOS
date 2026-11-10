@@ -65,14 +65,10 @@ static void load_logo(void) {
   png_image img;
   memset(&img, 0, sizeof img);
   img.version = PNG_IMAGE_VERSION;
-  if (!png_image_begin_read_from_file(&img, LOGO))
-    return;
+  png_image_begin_read_from_file(&img, LOGO);
   img.format = PNG_FORMAT_BGRA;
   unsigned char *buf = malloc(PNG_IMAGE_SIZE(img));
-  if (!buf || !png_image_finish_read(&img, NULL, buf, 0, NULL)) {
-    free(buf);
-    return;
-  }
+  png_image_finish_read(&img, NULL, buf, 0, NULL);
   for (unsigned i = 0; i < img.width * img.height; i++) {  /* XRender ждёт цвет, умноженный на альфу */
     unsigned char *p = buf + i * 4;
     for (int k = 0; k < 3; k++)
@@ -151,8 +147,7 @@ static void draw(void) {
   XFillRectangle(dpy, win, gc, 0, 0, W, H);
   XSetForeground(dpy, gc, px("#eef3ea"));
   XFillRectangle(dpy, win, gc, 0, 0, 150, H);
-  if (logo)
-    XRenderComposite(dpy, PictOpOver, logo, None, XftDrawPicture(xd), 0, 0, 0, 0, (150 - logo_w) / 2, 34, logo_w, logo_h);
+  XRenderComposite(dpy, PictOpOver, logo, None, XftDrawPicture(xd), 0, 0, 0, 0, (150 - logo_w) / 2, 34, logo_w, logo_h);
   text(f_big, &c_text, 172, 58, name);
   text(f_mid, &c_green, 172, 84, version);
   XSetForeground(dpy, gc, px("#dbe5d3"));
@@ -196,10 +191,7 @@ static int inside(int x, int y) {
 
 int main(void) {
   setlocale(LC_ALL, "");
-  if (!(dpy = XOpenDisplay(NULL))) {
-    fprintf(stderr, "greenos-about: нет X (DISPLAY)\n");
-    return 1;
-  }
+  dpy = XOpenDisplay(NULL);
   scr = DefaultScreen(dpy);
   read_info();
   win = XCreateSimpleWindow(dpy, RootWindow(dpy, scr), 0, 0, W, H, 0, 0, px("#fbfcfa"));

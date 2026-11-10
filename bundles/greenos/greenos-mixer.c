@@ -89,14 +89,10 @@ static void load_icon(Icon *ic, const char *path) {
   png_image im;
   memset(&im, 0, sizeof im);
   im.version = PNG_IMAGE_VERSION;
-  if (!png_image_begin_read_from_file(&im, path))
-    return;
+  png_image_begin_read_from_file(&im, path);
   im.format = PNG_FORMAT_RGBA;
   unsigned char *src = malloc(PNG_IMAGE_SIZE(im));
-  if (!src || !png_image_finish_read(&im, NULL, src, 0, NULL)) {
-    free(src);
-    return;
-  }
+  png_image_finish_read(&im, NULL, src, 0, NULL);
   ic->w = im.width / 2;
   ic->h = im.height / 2;
   ic->rgba = malloc(ic->w * ic->h * 4);
@@ -118,7 +114,7 @@ static void load_icon(Icon *ic, const char *path) {
 }
 
 static void icon(Icon *ic, int x, int y) {
-  for (int j = 0; ic->rgba && j < ic->h; j++)
+  for (int j = 0; j < ic->h; j++)
     for (int i = 0; i < ic->w; i++) {
       unsigned char *q = ic->rgba + (j * ic->w + i) * 4;
       blend(x + i, y + j, (unsigned int)q[0] << 16 | q[1] << 8 | q[2], q[3] / 255.0);
@@ -126,14 +122,11 @@ static void icon(Icon *ic, int x, int y) {
 }
 
 static long read_saved(void) {
-  long v = vmax;
+  long v;
   FILE *f = fopen(MUTE, "r");
-  if (f) {
-    if (fscanf(f, "%ld", &v) != 1)
-      v = vmax;
-    fclose(f);
-  }
-  return v < vmin ? vmin : v > vmax ? vmax : v;
+  fscanf(f, "%ld", &v);
+  fclose(f);
+  return v;
 }
 
 static void mixer_set(long v) {
@@ -159,8 +152,6 @@ static void toggle_mute(void) {
     return;
   }
   FILE *f = fopen(MUTE, "w");
-  if (!f)
-    return;
   fprintf(f, "%ld\n", level);
   fclose(f);
   muted = 1;
@@ -230,20 +221,17 @@ int main(void) {
   snd_mixer_selem_id_t *sid;
   snd_mixer_selem_id_alloca(&sid);
   snd_mixer_selem_id_set_name(sid, "Master");
-  if (snd_mixer_open(&mx, 0) < 0 || snd_mixer_attach(mx, "default") < 0 || snd_mixer_selem_register(mx, NULL, NULL) < 0 ||
-      snd_mixer_load(mx) < 0 || !(el = snd_mixer_find_selem(mx, sid))) {
-    fprintf(stderr, "mixer: нет звуковой карты (Master)\n");
-    return 1;
-  }
+  snd_mixer_open(&mx, 0);
+  snd_mixer_attach(mx, "default");
+  snd_mixer_selem_register(mx, NULL, NULL);
+  snd_mixer_load(mx);
+  el = snd_mixer_find_selem(mx, sid);
   snd_mixer_selem_get_playback_volume_range(el, &vmin, &vmax);
   snd_mixer_selem_get_playback_volume(el, SND_MIXER_SCHN_FRONT_LEFT, &level);
   if ((muted = !access(MUTE, F_OK)))
     level = read_saved();
 
-  if (!(dpy = XOpenDisplay(NULL))) {
-    fprintf(stderr, "mixer: нет X (DISPLAY)\n");
-    return 1;
-  }
+  dpy = XOpenDisplay(NULL);
   scr = DefaultScreen(dpy);
   Window root = RootWindow(dpy, scr), rr, cw;
   int rx = 0, ry = 0, wx, wy;

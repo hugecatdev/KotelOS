@@ -4,33 +4,28 @@
 # кадр прижат к низу (снизу запас пола - кубик выше панели), уже - кадр вокруг кубика.
 # Потом - значки рабочего стола (idesk) заново: подложку подписей он берёт с обоев на экране
 d=/usr/share/backgrounds
-size=$(xrandr 2>/dev/null | sed -n 's/.* current \([0-9]*\) x \([0-9]*\),.*/\1x\2/p')
-[ -n "$size" ] || size=$(kt screen size 2>/dev/null) || size=1280x720
+size=$(xrandr | sed -n 's/.* current \([0-9]*\) x \([0-9]*\),.*/\1x\2/p')
 w=${size%x*} h=${size#*x}
 if [ "$w" -lt "$h" ]; then
   feh --no-fehbg --bg-fill "$d/greenos-tall.jpg"
 elif [ $((w * 1200)) -lt $((h * 1920)) ]; then
-  x=$((1476 - 1200 * w / h / 2))
-  [ $x -ge 0 ] || x=0
-  feh --no-fehbg --bg-fill --geometry +$x "$d/greenos.jpg"
+  feh --no-fehbg --bg-fill --geometry +$((1476 - 1200 * w / h / 2)) "$d/greenos.jpg"
 else
   feh --no-fehbg --bg-fill --geometry +0-0 "$d/greenos.jpg"
 fi
-if command -v idesk > /dev/null; then
-  pkill -x idesk
-  mkdir -p "$HOME/.local/share/Trash/files"
-  # раскладка значков - только когда экран повернули: стоя - сеткой по три сверху (кубик ниже), иначе -
-  # столбцом слева; перетащенные мышью значки при простой смене размера остаются на местах
-  o=wide
-  [ "$w" -ge "$h" ] || o=tall
-  if [ "$(cat /tmp/.greenos-desk 2>/dev/null)" != $o ]; then
-    i=0
-    for f in "$HOME"/.idesktop/*.lnk; do
-      if [ $o = tall ]; then x=$((32 + i % 3 * 110)) y=$((14 + i / 3 * 96)); else x=40 y=$((20 + i * 92)); fi
-      sed -i "s/^  X: .*/  X: $x/; s/^  Y: .*/  Y: $y/" "$f"
-      i=$((i + 1))
-    done
-    echo $o > /tmp/.greenos-desk
-  fi
-  cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
+pkill -x idesk
+mkdir -p "$HOME/.local/share/Trash/files"
+# раскладка значков - только когда экран повернули: стоя - сеткой по три сверху (кубик ниже), иначе -
+# столбцом слева; перетащенные мышью значки при простой смене размера остаются на местах
+o=wide
+[ "$w" -ge "$h" ] || o=tall
+if [ "$(cat /tmp/.greenos-desk 2>/dev/null)" != $o ]; then
+  i=0
+  for f in "$HOME"/.idesktop/*.lnk; do
+    if [ $o = tall ]; then x=$((32 + i % 3 * 110)) y=$((14 + i / 3 * 96)); else x=40 y=$((20 + i * 92)); fi
+    sed -i "s/^  X: .*/  X: $x/; s/^  Y: .*/  Y: $y/" "$f"
+    i=$((i + 1))
+  done
+  echo $o > /tmp/.greenos-desk
 fi
+cd "$HOME" && setsid idesk > /dev/null 2>&1 < /dev/null &
