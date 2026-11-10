@@ -3,14 +3,19 @@
  * Escape или Enter - закрыть. Клавиши: стрелки - шаг, M - выкл/вкл.
  * Уровень - Master карты (alsa-lib); у SB16 нет выключателя звука, поэтому «выкл» - Master 0, а прежний
  * уровень - в /tmp/.greenos-mute, как у /usr/lib/greenos/volume (колесо над значком), - они понимают друг друга.
- * Окно без рамки (override-redirect) и с захватом мыши и клавиатуры - как меню. Собирает build.sh. */
+ * Окно без рамки (override-redirect) и с захватом мыши и клавиатуры - как меню. Картинка окна рисуется в
+ * своём буфере со сглаженными краями (X сам не сглаживает) и кладётся целиком, проценты - Xft поверх; на
+ * кнопке - значки MATE «звук есть» и «звук выключен». Собирает build.sh. */
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
 #include <X11/keysym.h>
 #include <alsa/asoundlib.h>
 #include <locale.h>
+#include <math.h>
+#include <png.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -22,12 +27,17 @@
 #define T1 (H - 62)
 #define KNOB 9
 #define MUTE "/tmp/.greenos-mute"
+#define ICONS "/usr/share/greenos/icons/"
 
 static Display *dpy;
 static int scr;
 static Window win;
 static Pixmap buf;
 static GC gc;
+static XImage *img;
+static unsigned int *pix;  /* картинка окна, 0xRRGGBB - экран X 24-битный (startx) */
+typedef struct { int w, h; unsigned char *rgba; } Icon;
+static Icon ic_on, ic_off;
 static XftDraw *xd;
 static XftFont *f_pct;
 static XftColor c_text, c_dim;
@@ -44,14 +54,75 @@ static unsigned long px(const char *hex) {
   return c.pixel;
 }
 
-static void rrect(int x, int y, int w, int h, int r, unsigned long color) {
-  XSetForeground(dpy, gc, color);
-  XFillRectangle(dpy, buf, gc, x + r, y, w - 2 * r, h);
-  XFillRectangle(dpy, buf, gc, x, y + r, w, h - 2 * r);
-  XFillArc(dpy, buf, gc, x, y, 2 * r, 2 * r, 90 * 64, 90 * 64);
-  XFillArc(dpy, buf, gc, x + w - 2 * r - 1, y, 2 * r, 2 * r, 0, 90 * 64);
-  XFillArc(dpy, buf, gc, x, y + h - 2 * r - 1, 2 * r, 2 * r, 180 * 64, 90 * 64);
-  XFillArc(dpy, buf, gc, x + w - 2 * r - 1, y + h - 2 * r - 1, 2 * r, 2 * r, 270 * 64, 90 * 64);
+static unsigned int rgb(const char *hex) {
+  return (unsigned int)strtoul(hex + 1, NULL, 16);
+}
+
+/* точка цвета c с непрозрачностью a поверх того, что в буфере */
+static void blend(int x, int y, unsigned int c, double a) {
+  if (x < 0 || y < 0 || x >= W || y >= H || a <= 0)
+    return;
+  if (a > 1)
+    a = 1;
+  unsigned int d = pix[y * W + x], o = 0;
+  for (int b = 0; b < 24; b += 8)
+    o |= (unsigned int)(((c >> b) & 255) * a + ((d >> b) & 255) * (1 - a) + 0.5) << b;
+  pix[y * W + x] = o;
+}
+
+/* скруглённый прямоугольник (и круг: w = h = 2r) со сглаженным краем: покрытие точки - по расстоянию
+ * от её центра до фигуры. Пустой (w или h <= 0) не рисуется, радиус - не больше половины стороны */
+static void rrect(double x, double y, double w, double h, double r, unsigned int c) {
+  if (w <= 0 || h <= 0)
+    return;
+  r = fmin(r, fmin(w, h) / 2);
+  for (int j = (int)floor(y); j < (int)ceil(y + h); j++)
+    for (int i = (int)floor(x); i < (int)ceil(x + w); i++) {
+      double qx = fabs(i + 0.5 - (x + w / 2)) - (w / 2 - r), qy = fabs(j + 0.5 - (y + h / 2)) - (h / 2 - r);
+      double d = hypot(fmax(qx, 0), fmax(qy, 0)) + fmin(fmax(qx, qy), 0) - r;
+      blend(i, j, c, 0.5 - d);
+    }
+}
+
+/* значок темы (48x48) -> вдвое меньше, усреднением с учётом прозрачности - без ореолов по краю */
+static void load_icon(Icon *ic, const char *path) {
+  png_image im;
+  memset(&im, 0, sizeof im);
+  im.version = PNG_IMAGE_VERSION;
+  if (!png_image_begin_read_from_file(&im, path))
+    return;
+  im.format = PNG_FORMAT_RGBA;
+  unsigned char *src = malloc(PNG_IMAGE_SIZE(im));
+  if (!src || !png_image_finish_read(&im, NULL, src, 0, NULL)) {
+    free(src);
+    return;
+  }
+  ic->w = im.width / 2;
+  ic->h = im.height / 2;
+  ic->rgba = malloc(ic->w * ic->h * 4);
+  for (int y = 0; y < ic->h; y++)
+    for (int x = 0; x < ic->w; x++) {
+      unsigned int a = 0, c[3] = { 0, 0, 0 };
+      for (int k = 0; k < 4; k++) {
+        unsigned char *p = src + ((2 * y + k / 2) * im.width + 2 * x + k % 2) * 4;
+        a += p[3];
+        for (int b = 0; b < 3; b++)
+          c[b] += p[b] * p[3];
+      }
+      unsigned char *q = ic->rgba + (y * ic->w + x) * 4;
+      for (int b = 0; b < 3; b++)
+        q[b] = a ? c[b] / a : 0;
+      q[3] = a / 4;
+    }
+  free(src);
+}
+
+static void icon(Icon *ic, int x, int y) {
+  for (int j = 0; ic->rgba && j < ic->h; j++)
+    for (int i = 0; i < ic->w; i++) {
+      unsigned char *q = ic->rgba + (j * ic->w + i) * 4;
+      blend(x + i, y + j, (unsigned int)q[0] << 16 | q[1] << 8 | q[2], q[3] / 255.0);
+    }
 }
 
 static long read_saved(void) {
@@ -107,8 +178,18 @@ static long level_at(int y) {
 
 static void draw(void) {
   char s[16];
-  XSetForeground(dpy, gc, px("#ffffff"));
-  XFillRectangle(dpy, buf, gc, 0, 0, W, H);
+  for (int i = 0; i < W * H; i++)
+    pix[i] = 0xffffff;
+  int ky = knob_y(), cx = W / 2;
+  rrect(cx - 3, T0, 6, T1 - T0, 3, rgb("#dde6d6"));
+  rrect(cx - 3, ky, 6, T1 - ky, 3, rgb(muted ? "#b9c4b3" : "#3dbb2b"));
+  rrect(cx - KNOB, ky - KNOB, 2 * KNOB, 2 * KNOB, KNOB, rgb(muted ? "#9aa894" : dragging ? "#2a8d1c" : "#2e9f1f"));
+  rrect(cx - KNOB + 3, ky - KNOB + 3, 2 * KNOB - 6, 2 * KNOB - 6, KNOB - 3, 0xffffff);
+  rrect(mbx, mby, mbw, mbh, 6, rgb(pressed ? "#cfeec4" : muted ? "#f6e6e4" : "#eef3ea"));
+  Icon *ic = muted ? &ic_off : &ic_on;
+  icon(ic, mbx + (mbw - ic->w) / 2, mby + (mbh - ic->h) / 2);
+  XPutImage(dpy, buf, gc, img, 0, 0, 0, 0, W, H);
+
   if (muted)
     snprintf(s, sizeof s, "Выкл");
   else
@@ -116,32 +197,6 @@ static void draw(void) {
   XGlyphInfo g;
   XftTextExtentsUtf8(dpy, f_pct, (const FcChar8 *)s, strlen(s), &g);
   XftDrawStringUtf8(xd, muted ? &c_dim : &c_text, f_pct, (W - g.xOff) / 2, 26, (const FcChar8 *)s, strlen(s));
-
-  int ky = knob_y(), cx = W / 2;
-  rrect(cx - 3, T0, 6, T1 - T0, 3, px("#dde6d6"));
-  rrect(cx - 3, ky, 6, T1 - ky, 3, px(muted ? "#b9c4b3" : "#3dbb2b"));
-  XSetForeground(dpy, gc, px(muted ? "#9aa894" : dragging ? "#2a8d1c" : "#2e9f1f"));
-  XFillArc(dpy, buf, gc, cx - KNOB, ky - KNOB, 2 * KNOB, 2 * KNOB, 0, 360 * 64);
-  XSetForeground(dpy, gc, px("#ffffff"));
-  XFillArc(dpy, buf, gc, cx - KNOB + 3, ky - KNOB + 3, 2 * KNOB - 6, 2 * KNOB - 6, 0, 360 * 64);
-
-  /* кнопка: динамик, с волнами - звук есть, с крестиком - выключен */
-  rrect(mbx, mby, mbw, mbh, 4, px(pressed ? "#cfeec4" : muted ? "#f3e3e1" : "#eef3ea"));
-  int sx = cx - 9, sy = mby + mbh / 2;
-  XSetForeground(dpy, gc, px("#24301f"));
-  XFillRectangle(dpy, buf, gc, sx, sy - 4, 5, 8);
-  XPoint cone[] = { { sx + 4, sy - 4 }, { sx + 10, sy - 10 }, { sx + 10, sy + 10 }, { sx + 4, sy + 4 } };
-  XFillPolygon(dpy, buf, gc, cone, 4, Convex, CoordModeOrigin);
-  XSetLineAttributes(dpy, gc, 2, LineSolid, CapRound, JoinRound);
-  if (muted) {
-    XSetForeground(dpy, gc, px("#d0453a"));
-    XDrawLine(dpy, buf, gc, sx + 14, sy - 5, sx + 22, sy + 5);
-    XDrawLine(dpy, buf, gc, sx + 14, sy + 5, sx + 22, sy - 5);
-  } else {
-    XDrawArc(dpy, buf, gc, sx + 6, sy - 6, 12, 12, -50 * 64, 100 * 64);
-    XDrawArc(dpy, buf, gc, sx + 4, sy - 11, 22, 22, -50 * 64, 100 * 64);
-  }
-  XSetLineAttributes(dpy, gc, 1, LineSolid, CapButt, JoinMiter);
   XCopyArea(dpy, buf, win, gc, 0, 0, W, H, 0, 0);
   XFlush(dpy);
 }
@@ -205,6 +260,10 @@ int main(void) {
   XSelectInput(dpy, win, ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
   gc = XCreateGC(dpy, win, 0, NULL);
   buf = XCreatePixmap(dpy, win, W, H, DefaultDepth(dpy, scr));
+  pix = calloc(W * H, sizeof *pix);
+  img = XCreateImage(dpy, DefaultVisual(dpy, scr), DefaultDepth(dpy, scr), ZPixmap, 0, (char *)pix, W, H, 32, W * 4);
+  load_icon(&ic_on, ICONS "volume.png");
+  load_icon(&ic_off, ICONS "volume-muted.png");
   Visual *v = DefaultVisual(dpy, scr);
   Colormap cm = DefaultColormap(dpy, scr);
   xd = XftDrawCreate(dpy, buf, v, cm);

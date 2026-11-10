@@ -25,6 +25,7 @@ SIZE = "48x48"
 ICONS = {
     "save": "document-save",
     "volume": "audio-volume-high",
+    "volume-muted": "audio-volume-muted",
     "clock": "preferences-system-time",
     "monitor": "utilities-system-monitor",
     "eyes": "face-glasses",

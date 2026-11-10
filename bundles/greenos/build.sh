@@ -58,7 +58,7 @@ cp $S/src/jwm $OUT/usr/bin/jwm
 
 $CC -Os -Wall -Wno-format-truncation $CPPFLAGS -o $OUT/usr/bin/greenos-about bundles/greenos/greenos-about.c \
   $LDFLAGS -lXft -lXrender -lX11 -lpng16
-$CC -Os -Wall $CPPFLAGS -o $OUT/usr/lib/greenos/mixer bundles/greenos/greenos-mixer.c $LDFLAGS -lXft -lX11 -lasound
+$CC -Os -Wall $CPPFLAGS -o $OUT/usr/lib/greenos/mixer bundles/greenos/greenos-mixer.c $LDFLAGS -lXft -lX11 -lasound -lpng16 -lm
 
 # конфиги - без комментариев и отступов (в машине всё в памяти); исходники с пояснениями - conf/
 mkdir -p $OUT/etc $OUT/root
