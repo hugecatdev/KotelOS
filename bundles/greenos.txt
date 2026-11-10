@@ -1,7 +1,7 @@
-# GreenOS - своя сборка, не для сайта (scripts/pages.sh берёт только bundles/*.txt):
+# GreenOS - рабочий стол на JWM, сборка сайта; данные - bundles/greenos/, программы собирают его скрипты:
 #   bundles/greenos/build.sh && bundles/greenos/build-fox.sh && bundles/greenos/build-idesk.sh &&
 #   bundles/greenos/build-extras.sh && bundles/greenos/build-azpainter.sh && bundles/greenos/build-xosview.sh &&
-#   bundles/greenos/build-ted.sh && ./release.py bundles/greenos/greenos.txt   -> site/greenos/index.html (~32 МБ)
+#   bundles/greenos/build-ted.sh && ./release.py greenos   -> site/greenos/index.html (~32 МБ)
 # «Отечественная ОС»: рабочий стол в духе KDE на JWM, тема «Трава» (белая панель, зелёные заголовки и
 # выделение, плоско, без скруглений), обои - кубик. Программы оконные и лёгкие, под своими именами:
 # xterm, xclock, xeyes, feh, xkill, micropython, lbreakout2, своё окно «О системе» (greenos-about);
@@ -24,7 +24,7 @@
 # по -14 дБ на мастере и ЦАП, звук игр почти не слышен: --prep ставит мастер 0 дБ и PCM -10 дБ (страница
 # добавляет к ЦАП ещё x3, итог ~1); из alsa-utils нужен только amixer, остальное - в --drop.
 # --drop - чего из пакетов в образе нет: библиотеки, которые не грузит ни одна программа
-# (scripts/deadlibs.py bundles/greenos/greenos.txt), демо imlib2 (rgb.txt нужен загрузчику XPM).
+# (scripts/deadlibs.py bundles/greenos.txt), демо imlib2 (rgb.txt нужен загрузчику XPM).
 # Звук: SB16 машины, alsa-lib - её SDL берёт сам (сервер не нужен), страница играет после первого касания.
 # fs/etc/asound.conf - карта только на 22050 Гц: sdl12-compat открывает её не ниже 44100 и пересчитывает
 # звук игры 22050 -> 44100 плавающей точкой - в v86 это 44% процессора на LBreakout2 вместо 21%;

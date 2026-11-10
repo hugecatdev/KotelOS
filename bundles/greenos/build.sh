@@ -1,6 +1,6 @@
 #!/bin/sh
 # JWM, greenos-about и /usr/lib/greenos/mixer (ползунок громкости) для GreenOS: тулчейн musl против заголовков и
-# библиотек Alpine x86, как dwm (scripts/build-dwm.sh). Это данные бандла (bundles/greenos/greenos.txt, --file), не пакеты
+# библиотек Alpine x86, как dwm (scripts/build-dwm.sh). Это данные бандла (bundles/greenos.txt, --file), не пакеты
 # репозитория; результат - дерево bundles/greenos/root (в git не идёт). Программы FOX - build-fox.sh.
 # JWM 2.4 сглаживает шрифты только через Pango (а с ним glib, harfbuzz, cairo - мегабайты), без него -
 # растровые шрифты X без кириллицы; jwm-xft.patch возвращает прямой Xft, как было в JWM 2.3.

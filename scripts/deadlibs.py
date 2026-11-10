@@ -2,7 +2,7 @@
 """Мёртвые библиотеки бандла: ELF в образе, до которых не дойти по DT_NEEDED ни от одной программы.
 Корни - всё в */bin, */sbin, */libexec, модули Xorg и imlib2, SDL2 (её грузит sdl12-compat через dlopen);
 остальной dlopen скрипт не видит - список проверять в машине. Уже убранное ключами --drop не показывается.
-python3 -B scripts/deadlibs.py bundles/greenos/greenos.txt  (из корня репозитория)"""
+python3 -B scripts/deadlibs.py bundles/greenos.txt  (из корня репозитория)"""
 import collections
 import os
 import shlex

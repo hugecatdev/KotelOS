@@ -82,7 +82,7 @@ post-install (приветствие `fun`) выполняется при пер
 
 ## Бандлы сайта
 
-На сайте лежат семь бандлов, все со снимком: `python` (полный CPython с pip и numpy, tkinter,
+На сайте лежат восемь бандлов, все со снимком: `python` (полный CPython с pip и numpy, tkinter,
 IDLE, turtle и matplotlib с примерами, рабочий стол, терминал и `ai`; 384 МБ памяти),
 `standard` (пакеты по умолчанию, с ними и рабочий стол `tk-desktop` и терминал в окне `tk-term`,
 см. [Окна](gui.md)), `micro` (базовые инструменты: nano, htop, tmux, curl, wget, pack, notify),
@@ -93,7 +93,9 @@ xboard с gnuchess, OpenGL с `mesa-utils` и `mesa-demos`), `sqlite` (DB Browse
 открывается сразу в X с демо-базой `~/packages.db` - пакеты репозитория и их зависимости) и `qt`
 (`dwm-studio`, Qt Designer и PyQt5, 384 МБ памяти: открывается сразу в X - слева (на экране стоя -
 сверху) Designer с формой, рядом она же живая с кодом, `pyqt-studio`; сохраняется каждые 2
-минуты). У бандлов с экраном v86 в Web Worker (`boot.worker=on`): страница и экран не ждут эмуляцию,
+минуты), `greenos` (рабочий стол на JWM: меню и значки, файловый менеджер Xfe, текстовый процессор
+Ted, браузер Dillo, звук; программы, поставленные `kt pkg add`, сами встают в меню; свои программы
+собирают скрипты `bundles/greenos/build*.sh`, данные - `bundles/greenos/`). У бандлов с экраном v86 в Web Worker (`boot.worker=on`): страница и экран не ждут эмуляцию,
 по-старому - `kt cfg boot.worker off`.
 
 `xorg` и `dwm` поднимают X командой при открытии (`boot.cmd=startx`), а не из снимка (`--run startx`):

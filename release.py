@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Собрать бандлы сайта по описаниям bundles/ИМЯ.txt в site/ИМЯ/index.html. Описание можно дать и путём
-(./release.py bundles/greenos/greenos.txt) - свои сборки вне bundles/*.txt: scripts/pages.sh их не выкладывает."""
+(./release.py свой/путь/имя.txt) - свои сборки вне bundles/*.txt: scripts/pages.sh их не выкладывает."""
 import argparse
 import glob
 import os
