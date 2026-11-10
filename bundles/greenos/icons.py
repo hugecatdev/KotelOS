@@ -38,6 +38,8 @@ ICONS = {
     "graphics": "applications-graphics",
     "development": "applications-development",
     "internet": "applications-internet",
+    "multimedia": "applications-multimedia",
+    "other": "applications-other",
     "network": "network-workgroup",
     "network-offline": "network-offline",
     "network-relay": "network-transmit-receive",

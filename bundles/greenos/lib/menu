@@ -1,34 +1,119 @@
 #!/bin/sh
 # меню «Пуск» GreenOS для JWM (<Include>exec:/usr/lib/greenos/menu</Include> в /etc/system.jwmrc): программы под
-# своими именами. Значки - родные значки программ,
-# где они есть, иначе MATE Menta (/usr/share/greenos/icons). Разделы - как в MATE: редактор, калькулятор,
-# архиватор - «Стандартные», терминал и файловый менеджер - «Система». Dillo без релея (сеть по умолчанию -
-# fetch) почти ничего не откроет - при запуске подсказка, где включить. «Сохранить сеанс» - kt save, ответ - herbe
-# (\$ - чтобы kt save шёл при выборе пункта, а не при сборке меню; ошибки - 2>/dev/stdout, без & в XML)
-item() {  # item программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
-  case $2 in /*) i=$2 ;; *) i=$2.png ;; esac
-  echo "<Program icon=\"$i\" label=\"$1\">${3:-$1}</Program>"
+# своими именами. Значки - родные значки программ, где они есть, иначе MATE Menta (/usr/share/greenos/icons).
+# Разделы - как в MATE: редактор, калькулятор, архиватор - «Стандартные», терминал и файловый менеджер -
+# «Система». Dillo без релея (сеть по умолчанию - fetch) почти ничего не откроет - при запуске подсказка, где
+# включить. «Сохранить сеанс» - kt save, ответ - herbe (ошибки - 2>/dev/stdout, без & в XML).
+# Поставленное через kt pkg add - из его .desktop (/usr/share/applications): раздел по Categories, имя, значок
+# темы hicolor или pixmaps; кроме программ, что уже есть ниже. После add и rm меню пересобирает триггер kt pkg
+# (/var/lib/kt/trigger/greenos-menu: jwm -reload)
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+
+item() {  # item раздел программа значок [команда]: значок - путь или имя из /usr/share/greenos/icons
+  case $3 in /*) i=$3 ;; *) i=$3.png ;; esac
+  echo "$2" >> "$d/known"
+  echo "<Program icon=\"$i\" label=\"$2\">${4:-$2}</Program>" >> "$d/$1"
 }
-menu() {  # menu значок название пункты
-  printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$1" "$2" "$3"
-}
-# сеть: kt net через /usr/lib/greenos/net (ответ - herbe); релей - Ethernet v86 из демо copy.sh/v86
 net() {  # net значок название значение
   echo "<Program icon=\"$1.png\" label=\"$2\">/usr/lib/greenos/net $3</Program>"
+}
+
+item office Ted /usr/share/Ted/Ted.png
+item utilities adie /usr/share/greenos/icons/fox/adie.png
+item utilities calculator /usr/share/greenos/icons/fox/calculator.png
+item utilities xclock clock
+item utilities xfa /usr/share/pixmaps/xfa.png
+item internet dillo /usr/share/icons/hicolor/48x48/apps/dillo.png \
+  "case \$(kt cfg net.relay) in fetch|off) herbe 'Dillo ходит в интернет через релей' 'Система - Сеть' &amp; ;; esac; exec dillo"
+item graphics azpainter /usr/share/pixmaps/azpainter.png
+item graphics xfi /usr/share/pixmaps/xfi.png
+item graphics feh /usr/share/feh/images/feh.png 'feh --scale-down -g 900x600 -. /usr/share/backgrounds'
+item graphics shutterbug /usr/share/greenos/icons/fox/shutterbug.png
+item development micropython python 'xterm -T micropython -e micropython'
+item games lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png
+item games xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'
+item games oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'
+item games xeyes eyes
+item system xterm /usr/share/pixmaps/xterm-color_48x48.xpm
+item system xfe /usr/share/pixmaps/xfe.png
+item system xosview /usr/share/pixmaps/xosview.png
+item system htop monitor 'xterm -e htop'
+item system ControlPanel appearance
+item system xkill kill
+
+# .desktop: раздел<TAB>имя<TAB>значок<TAB>команда; поля %f %U и т.п. - долой, Terminal=true - в xterm
+awk -F= '
+  function flush() {
+    if (name != "" && cmd != "" && !hide) {
+      s = "other"
+      if (cat ~ /(^|;)Game;/) s = "games"
+      else if (cat ~ /(^|;)Office;/) s = "office"
+      else if (cat ~ /(^|;)Graphics;/) s = "graphics"
+      else if (cat ~ /(^|;)Development;/) s = "development"
+      else if (cat ~ /(^|;)Network;/) s = "internet"
+      else if (cat ~ /(^|;)(AudioVideo|Audio|Video);/) s = "multimedia"
+      else if (cat ~ /(^|;)(System|Settings);/) s = "system"
+      else if (cat ~ /(^|;)Utility;/) s = "utilities"
+      gsub(/ %[a-zA-Z]/, "", cmd)
+      if (term == "true") cmd = "xterm -e " cmd
+      print s "\t" name "\t" icon "\t" cmd
+    }
+    name = ""; cmd = ""; icon = ""; cat = ""; term = ""; hide = 0; entry = 0
+  }
+  FNR == 1 { flush() }
+  /^\[/ { entry = ($0 == "[Desktop Entry]"); next }
+  !entry { next }
+  { v = substr($0, length($1) + 2) }
+  $1 == "Name" && name == "" { name = v }
+  $1 == "Exec" { cmd = v }
+  $1 == "Icon" { icon = v }
+  $1 == "Categories" { cat = ";" v }
+  $1 == "Terminal" { term = v }
+  ($1 == "NoDisplay" || $1 == "Hidden") && v == "true" { hide = 1 }
+  $1 == "OnlyShowIn" { hide = 1 }
+  END { flush() }
+' /usr/share/applications/*.desktop 2> /dev/null | sort -t "$(printf '\t')" -k2 |
+while IFS="$(printf '\t')" read -r s name icon cmd; do
+  p=${cmd#xterm -e }
+  p=${p%% *}
+  p=${p##*/}
+  ! grep -qxF "$p" "$d/known" || continue
+  i=/usr/share/greenos/icons/executable.png
+  case $icon in
+    /*) i=$icon ;;
+    ?*) for f in /usr/share/icons/hicolor/48x48/apps/$icon.png /usr/share/icons/hicolor/64x64/apps/$icon.png \
+          /usr/share/icons/hicolor/32x32/apps/$icon.png /usr/share/icons/hicolor/128x128/apps/$icon.png \
+          /usr/share/pixmaps/$icon.png /usr/share/pixmaps/$icon.xpm; do
+          [ ! -f "$f" ] || { i=$f; break; }
+        done ;;
+  esac
+  name=$(printf '%s' "$name" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+  cmd=$(printf '%s' "$cmd" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+  echo "<Program icon=\"$i\" label=\"$name\">$cmd</Program>" >> "$d/$s"
+done
+
+menu() {  # menu раздел значок название: раздел, если в нём есть программы
+  [ ! -f "$d/$1" ] || printf '<Menu icon="%s.png" label="%s">\n%s\n</Menu>\n' "$2" "$3" "$(cat "$d/$1")"
 }
 cat <<EOF
 <?xml version="1.0"?>
 <JWM>
 <RootMenu onroot="3" height="28">
-$(menu office Офис "$(item Ted /usr/share/Ted/Ted.png)")
-$(menu utilities Стандартные "$(item adie /usr/share/greenos/icons/fox/adie.png; item calculator /usr/share/greenos/icons/fox/calculator.png; item xclock clock; item xfa /usr/share/pixmaps/xfa.png)")
-$(menu internet Интернет "$(item dillo /usr/share/icons/hicolor/48x48/apps/dillo.png "case \$(kt cfg net.relay) in fetch|off) herbe 'Dillo ходит в интернет через релей' 'Система - Сеть' &amp; ;; esac; exec dillo")")
-$(menu graphics Графика "$(item azpainter /usr/share/pixmaps/azpainter.png; item xfi /usr/share/pixmaps/xfi.png; item feh /usr/share/feh/images/feh.png 'feh --scale-down -g 900x600 -. /usr/share/backgrounds'; item shutterbug /usr/share/greenos/icons/fox/shutterbug.png)")
-$(menu development Разработка "$(item micropython python 'xterm -T micropython -e micropython')")
-$(menu games Развлечения "$(item lbreakout2 /usr/share/lbreakout2/gfx/win_icon.png; item xroach /usr/share/greenos/icons/extras/xroach.png 'pkill -x xroach || exec xroach'; item oneko /usr/share/greenos/icons/extras/oneko.png 'pkill -x oneko || exec oneko'; item xeyes eyes)")
-$(menu system Система "$(item xterm /usr/share/pixmaps/xterm-color_48x48.xpm; item xfe /usr/share/pixmaps/xfe.png; item xosview /usr/share/pixmaps/xosview.png; item htop monitor 'xterm -e htop'; item ControlPanel appearance; item xkill kill
-  menu network Сеть "$(net network-offline 'Без сети' off; net network-browser 'Только через браузер' fetch
-    net network-relay 'Интернет: relay.widgetry.org' wss://relay.widgetry.org/)")")
+$(menu office office Офис)
+$(menu utilities utilities Стандартные)
+$(menu internet internet Интернет)
+$(menu graphics graphics Графика)
+$(menu multimedia multimedia "Звук и видео")
+$(menu development development Разработка)
+$(menu games games Развлечения)
+$(menu system system Система | sed '$d')
+<Menu icon="network.png" label="Сеть">
+$(net network-offline 'Без сети' off; net network-browser 'Только через браузер' fetch
+  net network-relay 'Интернет: relay.widgetry.org' wss://relay.widgetry.org/)
+</Menu>
+</Menu>
+$(menu other other Прочее)
 <Separator/>
 <Program icon="save.png" label="Сохранить сеанс">herbe "\$(kt save 2>/dev/stdout)"</Program>
 <Program icon="about.png" label="О системе">greenos-about</Program>

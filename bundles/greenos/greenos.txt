@@ -9,7 +9,8 @@
 # (idesk - build-idesk.sh); с GitHub - herbe (уведомления), xroach и oneko (build-extras.sh), системный
 # монитор xosview (build-xosview.sh); рисовалка AzPainter (официальный GitLab автора - build-azpainter.sh);
 # текстовый процессор Ted на Motif (официальное зеркало автора - build-ted.sh; .rtf из Xfe - в нём):
-# меню - эти программы, без проверок «а вдруг нет». KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
+# меню - эти программы и поставленное kt pkg add (раздел по Categories его .desktop; после add и rm
+# меню пересобирает триггер kt pkg - fs/var/lib/kt/trigger/greenos-menu). KotelOS не видно: --title (вкладка, строка загрузки), имя машины,
 # подсказки kt при входе (fs/etc/profile.d/hints.sh пустой - их нет и на экране снимка, --prep rm - и файла нет) и
 # os-release (VERSION_ID - прежний, его показывает kt); kt-xclipd (общий с браузером буфер) остаётся.
 # Не пакеты: JWM и greenos-about (bundles/greenos/root - собирает build.sh, в git не идёт), тема,
@@ -50,7 +51,7 @@
 --drop /usr/bin/axfer --drop /usr/bin/speaker-test --drop /usr/bin/iecset --drop /usr/bin/amidi
 --drop /usr/bin/aconnect --drop /usr/bin/nhlt-dmic-info --drop "/usr/sbin/alsa*" --drop /usr/lib/alsa-topology
 --drop /usr/share/alsa/init --drop /usr/share/alsa/ucm2 --drop /usr/share/sounds/alsa --drop /usr/bin/dialog
---drop /usr/share/icons/hicolor/128x128 --drop /usr/bin/dillo-install-hyphenation --drop /usr/lib/engines-3 --drop /usr/lib/ossl-modules
+--drop /usr/share/icons/hicolor/128x128 --drop /usr/bin/dillo-install-hyphenation --drop /usr/share/applications/uxterm.desktop --drop /usr/lib/engines-3 --drop /usr/lib/ossl-modules
 --drop "/usr/lib/libcairo-script-interpreter.so*" --drop /usr/lib/cairo
 --drop "/usr/lib/libfftw3f*" --drop "/usr/lib/libformw.so*" --drop "/usr/lib/libmenuw.so*" --drop "/usr/lib/libpanelw.so*" --drop "/usr/lib/libpcreposix.so*"
 --prep fc-cache
