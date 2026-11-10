@@ -81,8 +81,14 @@ fire() {
   for d in $TRIG/*.dirs; do
     [ -f "$d" ] || continue
     t=${d%.dirs}
-    hit=$(awk -v dirs="$(cat "$d")" 'BEGIN { n = split(dirs, w, " ") }
-      { f = "/" $0; for (i = 1; i <= n; i++) { x = w[i]; sub(/\*$/, "", x); if (x != "" && index(f, x) == 1) got[w[i]] = 1 } }
+    # папки триггера - маски, как у apk: * - любое имя в одном месте пути (gdk-pixbuf: /usr/lib/gdk-pixbuf-2.0/*/loaders);
+    # скрипту - настоящие папки, куда попали файлы (glib и shared-mime-info перебирают их)
+    hit=$(awk -v dirs="$(cat "$d")" '
+      BEGIN {
+        n = split(dirs, w, " ")
+        for (i = 1; i <= n; i++) { r = w[i]; gsub(/[.+?^${}()|\\]/, "\\\\&", r); gsub(/\*/, "[^/]*", r); R[i] = "^" r "(/|$)" }
+      }
+      { f = "/" $0; for (i = 1; i <= n; i++) if (match(f, R[i])) { m = substr(f, 1, RLENGTH); sub(/\/$/, "", m); got[m] = 1 } }
       END { for (k in got) printf "%s ", k }' "$@" 2>/dev/null)
     [ -z "$hit" ] || ( cd / && sh "$t" $hit ) > /dev/null 2>&1
   done

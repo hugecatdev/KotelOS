@@ -369,9 +369,10 @@ def fake_pypi(www, base):
         shutil.copy(os.path.join(ROOT, "site", "repo", f), repo)
     apks = os.path.join(www, "alpine", "main", "x86")
     os.makedirs(apks)
-    for name, files in (("ktapk", {".PKGINFO": "pkgname = ktapk\n", "usr/bin/ktapk": "#!/bin/sh\ncat /usr/share/ktapklib/msg\n"}),
-                        ("ktapklib", {".PKGINFO": "pkgname = ktapklib\ntriggers = /usr/bin\n", "usr/share/ktapklib/msg": "hello from alpine\n",
-                                      ".trigger": "#!/bin/sh\n[ -x /usr/bin/ktapk ] && ln -sf ktapk /usr/bin/ktapk-trig\n"}),
+    for name, files in (("ktapk", {".PKGINFO": "pkgname = ktapk\n", "usr/bin/ktapk": "#!/bin/sh\ncat /usr/share/ktapklib/msg\n",
+                                   "usr/share/ktapk/ktwild/w": "w\n"}),
+                        ("ktapklib", {".PKGINFO": "pkgname = ktapklib\ntriggers = /usr/bin /usr/share/*/ktwild\n", "usr/share/ktapklib/msg": "hello from alpine\n",
+                                      ".trigger": "#!/bin/sh\n[ -x /usr/bin/ktapk ] && ln -sf ktapk /usr/bin/ktapk-trig\necho \"$@\" > /tmp/.ktwild\n"}),
                         ("ktold", {".PKGINFO": "pkgname = ktold\n", "usr/bin/ktold": "#!/bin/sh\necho new\n",
                                    "opt/ktold/x": "x\n", "etc/shells": "/bin/sh\n"}),
                         ("ktlib2", {".PKGINFO": "pkgname = ktlib2\n", "usr/share/ktlib2/x": "x\n"})):
@@ -895,6 +896,8 @@ def main():
         assert "ktapk" in out and "(apk)" in out, out
         assert s.ok("ktapk").strip() == "hello from alpine"
         assert s.ok("ktapk-trig").strip() == "hello from alpine", "триггер не сработал"
+        # маска со * в середине (как у gdk-pixbuf), скрипту - настоящие папки
+        assert sorted(s.ok("cat /tmp/.ktwild").split()) == ["/usr/bin", "/usr/share/ktapk/ktwild"], s.ok("cat /tmp/.ktwild")
         assert s.sh("ls /.PKGINFO")[0] != 0, "мусор .PKGINFO в /"
         assert s.ok("cat /var/lib/kt/mirror").strip() == base + "alpine"
         out = s.ok("kt pkg")
