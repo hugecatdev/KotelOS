@@ -31,3 +31,6 @@ xterm = xterm
 
 [OPTIONS]
 root_warn = 0
+
+[FILETYPES]
+rtf = "Ted,Ted,Ted;RTF Document;doc_32x32.png;doc_16x16.png;;"

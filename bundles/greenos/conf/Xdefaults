@@ -49,6 +49,13 @@ XTerm*color13: #cc9ce4
 XTerm*color14: #7ad8ca
 XTerm*color15: #ffffff
 
+! Ted (Motif): меню и диалоги - Cantarell через Xft, как у остальных программ, а не растровый fixed;
+! цвета - общие (*background выше)
+Ted*renderTable: variable
+Ted*renderTable.variable.fontType: FONT_IS_XFT
+Ted*renderTable.variable.fontName: Cantarell
+Ted*renderTable.variable.fontSize: 10
+
 ! часы: сглаженные, секундная стрелка - зелёная
 XClock*render: true
 XClock*geometry: 200x200
