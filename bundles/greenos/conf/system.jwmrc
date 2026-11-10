@@ -41,19 +41,21 @@
 
     <TitleButtonOrder>wtimx</TitleButtonOrder>
 
+    <!-- окна как в MATE: углы скруглены (JWM с Xmu), заголовок ниже и с градиентом сверху вниз
+         (цвет:цвет); рамка 3 - за неё ещё можно взяться пальцем -->
     <WindowStyle decorations="flat">
-        <Font align="center">Cantarell-10:bold</Font>
-        <Width>4</Width>
-        <Height>28</Height>
-        <Corner>0</Corner>
+        <Font align="center">Cantarell-9:bold</Font>
+        <Width>3</Width>
+        <Height>24</Height>
+        <Corner>5</Corner>
         <Foreground>#6f7c69</Foreground>
-        <Background>#eef2ea</Background>
+        <Background>#f6f8f4:#e2e8dd</Background>
         <Outline>#c5d2bc</Outline>
         <Opacity>1.0</Opacity>
         <Active>
             <Foreground>#ffffff</Foreground>
-            <Background>#3dbb2b</Background>
-            <Outline>#2e9a1f</Outline>
+            <Background>#5fd24c:#2e9f1f</Background>
+            <Outline>#2a8d1c</Outline>
             <Opacity>1.0</Opacity>
         </Active>
     </WindowStyle>

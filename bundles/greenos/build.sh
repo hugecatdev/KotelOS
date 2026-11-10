@@ -7,7 +7,7 @@
 # jwm-utf8-names.patch - русские заголовки окон: без NLS JWM не звал setlocale и не раскодировал
 # WM_NAME в COMPOUND_TEXT (так его ставят xterm и все программы Xt). Ещё у
 # JWM из Alpine cairo и librsvg (значки SVG) - здесь без них: Xft, Xrender, PNG и XPM (значки), Shape
-# (окна непрямоугольной формы - xeyes), Xinerama; без Xmu (он - только ради скруглённых углов окон) и NLS.
+# (окна непрямоугольной формы - xeyes), Xinerama, Xmu (скруглённые углы окон, как в MATE); без NLS.
 set -e
 cd "$(dirname "$0")/../.."
 
@@ -51,7 +51,7 @@ LDFLAGS="-s -L$SR/usr/lib -Wl,-rpath-link,$SR/usr/lib:$SR/lib -Wl,--as-needed"
 S=$B/jwm-$JWM
 (cd $S && ./configure -q --host=i686-linux-musl --prefix=/usr --sysconfdir=/etc \
   CC="$CC" CFLAGS=-Os CPPFLAGS="$CPPFLAGS" LDFLAGS="$LDFLAGS" \
-  --disable-nls --disable-cairo --disable-rsvg --disable-pango --disable-jpeg --disable-xbm --disable-xmu \
+  --disable-nls --disable-cairo --disable-rsvg --disable-pango --disable-jpeg --disable-xbm --enable-xmu \
   --enable-xft --enable-xrender --enable-png --enable-xpm --enable-shape --enable-xinerama)
 make -C $S/src -s
 cp $S/src/jwm $OUT/usr/bin/jwm
