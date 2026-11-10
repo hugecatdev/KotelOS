@@ -1,0 +1,15 @@
+Вставка таблицы после абзаца с текстом роняла Ted. Обычный абзац в Ted лежит в узле-«строке» без
+свойств ячеек (rpCells NULL, rpCellCount 0), а раскладка таблицы ищет совпадающую ячейку в строке над
+ней - и docGetMatchingCell шёл по числу детей строки по пустому массиву ячеек. Теперь не дальше числа
+описанных ячеек: у обычного абзаца совпадения нет (-1), как и задумано.
+
+--- a/docBuf/docTable.c
++++ b/docBuf/docTable.c
+@@ -354,7 +354,7 @@
+     /*  2  */
+     rr= rowNode->biRowLeftIndentTwips;
+     cp= rowNode->biRowCells;
+-    for ( col= 0; col < rowNode->biChildCount; cp++, col++ )
++    for ( col= 0; col < rowNode->biChildCount && col < rowNode->biRowCellCount; cp++, col++ )
+ 	{
+ 	int		colspan= 1;

@@ -4,7 +4,8 @@
 # Исходник - официальное зеркало автора (ftp.nluug.nl/pub/editors/ted, сумма ниже), GPL. Тулчейн musl на
 # sysroot от build.sh (сначала он) + заголовки motif, pcre, libpaper и картинок. Данные Ted (метрики
 # шрифтов, справка, настройки) - его TedDatadir.tar без английского словаря проверки орфографии (4.4 МБ).
-# ted-time64.patch - 64-битный time_t в musl (без него File > New падает).
+# ted-time64.patch - 64-битный time_t в musl (без него File > New падает); ted-table-row.patch - вставка
+# таблицы после абзаца с текстом.
 # Результат -> bundles/greenos/root
 set -e
 cd "$(dirname "$0")/../.."
