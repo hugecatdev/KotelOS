@@ -158,16 +158,16 @@ check() {
   [ -z "$bad" ] || { clr; kt_die "нет пакета" $bad; }
 }
 
-total() {
-  awk -v free="$(room)" -v dsk="$DSK" -v link=$LINK -v dfree="$DFREE" "$H"'
-    $4 == 0 { n++; dl += $2; if (dsk) { dk += $3; mem += int($3 * link / 1024) } else mem += $3 }
-    END {
-      if (!n) exit
-      if (free < 0) free = 0
-      if (dsk) printf "пакетов: %d, скачать %s, на диске %s, в памяти %s; свободно на диске %s, в памяти %s\n", n, h(dl), h(dk), h(mem), h(dfree), h(free)
-      else printf "пакетов: %d, скачать %s, в памяти %s, свободно %s\n", n, h(dl), h(mem), h(free)
-    }
-  '
+# сводка перед установкой (пакеты - на stdin, свободно - $free): сколько скачать и сколько займут; на
+# диске - где лягут файлы и сколько в памяти останется от них (ссылки)
+summary() {
+  set -- $(awk -v link=$LINK '$4 == 0 { n++; dl += $2; un += $3; lk += int($3 * link / 1024) } END { print n + 0, dl + 0, un + 0, lk + 0 }')
+  [ "$1" -gt 0 ] || return 0
+  if [ -n "$DSK" ]; then
+    echo "пакетов: $1, скачать $(kb $2), распакованные займут $(kb $3) на диске $DISK (свободно $(kb $DFREE)); в памяти от них - только ссылки, $(kb $4)"
+  else
+    echo "пакетов: $1, скачать $(kb $2), займут в памяти $(kb $3) (свободно $(kb $free))"
+  fi
 }
 
 # диск для больших пакетов: смонтирован 9p и у страницы есть OPFS; DFREE - свободно на нём, КБ;
@@ -505,11 +505,13 @@ case "$1" in
     read -r need used <<EOF
 $(echo "$new" | peak)
 EOF
-    # в память не влезет - на диск, если он есть
+    # в память не влезет - на диск, если он есть: сначала почему, потом сводка уже для диска, потом вопрос
     ask="установить?"
+    why=
     if [ -z "$DSK" ] && [ "$need" -gt "$free" ]; then
       disk || { clr; kt_die "не хватит памяти: нужно $(kb $need) вместе с архивами, свободно $(kb $free)"; }
-      ask="в память не влезет: нужно $(kb $need) вместе с архивами, свободно $(kb $free). установить на диск $DISK?"
+      why="в память не влезут: нужно $(kb $need) вместе с архивами, свободно $(kb $free)"
+      ask="установить на диск $DISK (хранилище браузера)?"
       DSK=1
       read -r need used <<EOF
 $(echo "$new" | peak)
@@ -532,7 +534,7 @@ EOF
     [ -n "$q" ] || echo "$new" | awk -v w="$(width)" '
       { if (n && n + length($1) + 1 > w) { printf "\n"; n = 0 } if (!n) { printf " "; n = 1 } printf " %s", $1; n += length($1) + 1 }
       END { printf "\n" }'
-    [ -n "$q" ] && [ -n "$y" ] || echo "$new" | total
+    [ -n "$q" ] && [ -n "$y" ] || { [ -z "$why" ] || echo "$why"; echo "$new" | summary; }
     [ -n "$y" ] || kt_ask "$ask" || exit 1
     trap 'rm -rf $T.* $DPKG/.dl.$$' EXIT
     [ -z "$DSK" ] || mkdir -p $DPKG/.dl.$$ $ONDISK
@@ -691,9 +693,10 @@ EOF
     want "$@"
     check "$list"
     echo "$list" | awk "$H"'{ printf "%s %-21s %6s %6s%s\n", $4 ? "*" : "+", $1, h($2), h($3), $5 != "" ? "  (apk)" : "" }'
-    echo "$list" | total
+    free=$(room)
+    echo "$list" | summary
     need=$(echo "$list" | peak)
-    if [ "${need% *}" -gt "$(room)" ] && disk; then
-      echo "в память не влезет, на диске $DISK свободно $(kb $DFREE): kt pkg add -d $*"
+    if [ "${need% *}" -gt "$free" ] && disk; then
+      echo "в память не влезут: нужно $(kb ${need% *}) вместе с архивами; на диск $DISK (хранилище браузера, свободно $(kb $DFREE)) - kt pkg add -d $*"
     fi ;;
 esac

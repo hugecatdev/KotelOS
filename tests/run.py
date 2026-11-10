@@ -1001,7 +1001,8 @@ def main():
         mem_repo()
         # в память не влезет: есть диск - вопрос, нет - отказ
         code, out, err = s.sh("KT_REPO=/memrepo kt pkg add kthuge")
-        assert code == 1 and "в память не влезет: нужно" in err and "установить на диск /mnt/browser? [y/N]" in err, (code, out, err)
+        assert code == 1 and "в память не влезут: нужно" in out and "на диске /mnt/browser (свободно" in out, (code, out, err)
+        assert "в памяти от них - только ссылки" in out and "установить на диск /mnt/browser (хранилище браузера)? [y/N]" in err, (code, out, err)
         out = s.ok("KT_REPO=/memrepo kt pkg kthuge")
         assert "kt pkg add -d kthuge" in out, out
         s.ok("umount /mnt/browser")

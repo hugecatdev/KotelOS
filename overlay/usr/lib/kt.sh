@@ -125,7 +125,11 @@ kt_name() {
 }
 
 kt_size() {
-  awk -v n="$1" 'BEGIN { if (n < 1048576) printf "%d КБ\n", (n + 1023) / 1024; else printf "%.1f МБ\n", n / 1048576 }'
+  awk -v n="$1" 'BEGIN {
+    if (n < 1048576) printf "%d КБ\n", (n + 1023) / 1024
+    else if (n < 1073741824) printf "%.1f МБ\n", n / 1048576
+    else printf "%.1f ГБ\n", n / 1073741824
+  }'
 }
 
 kt_files() {
