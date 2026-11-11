@@ -1,0 +1,107 @@
+-O2 для горячих подсистем ядра
+
+Ядро собирается с -Os (CONFIG_CC_OPTIMIZE_FOR_SIZE). Целиком с -O2 оно на 430 КБ больше
+(bzImage 1.43 -> 1.86 МБ) и быстрее в сессии X на 5-8%; с -O2 только там, где ядро работает
+под нагрузкой (планировщик и системные вызовы, память, файлы, lib, IPC, сокеты unix и ядро
+сети, tty, x86), - на 270 КБ больше и быстрее на 4-10% (tests/xpair.py: 0.96 0.94 0.90):
+драйверы и сеть остаются компактными, а меньше кода - меньше страниц для JIT v86.
+
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -158,3 +158,6 @@
+ 	$(call cmd,genikh)
+ 
+ clean-files := kheaders_data.tar.xz kheaders.md5
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -138,3 +138,6 @@
+ obj-$(CONFIG_HAVE_BOOTMEM_INFO_NODE) += bootmem_info.o
+ obj-$(CONFIG_GENERIC_IOREMAP) += ioremap.o
+ obj-$(CONFIG_SHRINKER_DEBUG) += shrinker_debug.o
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/fs/Makefile
++++ b/fs/Makefile
+@@ -129,3 +129,6 @@
+ obj-$(CONFIG_EROFS_FS)		+= erofs/
+ obj-$(CONFIG_VBOXSF_FS)		+= vboxsf/
+ obj-$(CONFIG_ZONEFS_FS)		+= zonefs/
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -438,3 +438,6 @@
+ ifeq ($(CONFIG_FORTIFY_SOURCE),y)
+ $(obj)/string.o: $(obj)/$(TEST_FORTIFY_LOG)
+ endif
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/ipc/Makefile
++++ b/ipc/Makefile
+@@ -10,3 +10,6 @@
+ obj-$(CONFIG_IPC_NS) += namespace.o
+ obj-$(CONFIG_POSIX_MQUEUE_SYSCTL) += mq_sysctl.o
+ 
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/arch/x86/kernel/Makefile
++++ b/arch/x86/kernel/Makefile
+@@ -159,3 +159,6 @@
+ 	obj-$(CONFIG_MMCONF_FAM10H)	+= mmconf-fam10h_64.o
+ 	obj-y				+= vsmp_64.o
+ endif
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/arch/x86/mm/Makefile
++++ b/arch/x86/mm/Makefile
+@@ -67,3 +67,6 @@
+ 
+ obj-$(CONFIG_AMD_MEM_ENCRYPT)	+= mem_encrypt_identity.o
+ obj-$(CONFIG_AMD_MEM_ENCRYPT)	+= mem_encrypt_boot.o
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/arch/x86/lib/Makefile
++++ b/arch/x86/lib/Makefile
+@@ -62,3 +62,6 @@
+         lib-y += copy_user_64.o copy_user_uncached_64.o
+ 	lib-y += cmpxchg16b_emu.o
+ endif
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/net/unix/Makefile
++++ b/net/unix/Makefile
+@@ -13,3 +13,6 @@
+ unix_diag-y		:= diag.o
+ 
+ obj-$(CONFIG_UNIX_SCM)	+= scm.o
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/net/core/Makefile
++++ b/net/core/Makefile
+@@ -40,3 +40,6 @@
+ obj-$(CONFIG_BPF_SYSCALL) += sock_map.o
+ obj-$(CONFIG_BPF_SYSCALL) += bpf_sk_storage.o
+ obj-$(CONFIG_OF)	+= of_net.o
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2
+--- a/drivers/tty/Makefile
++++ b/drivers/tty/Makefile
+@@ -29,3 +29,6 @@
+ obj-$(CONFIG_RPMSG_TTY)		+= rpmsg_tty.o
+ 
+ obj-y += ipwireless/
++
++# KotelOS: ядро собирается с -Os, а этот каталог - с -O2 (см. config/kernel.fragment)
++subdir-ccflags-y += -O2

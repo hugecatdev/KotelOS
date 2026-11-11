@@ -1,5 +1,7 @@
 CONFIG_INITRAMFS_SOURCE=""
 CONFIG_KERNEL_XZ=y
+# размер: -Os всему ядру, кроме горячих подсистем - им -O2 даёт patches/linux/02-o2-hot.patch
+# (сессия X быстрее на 4-10%, bzImage +270 КБ; целиком -O2 - +430 КБ и не быстрее)
 CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 CONFIG_EXPERT=y
 CONFIG_RD_GZIP=y

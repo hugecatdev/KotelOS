@@ -1,0 +1,231 @@
+Видеопамять (LFB) быстрым путём JIT - проба, в сборку не входит
+
+Xorg (modesetting без теневого буфера) и KMS-программы пишут кадр прямо в видеопамять, а v86
+ведёт каждое обращение к ней медленным путём (TLB_IN_MAPPED_RANGE -> safe_*_slow_jit ->
+mmap_write). Здесь запись TLB страницы видеопамяти указывает прямо в vga_mem8 (TLB_SVGA), и
+обращения идут быстрым путём; изменённые страницы отмечаются, когда запись TLB становится
+доступной для записи, а когда экран забрал отметки (svga_fill_pixel_buffer), такие записи
+снова делаются только для чтения. Работает (экран X рисуется верно), но на замерах
+tests/xpair.py - 1.00 и на сессии с xterm, и на программах GTK/FOX: медленный путь видеопамяти
+там не узкое место. Может пригодиться для полноэкранных кадров (Doom, видео) - не мерил.
+Накладывается на дерево после patches/v86/01-18.
+
+diff --git a/src/rust/codegen.rs b/src/rust/codegen.rs
+index 2dc04ad..7c96e47 100644
+--- a/src/rust/codegen.rs
++++ b/src/rust/codegen.rs
+@@ -1,6 +1,6 @@
+ use crate::cpu::cpu::{
+     tlb_data, FLAG_CARRY, FLAG_OVERFLOW, FLAG_SIGN, FLAG_ZERO, OPSIZE_16, OPSIZE_32, OPSIZE_8,
+-    TLB_GLOBAL, TLB_HAS_CODE, TLB_NO_EXEC, TLB_NO_USER, TLB_READONLY, TLB_VALID,
++    TLB_GLOBAL, TLB_HAS_CODE, TLB_NO_EXEC, TLB_NO_USER, TLB_READONLY, TLB_SVGA, TLB_VALID,
+ };
+ use crate::cpu::global_pointers;
+ use crate::cpu::memory;
+@@ -848,7 +848,7 @@ fn gen_safe_read(
+     ctx.builder.const_i32(
+         (0xFFF
+             & !TLB_READONLY
+-            & !TLB_GLOBAL
++            & !TLB_GLOBAL & !TLB_SVGA
+             & !TLB_HAS_CODE
+             & !TLB_NO_EXEC
+             & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
+@@ -988,7 +988,7 @@ pub fn gen_get_phys_eip_plus_mem(ctx: &mut JitContext, address_local: &WasmLocal
+     ctx.builder.const_i32(
+         (0xFFF
+             & !TLB_READONLY
+-            & !TLB_GLOBAL
++            & !TLB_GLOBAL & !TLB_SVGA
+             & !TLB_HAS_CODE
+             & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER })) as i32,
+     );
+@@ -1067,7 +1067,7 @@ fn gen_safe_write(
+     let entry_local = ctx.builder.tee_new_local();
+ 
+     ctx.builder.const_i32(
+-        (0xFFF & !TLB_GLOBAL & !TLB_NO_EXEC & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER }))
++        (0xFFF & !TLB_GLOBAL & !TLB_SVGA & !TLB_NO_EXEC & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER }))
+             as i32,
+     );
+     ctx.builder.and_i32();
+@@ -1223,7 +1223,7 @@ pub fn gen_safe_read_write(
+     let entry_local = ctx.builder.tee_new_local();
+ 
+     ctx.builder.const_i32(
+-        (0xFFF & !TLB_GLOBAL & !TLB_NO_EXEC & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER }))
++        (0xFFF & !TLB_GLOBAL & !TLB_SVGA & !TLB_NO_EXEC & !(if ctx.cpu.cpl3() { 0 } else { TLB_NO_USER }))
+             as i32,
+     );
+     ctx.builder.and_i32();
+diff --git a/src/rust/cpu/cpu.rs b/src/rust/cpu/cpu.rs
+index 5435dc0..26fd99e 100644
+--- a/src/rust/cpu/cpu.rs
++++ b/src/rust/cpu/cpu.rs
+@@ -265,6 +265,36 @@ pub const TLB_IN_MAPPED_RANGE: i32 = 1 << 3;
+ pub const TLB_GLOBAL: i32 = 1 << 4;
+ pub const TLB_HAS_CODE: i32 = 1 << 5;
+ pub const TLB_NO_EXEC: i32 = 1 << 6;
++// страница видеопамяти (LFB): запись ведёт прямо в vga_mem8, обращения идут быстрым путём JIT.
++// Изменённые страницы отмечаются, когда запись становится доступной для записи (do_page_walk);
++// экран забрал отметки - такие записи снова только для чтения (svga_tlb_protect)
++pub const TLB_SVGA: i32 = 1 << 7;
++static mut svga_tlb_writable: bool = false;
++
++#[inline(always)]
++pub unsafe fn tlb_entry_phys(entry: i32, address: i32) -> u32 {
++    let host = (entry & !0xFFF ^ address) as u32;
++    if entry & TLB_SVGA != 0 {
++        host - memory::vga_mem8 as u32 + memory::VGA_LFB_ADDRESS
++    }
++    else {
++        host - memory::mem8 as u32
++    }
++}
++
++pub unsafe fn svga_tlb_protect() {
++    if !svga_tlb_writable {
++        return;
++    }
++    svga_tlb_writable = false;
++    for i in 0..valid_tlb_entries_count {
++        let page = valid_tlb_entries[i as usize];
++        let entry = tlb_data[page as usize];
++        if entry & TLB_SVGA != 0 {
++            tlb_data[page as usize] = entry | TLB_READONLY;
++        }
++    }
++}
+ pub const IVT_SIZE: u32 = 0x400;
+ pub const CPU_EXCEPTION_DE: i32 = 0;
+ pub const CPU_EXCEPTION_DB: i32 = 1;
+@@ -1978,7 +2008,7 @@ pub unsafe fn translate_address_write_jit(address: i32, wasm_table_index: u16) -
+         entry = do_page_walk(address, true, user, true, true, false)?.get();
+     }
+     let has_code = entry & TLB_HAS_CODE != 0;
+-    let phys_addr = (entry & !0xFFF ^ address) as u32 - memory::mem8 as u32;
++    let phys_addr = tlb_entry_phys(entry, address);
+     let page = Page::page_of(phys_addr);
+     if !has_code {
+         return Ok(phys_addr);
+@@ -2032,7 +2062,7 @@ pub unsafe fn translate_address(
+         )?
+         .get();
+     }
+-    Ok((entry & !0xFFF ^ address) as u32 - memory::mem8 as u32)
++    Ok(tlb_entry_phys(entry, address))
+ }
+ 
+ pub unsafe fn translate_address_write_and_can_skip_dirty(address: i32) -> OrPageFault<(u32, bool)> {
+@@ -2042,7 +2072,7 @@ pub unsafe fn translate_address_write_and_can_skip_dirty(address: i32) -> OrPage
+         entry = do_page_walk(address, true, user, false, true, false)?.get();
+     }
+     Ok((
+-        (entry & !0xFFF ^ address) as u32 - memory::mem8 as u32,
++        tlb_entry_phys(entry, address),
+         entry & TLB_HAS_CODE == 0,
+     ))
+ }
+@@ -2296,7 +2326,8 @@ pub unsafe fn do_page_walk(
+         dbg_assert!(found);
+     }
+ 
+-    let is_in_mapped_range = memory::in_mapped_range(high);
++    let is_svga = memory::in_svga_lfb(high);
++    let is_in_mapped_range = !is_svga && memory::in_mapped_range(high);
+     let has_code = if side_effects {
+         !is_in_mapped_range && jit::jit_page_has_code(Page::page_of(high))
+     }
+@@ -2310,11 +2341,22 @@ pub unsafe fn do_page_walk(
+         | if for_writing { 0 } else { TLB_READONLY }
+         | if allow_user { 0 } else { TLB_NO_USER }
+         | if is_in_mapped_range { TLB_IN_MAPPED_RANGE } else { 0 }
++        | if is_svga { TLB_SVGA } else { 0 }
+         | if global && 0 != cr4 & CR4_PGE { TLB_GLOBAL } else { 0 }
+         | if has_code { TLB_HAS_CODE } else { 0 }
+         | if no_exec { TLB_NO_EXEC } else { 0 };
+ 
+-    let tlb_entry = (high + memory::mem8 as u32) as i32 ^ page << 12 | info_bits as i32;
++    let host = if is_svga {
++        if for_writing && side_effects {
++            crate::cpu::vga::mark_dirty(high);
++            svga_tlb_writable = true;
++        }
++        high - memory::VGA_LFB_ADDRESS + memory::vga_mem8 as u32
++    }
++    else {
++        high + memory::mem8 as u32
++    };
++    let tlb_entry = host as i32 ^ page << 12 | info_bits as i32;
+ 
+     dbg_assert!((high ^ (page as u32) << 12) & 0xFFF == 0);
+     if side_effects {
+@@ -2515,7 +2557,7 @@ pub fn tlb_set_has_code(physical_page: Page, has_code: bool) {
+     for i in 0..unsafe { valid_tlb_entries_count } {
+         let page = unsafe { valid_tlb_entries[i as usize] };
+         let entry = unsafe { tlb_data[page as usize] };
+-        if 0 != entry {
++        if 0 != entry && 0 == entry & TLB_SVGA {
+             let tlb_physical_page = Page::of_u32(
+                 (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+             );
+@@ -2538,7 +2580,7 @@ pub fn tlb_set_has_code_multiple(physical_pages: &HashSet<Page>, has_code: bool)
+     for i in 0..unsafe { valid_tlb_entries_count } {
+         let page = unsafe { valid_tlb_entries[i as usize] };
+         let entry = unsafe { tlb_data[page as usize] };
+-        if 0 != entry {
++        if 0 != entry && 0 == entry & TLB_SVGA {
+             let tlb_physical_page = Page::of_u32(
+                 (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+             );
+@@ -2563,7 +2605,7 @@ pub fn check_tlb_invariants() {
+         let page = unsafe { valid_tlb_entries[i as usize] };
+         let entry = unsafe { tlb_data[page as usize] };
+ 
+-        if 0 == entry || 0 != entry & TLB_IN_MAPPED_RANGE {
++        if 0 == entry || 0 != entry & (TLB_IN_MAPPED_RANGE | TLB_SVGA) {
+             // there's no code in mapped memory
+             continue;
+         }
+diff --git a/src/rust/cpu/vga.rs b/src/rust/cpu/vga.rs
+index 654a0a6..d219e36 100644
+--- a/src/rust/cpu/vga.rs
++++ b/src/rust/cpu/vga.rs
+@@ -172,4 +172,6 @@ pub unsafe fn svga_fill_pixel_buffer(bpp: u32, svga_dest_offset: u32) {
+     for v in dirty_bitmap.iter_mut() {
+         *v = 0
+     }
++    // отметки забраны: следующая запись в страницу видеопамяти должна отметить её заново
++    crate::cpu::cpu::svga_tlb_protect();
+ }
+diff --git a/src/rust/jit.rs b/src/rust/jit.rs
+index 0c1e030..8b77ddc 100644
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -202,7 +202,7 @@ fn check_jit_state_invariants(ctx: &mut JitState) {
+     for i in 0..unsafe { cpu::valid_tlb_entries_count } {
+         let page = unsafe { cpu::valid_tlb_entries[i as usize] };
+         let entry = unsafe { cpu::tlb_data[page as usize] };
+-        if 0 != entry {
++        if 0 != entry && 0 == entry & cpu::TLB_SVGA {
+             let tlb_physical_page = Page::of_u32(
+                 (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+             );
+@@ -1145,7 +1145,7 @@ pub fn codegen_finalize_finished(
+     for i in 0..unsafe { cpu::valid_tlb_entries_count } {
+         let page = unsafe { cpu::valid_tlb_entries[i as usize] };
+         let entry = unsafe { cpu::tlb_data[page as usize] };
+-        if 0 != entry {
++        if 0 != entry && 0 == entry & cpu::TLB_SVGA {
+             let tlb_physical_page = Page::of_u32(
+                 (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+             );
+@@ -2304,7 +2304,7 @@ fn jit_dirty_page_ctx(ctx: &mut JitState, page: Page) {
+             for i in 0..unsafe { cpu::valid_tlb_entries_count } {
+                 let page = unsafe { cpu::valid_tlb_entries[i as usize] };
+                 let entry = unsafe { cpu::tlb_data[page as usize] };
+-                if 0 != entry {
++                if 0 != entry && 0 == entry & cpu::TLB_SVGA {
+                     let tlb_physical_page = Page::of_u32(
+                         (entry as u32 >> 12 ^ page as u32) - (unsafe { memory::mem8 } as u32 >> 12),
+                     );

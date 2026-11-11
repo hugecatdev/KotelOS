@@ -1,0 +1,152 @@
+JIT: предел модулей 1800 и выселение давно не работавших вместо сброса всего кэша
+
+Модуль JIT - одна страница кода гостя (patches/v86/03), а мест в таблице wasm было 899: это
+3.6 МБ горячего кода. Сессия X с программой на GTK или FOX (ядро, Xorg, twm, библиотеки тулкита)
+занимает ~1030 модулей, и когда места кончались, v86 сбрасывал кэш целиком - ядро, X и все
+библиотеки компилировались заново (Liftoff, потом TurboFan в фоновых потоках). На второй и
+третьей сессии tests/xpair.py --load tk это стоило 8% времени и 30-45% процессора вкладки.
+
+Теперь мест 1799, и когда они кончаются, уходит только четверть модулей - те, в которые главный
+цикл не входил дольше всего (при каждом входе модулю записывается показание счётчика входов).
+Предел живых модулей можно опустить на ходу: set_jit_config(10, n) - меньше памяти под
+машинный код V8 ценой повторных компиляций; с n = 899 выселение даёт процессор вкладки 0.78 от
+прежнего, с 1799 - 0.56-0.70 и время 0.92. Счётчики для замеров - всегда в сборке:
+jit_get_full_clears, jit_get_evictions, jit_get_wasm_table_index_free_list_count.
+
+diff --git a/src/const.js b/src/const.js
+index a672ca4..123e75b 100644
+--- a/src/const.js
++++ b/src/const.js
+@@ -130,7 +130,7 @@ export const FW_CFG_SIGNATURE_QEMU = 0x554D4551;
+ 
+ 
+ // See same constant in jit.rs
+-export const WASM_TABLE_SIZE = 900;
++export const WASM_TABLE_SIZE = 1800;
+ 
+ export const WASM_TABLE_OFFSET = 1024;
+ 
+diff --git a/src/rust/cpu/cpu.rs b/src/rust/cpu/cpu.rs
+index 5435dc0..548a572 100644
+--- a/src/rust/cpu/cpu.rs
++++ b/src/rust/cpu/cpu.rs
+@@ -3193,6 +3193,7 @@ pub unsafe fn cycle_internal() {
+         {
+             in_jit = true;
+         }
++        jit::jit_module_mark_used(wasm_table_index);
+         wasm::call_indirect1(
+             wasm_table_index as i32 + WASM_TABLE_OFFSET as i32,
+             initial_state,
+diff --git a/src/rust/jit.rs b/src/rust/jit.rs
+index 0c1e030..371de89 100644
+--- a/src/rust/jit.rs
++++ b/src/rust/jit.rs
+@@ -89,7 +89,7 @@ pub const BRTABLE_CUTOFF: usize = 10;
+ pub static mut JIT_MEM_REUSE: bool = true;
+ 
+ // needs to be synced to const.js
+-pub const WASM_TABLE_SIZE: u32 = 900;
++pub const WASM_TABLE_SIZE: u32 = 1800;
+ 
+ pub const CHECK_JIT_STATE_INVARIANTS: bool = false;
+ 
+@@ -996,22 +996,32 @@ fn jit_analyze_and_generate(
+         }
+     }
+ 
+-    if ctx.wasm_table_index_free_list.is_empty() {
+-        dbg_log!("wasm_table_index_free_list empty, clearing cache");
+-
+-        // When no free slots are available, delete all cached modules. We could increase the
+-        // size of the table, but this way the initial size acts as an upper bound for the
+-        // number of wasm modules that we generate, which we want anyway to avoid getting our
+-        // tab killed by browsers due to memory constraints.
+-        jit_clear_cache(ctx);
++    let used = (WASM_TABLE_SIZE - 1) as usize - ctx.wasm_table_index_free_list.len();
++    if ctx.wasm_table_index_free_list.is_empty() || used >= unsafe { JIT_MAX_MODULES } as usize {
++        // Предел модулей достигнут. Раньше кэш сбрасывался целиком, и всё горячее (ядро, X,
++        // библиотеки) компилировалось заново; теперь уходит четверть модулей - те, в которые
++        // главный цикл не входил дольше всего
++        let now = unsafe { JIT_CLOCK };
++        let mut ages: Vec<(u32, Page)> = ctx
++            .pages
++            .iter()
++            .map(|(&page, info)| {
++                (now.wrapping_sub(unsafe { jit_module_stamp(info.wasm_table_index.to_u16()) }), page)
++            })
++            .collect();
++        ages.sort_unstable_by(|a, b| b.0.cmp(&a.0));
++        ages.truncate(1 + used / 4);
++        for (_, page) in ages {
++            jit_dirty_page_ctx(ctx, page);
++        }
++        unsafe { JIT_EVICTIONS += 1 };
++        if ctx.wasm_table_index_free_list.is_empty() {
++            jit_clear_cache(ctx);
++            unsafe { JIT_FULL_CLEARS += 1 };
++        }
+ 
+         profiler::stat_increment(stat::INVALIDATE_ALL_MODULES_NO_FREE_WASM_INDICES);
+ 
+-        dbg_log!(
+-            "after jit_clear_cache: {} free",
+-            ctx.wasm_table_index_free_list.len(),
+-        );
+-
+         // This assertion can fail if all entries are pending (not possible unless
+         // WASM_TABLE_SIZE is set very low)
+         dbg_assert!(!ctx.wasm_table_index_free_list.is_empty());
+@@ -2440,12 +2450,30 @@ pub fn jit_page_has_wasm_table_index(page: Page, wasm_table_index: u16) -> bool
+ 
+ #[no_mangle]
+ pub fn jit_get_wasm_table_index_free_list_count() -> u32 {
+-    if cfg!(feature = "profiler") {
+-        get_jit_state().wasm_table_index_free_list.len() as u32
+-    }
+-    else {
+-        0
+-    }
++    get_jit_state().wasm_table_index_free_list.len() as u32
++}
++// сколько раз кэш сброшен целиком и сколько раз выселены давно не работавшие модули (tests/xpair.py)
++pub static mut JIT_FULL_CLEARS: u32 = 0;
++pub static mut JIT_EVICTIONS: u32 = 0;
++#[no_mangle]
++pub fn jit_get_full_clears() -> u32 { unsafe { JIT_FULL_CLEARS } }
++#[no_mangle]
++pub fn jit_get_evictions() -> u32 { unsafe { JIT_EVICTIONS } }
++
++// предел живых модулей (set_jit_config(10, n)): таблица - WASM_TABLE_SIZE, меньший предел бережёт память
++pub static mut JIT_MAX_MODULES: u32 = WASM_TABLE_SIZE - 1;
++// давность модуля: главный цикл при каждом входе записывает ему показание счётчика входов
++pub static mut JIT_CLOCK: u32 = 0;
++pub static mut JIT_MODULE_STAMP: [u32; WASM_TABLE_SIZE as usize] = [0; WASM_TABLE_SIZE as usize];
++#[inline(always)]
++pub unsafe fn jit_module_mark_used(wasm_table_index: u16) {
++    let now = JIT_CLOCK.wrapping_add(1);
++    JIT_CLOCK = now;
++    *(&raw mut JIT_MODULE_STAMP as *mut u32).add(wasm_table_index as usize) = now;
++}
++#[inline(always)]
++unsafe fn jit_module_stamp(wasm_table_index: u16) -> u32 {
++    *(&raw const JIT_MODULE_STAMP as *const u32).add(wasm_table_index as usize)
+ }
+ #[no_mangle]
+ pub fn jit_get_cache_size() -> u32 {
+@@ -2535,6 +2563,7 @@ pub unsafe fn set_jit_config(index: u32, value: u32) {
+         3 => MAX_EXTRA_BASIC_BLOCKS = value,
+         5 => JIT_THRESHOLD = value,
+         9 => JIT_MEM_REUSE = value != 0,
++        10 => JIT_MAX_MODULES = value,
+         _ => dbg_assert!(false),
+     }
+ }
+@@ -2548,6 +2577,7 @@ pub unsafe fn get_jit_config(index: u32) -> u32 {
+         3 => MAX_EXTRA_BASIC_BLOCKS as u32,
+         5 => JIT_THRESHOLD,
+         9 => JIT_MEM_REUSE as u32,
++        10 => JIT_MAX_MODULES,
+         _ => 0,
+     }
+ }
